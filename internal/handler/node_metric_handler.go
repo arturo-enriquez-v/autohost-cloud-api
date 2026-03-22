@@ -3,20 +3,39 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"sync"
 	"time"
 
+	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
+	"github.com/arturo/autohost-cloud-api/internal/platform"
 	"github.com/go-chi/chi/v5"
 )
 
+// alertCooldown is the minimum time between repeated alerts for the same
+// node+metric combination.
+const alertCooldown = 10 * time.Minute
+
 type NodeMetricHandler struct {
-	service *nodemetric.Service
+	service      *nodemetric.Service
+	alertService *nodealert.Service
+	nodeService  *node.Service
+
+	cooldownMu sync.Mutex
+	cooldowns  map[string]time.Time // key: "nodeID:metricName"
 }
 
-func NewNodeMetricHandler(service *nodemetric.Service) *NodeMetricHandler {
-	return &NodeMetricHandler{service: service}
+func NewNodeMetricHandler(service *nodemetric.Service, alertService *nodealert.Service, nodeService *node.Service) *NodeMetricHandler {
+	return &NodeMetricHandler{
+		service:      service,
+		alertService: alertService,
+		nodeService:  nodeService,
+		cooldowns:    make(map[string]time.Time),
+	}
 }
 
 func (h *NodeMetricHandler) Routes(nodeMetricMiddleware func(http.Handler) http.Handler) chi.Router {
@@ -56,8 +75,61 @@ func (h *NodeMetricHandler) PostMetrics(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Fire threshold alerts asynchronously - never block the metric ingestion path.
+	go h.checkThresholdAlerts(nodeToken.NodeID, &nodeMetrics)
+
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// checkThresholdAlerts looks up the alert config for the node and sends a
+// Telegram notification for each metric that exceeds its configured threshold.
+// Repeated alerts for the same metric are suppressed for alertCooldown duration.
+func (h *NodeMetricHandler) checkThresholdAlerts(nodeID string, m *nodemetric.CreateNodeMetricRequest) {
+	cfg, err := h.alertService.FindByNodeID(nodeID)
+	if err != nil {
+		return // no config or DB error — silently skip
+	}
+	if cfg.TelegramBotToken == "" || cfg.TelegramChatID == "" {
+		return // Telegram not configured
+	}
+
+	// Resolve the human-readable hostname; fall back to the UUID if unavailable.
+	nodeName := nodeID
+	if h.nodeService != nil {
+		if n, err := h.nodeService.GetByID(nodeID); err == nil {
+			nodeName = n.Hostname
+		}
+	}
+
+	check := func(name string, value float64, threshold *float32) {
+		if threshold == nil {
+			return
+		}
+		if value < float64(*threshold) {
+			return
+		}
+
+		key := nodeID + ":" + name
+		now := time.Now()
+		h.cooldownMu.Lock()
+		last, exists := h.cooldowns[key]
+		if exists && now.Before(last.Add(alertCooldown)) {
+			h.cooldownMu.Unlock()
+			return // still within cooldown window
+		}
+		h.cooldowns[key] = now
+		h.cooldownMu.Unlock()
+
+		msg := fmt.Sprintf("⚠️ <b>AutoHost Alert</b>\nNode: <b>%s</b> <code>%s</code>\n%s usage: <b>%.1f%%</b> (threshold: %.1f%%)", nodeName, nodeID, name, value, *threshold)
+		if err := platform.SendTelegramMessage(cfg.TelegramBotToken, cfg.TelegramChatID, msg); err != nil {
+			log.Printf("[alert] telegram send for node %s (%s): %v", nodeID, name, err)
+		}
+	}
+
+	check("CPU", m.CPUUsagePercent, cfg.CPUThreshold)
+	check("RAM", m.MemoryUsagePercent, cfg.RAMThreshold)
+	check("Disk", m.DiskUsagePercent, cfg.DiskThreshold)
 }
 
 // func (h *NodeMetricHandler) ListMetrics(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net"
 	"net/http"
@@ -50,6 +51,11 @@ func main() {
 			log.Fatalf("gRPC server error: %v", err)
 		}
 	}()
+
+	// ── Scheduler ─────────────────────────────────────────────────────────────
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go app.Scheduler.Start(ctx)
 
 	// ── HTTP server ───────────────────────────────────────────────────────────
 	port := os.Getenv("PORT")
