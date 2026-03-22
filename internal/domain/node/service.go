@@ -38,3 +38,8 @@ func (s *Service) GetByOwner(ownerID string) ([]*Node, error) {
 func (s *Service) GetByOwnerWithMetrics(ownerID string) ([]*NodeWithMetrics, error) {
 	return s.repo.FindByOwnerIDWithMetrics(ownerID)
 }
+
+// GetByID returns a single node by its ID.
+func (s *Service) GetByID(id string) (*Node, error) {
+	return s.repo.FindByID(id)
+}

@@ -35,19 +35,22 @@ message RegisterCommandsResponse {
 
 // ─── Connect (bidirectional streaming) ───────────────────────────────────────
 // The agent opens a single long-lived stream.
-//   agent  → server : NodeMessage  (job results, heartbeats)
-//   server → agent  : ServerMessage (execute_job commands)
+//   agent  → server : NodeMessage  (job results, heartbeats, log entries)
+//   server → agent  : ServerMessage (execute_job, stream_logs, stop_logs)
 
 message NodeMessage {
   oneof payload {
     JobResultPayload  job_result  = 1;
     HeartbeatPayload  heartbeat   = 2;
+    LogEntryPayload   log_entry   = 3;
   }
 }
 
 message ServerMessage {
   oneof payload {
-    ExecuteJobPayload execute_job = 1;
+    ExecuteJobPayload  execute_job  = 1;
+    StreamLogsPayload  stream_logs  = 2;
+    StopLogsPayload    stop_logs    = 3;
   }
 }
 
@@ -66,6 +69,24 @@ message ExecuteJobPayload {
   string      job_id       = 1;
   string      command_name = 2;
   CommandType command_type = 3;
+}
+
+// ─── Log streaming ───────────────────────────────────────────────────────────
+
+// Sent by server to ask the agent to start streaming logs.
+message StreamLogsPayload {
+  string unit  = 1;  // systemd unit name, e.g. "autohost-agent" or "" for all
+  int32  lines = 2;  // how many historical lines to tail first (0 = no history)
+}
+
+// Sent by server to ask the agent to stop streaming logs.
+message StopLogsPayload {}
+
+// Sent by agent to the server, one per log line.
+message LogEntryPayload {
+  int64  timestamp_us = 1;  // Unix microseconds
+  string unit         = 2;  // source systemd unit
+  string message      = 3;
 }
 
 // ─── Service ─────────────────────────────────────────────────────────────────

@@ -12,12 +12,15 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/domain/enrollment"
 	"github.com/arturo/autohost-cloud-api/internal/domain/job"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
+	scheduledtask "github.com/arturo/autohost-cloud-api/internal/domain/scheduled_task"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	handlerMiddleware "github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/repository/postgres"
+	"github.com/arturo/autohost-cloud-api/internal/scheduler"
 )
 
 type Config struct {
@@ -29,6 +32,7 @@ type Config struct {
 type Application struct {
 	HTTP       http.Handler
 	GRPCServer *grpcserver.NodeAgentServer
+	Scheduler  *scheduler.Scheduler
 }
 
 // NewRouter builds all repositories, services, and handlers and returns the
@@ -52,6 +56,8 @@ func NewRouter(cfg *Config) *Application {
 	nodeTokenRepo := postgres.NewNodeTokenRepository(cfg.DB)
 	nodeCommandRepo := postgres.NewNodeCommandRepository(cfg.DB)
 	jobRepo := postgres.NewJobRepository(cfg.DB)
+	nodeAlertRepo := postgres.NewNodeAlertRepository(cfg.DB)
+	scheduledTaskRepo := postgres.NewScheduledTaskRepository(cfg.DB)
 
 	// Services
 	authService := auth.NewService(authRepo)
@@ -61,20 +67,25 @@ func NewRouter(cfg *Config) *Application {
 	nodeTokenService := nodetoken.NewService(nodeTokenRepo)
 	nodeCommandService := nodecommand.NewService(nodeCommandRepo)
 	jobService := job.NewService(jobRepo)
+	nodeAlertService := nodealert.NewService(nodeAlertRepo)
+	scheduledTaskService := scheduledtask.NewService(scheduledTaskRepo)
 
 	nodeAuthMiddleware := handlerMiddleware.NodeAuth(nodeTokenService)
 
 	// gRPC server — also a NodeDispatcher over gRPC transport
-	grpcSrv := grpcserver.NewNodeAgentServer(nodeCommandService, jobService, nodeTokenService)
+	grpcSrv := grpcserver.NewNodeAgentServer(nodeCommandService, jobService, nodeTokenService, nodeAlertService, nodeService)
 
 	// HTTP handlers
 	authHandler := NewAuthHandler(authService, authRepo)
 	nodeHandler := NewNodeHandler(nodeService)
-	nodeMetricHandler := NewNodeMetricHandler(nodeMetricService)
+	nodeMetricHandler := NewNodeMetricHandler(nodeMetricService, nodeAlertService, nodeService)
 	enrollmentHandler := NewEnrollmentHandler(enrollmentService, nodeService, nodeTokenService)
 	heartbeatsHandler := NewHeartbeatsHandler(nodeService)
 	wsHandler := NewWSHandler(jobService, nodeCommandService)
 	nodeCommandHandler := NewNodeCommandHandler(nodeCommandService)
+	nodeLogHandler := NewNodeLogHandler(grpcSrv)
+	nodeAlertHandler := NewNodeAlertHandler(nodeAlertService)
+	scheduledTaskHandler := NewScheduledTaskHandler(scheduledTaskService)
 
 	// MultiDispatcher: tries gRPC first, falls back to WebSocket
 	dispatcher := NewMultiDispatcher(grpcSrv, wsHandler)
@@ -89,9 +100,14 @@ func NewRouter(cfg *Config) *Application {
 		r.Mount("/node-commands", nodeCommandHandler.Routes(nodeAuthMiddleware))
 		r.Mount("/jobs", jobHandler.Routes())
 		r.Mount("/ws", wsHandler.Routes(nodeAuthMiddleware))
+		r.Mount("/node-logs", nodeLogHandler.Routes())
+		r.Mount("/node-alerts", nodeAlertHandler.Routes())
+		r.Mount("/scheduled-tasks", scheduledTaskHandler.Routes())
 	})
 
-	return &Application{HTTP: r, GRPCServer: grpcSrv}
+	sched := scheduler.NewScheduler(scheduledTaskService, jobService, dispatcher)
+
+	return &Application{HTTP: r, GRPCServer: grpcSrv, Scheduler: sched}
 }
 
 func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
