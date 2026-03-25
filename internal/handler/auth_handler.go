@@ -29,6 +29,7 @@ func (h *AuthHandler) Routes() chi.Router {
 	r.Post("/login", h.Login)
 	r.Post("/refresh", h.Refresh)
 	r.Post("/logout", h.Logout)
+	r.Post("/oauth/google", h.OAuthGoogle)
 	r.Group(func(pr chi.Router) {
 		pr.Use(middleware.Auth)
 		pr.Get("/me", h.Me)
@@ -179,4 +180,36 @@ func clientIP(r *http.Request) string {
 		return ""
 	}
 	return ip
+}
+
+func (h *AuthHandler) OAuthGoogle(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDToken string `json:"id_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.IDToken == "" {
+		http.Error(w, "id_token required", http.StatusBadRequest)
+		return
+	}
+
+	claims, err := platform.VerifyGoogleIDToken(body.IDToken)
+	if err != nil {
+		http.Error(w, "invalid google token", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := h.service.LoginOAuth(claims.Email, claims.Name, "google", claims.Sub)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	access, _ := platform.SignAccessToken(user.ID, user.Email)
+	rt, rtHash := platform.MakeRefreshPair()
+	_ = h.repo.StoreRefreshToken(user.ID, rtHash, r.UserAgent(), clientIP(r))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"access_token":  access,
+		"refresh_token": rt,
+	})
 }

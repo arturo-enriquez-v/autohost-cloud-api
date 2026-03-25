@@ -32,12 +32,14 @@ type JobModel struct {
 
 // UserModel representa la estructura de la tabla users
 type UserModel struct {
-	ID           string    `db:"id"`
-	Email        string    `db:"email"`
-	Name         *string   `db:"name"`
-	PasswordHash string    `db:"password_hash"`
-	CreatedAt    time.Time `db:"created_at"`
-	UpdatedAt    time.Time `db:"updated_at"`
+	ID              string    `db:"id"`
+	Email           string    `db:"email"`
+	Name            *string   `db:"name"`
+	PasswordHash    *string   `db:"password_hash"`
+	OAuthProvider   *string   `db:"oauth_provider"`
+	OAuthProviderID *string   `db:"oauth_provider_id"`
+	CreatedAt       time.Time `db:"created_at"`
+	UpdatedAt       time.Time `db:"updated_at"`
 }
 
 // NodeModel representa la estructura de la tabla nodes

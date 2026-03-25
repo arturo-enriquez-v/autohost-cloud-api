@@ -4,12 +4,14 @@ import "time"
 
 // User representa un usuario del sistema
 type User struct {
-	ID           string    `db:"id"`
-	Email        string    `db:"email"`
-	Name         *string   `db:"name"`
-	PasswordHash string    `db:"password_hash"`
-	CreatedAt    time.Time `db:"created_at"`
-	UpdatedAt    time.Time `db:"updated_at"`
+	ID              string    `db:"id"`
+	Email           string    `db:"email"`
+	Name            *string   `db:"name"`
+	PasswordHash    *string   `db:"password_hash"`
+	OAuthProvider   *string   `db:"oauth_provider"`
+	OAuthProviderID *string   `db:"oauth_provider_id"`
+	CreatedAt       time.Time `db:"created_at"`
+	UpdatedAt       time.Time `db:"updated_at"`
 }
 
 // Repository define las operaciones de persistencia para usuarios
@@ -17,6 +19,7 @@ type Repository interface {
 	CreateUser(email, name, passwordHash string) (string, error)
 	FindUserByEmail(email string) (*User, error)
 	FindUserByID(id string) (*User, error)
+	FindOrCreateOAuthUser(email, name, provider, providerID string) (*User, error)
 	StoreRefreshToken(userID, tokenHash, userAgent, ip string) error
 	RevokeRefreshToken(userID, tokenHash string) error
 	FindRefreshToken(tokenHash string) (userID string, err error)
