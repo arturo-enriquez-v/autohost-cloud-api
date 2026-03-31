@@ -33,6 +33,7 @@ message RegisterCommandsResponse {
   int32  registered = 1;   // total commands upserted in this batch
 }
 
+
 // ─── Connect (bidirectional streaming) ───────────────────────────────────────
 // The agent opens a single long-lived stream.
 //   agent  → server : NodeMessage  (job results, heartbeats, log entries)
@@ -89,6 +90,25 @@ message LogEntryPayload {
   string message      = 3;
 }
 
+// ─── Metrics ─────────────────────────────────────────────────────────────────
+
+message MetricRequest {
+  float  cpu_usage_percent    = 1;
+  uint64 ram_total_bytes      = 2;
+  uint64 ram_used_bytes       = 3;
+  uint64 ram_available_bytes  = 4;
+  float  ram_usage_percent    = 5;
+  uint64 disk_total_bytes     = 6;
+  uint64 disk_used_bytes      = 7;
+  uint64 disk_available_bytes = 8;
+  float  disk_usage_percent   = 9;
+  int64  uptime_seconds       = 10;
+}
+
+message MetricResponse {
+  bool success = 1;
+}
+
 // ─── Service ─────────────────────────────────────────────────────────────────
 
 service NodeAgentService {
@@ -97,4 +117,7 @@ service NodeAgentService {
 
   // Long-lived bidirectional stream used to dispatch jobs and receive results.
   rpc Connect(stream NodeMessage) returns (stream ServerMessage);
+
+  // Send node system metrics to the server.
+  rpc ReportMetrics(MetricRequest) returns (MetricResponse);
 }
