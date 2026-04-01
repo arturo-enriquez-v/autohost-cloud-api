@@ -50,6 +50,18 @@ func (r *NodeRepository) Register(n *node.Node) (*node.Node, error) {
 	return n, nil
 }
 
+func (r *NodeRepository) Update(node *node.Node) (*node.Node, error) {
+	_, err := r.db.ExecContext(context.Background(), `
+		UPDATE nodes 
+		SET hostname = $1, updated_at = now()
+		WHERE id = $2`, node.Hostname, node.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	return node, nil
+}
+
 func (r *NodeRepository) FindByID(id string) (*node.Node, error) {
 	var model NodeModel
 	err := r.db.Get(&model, `
