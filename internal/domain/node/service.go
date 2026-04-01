@@ -43,3 +43,19 @@ func (s *Service) GetByOwnerWithMetrics(ownerID string) ([]*NodeWithMetrics, err
 func (s *Service) GetByID(id string) (*Node, error) {
 	return s.repo.FindByID(id)
 }
+
+func (s *Service) Update(id, hostname string) (*Node, error) {
+	node, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, ErrNodeNotFound
+	}
+
+	if hostname != "" {
+		node.Hostname = hostname
+	}
+
+	return s.repo.Update(node)
+}
