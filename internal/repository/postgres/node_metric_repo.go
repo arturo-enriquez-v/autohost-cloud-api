@@ -1,6 +1,8 @@
 package postgres
 
 import (
+	"fmt"
+
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	"github.com/jmoiron/sqlx"
 )
@@ -33,6 +35,40 @@ func (r *NodeMetricRepo) StoreNodeMetric(req *nodemetric.CreateNodeMetricRequest
 	}
 
 	return &metric, nil
+}
+
+// allowedBuckets is the whitelist for date_trunc granularity values to prevent SQL injection.
+var allowedBuckets = map[string]bool{
+	"minute": true,
+	"hour":   true,
+	"day":    true,
+}
+
+func (r *NodeMetricRepo) GetHistoryByNodeID(params nodemetric.HistoryParams) ([]*nodemetric.NodeMetricHistoryPoint, error) {
+	bucket := params.Bucket
+	if !allowedBuckets[bucket] {
+		bucket = "hour"
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			date_trunc('%s', collected_at) AS bucket,
+			AVG(cpu_usage_percent)         AS cpu_usage_percent,
+			AVG(memory_usage_percent)      AS memory_usage_percent,
+			AVG(disk_usage_percent)        AS disk_usage_percent
+		FROM node_metrics
+		WHERE node_id = $1
+		  AND collected_at >= $2
+		  AND collected_at <= $3
+		GROUP BY bucket
+		ORDER BY bucket ASC
+	`, bucket)
+
+	var points []*nodemetric.NodeMetricHistoryPoint
+	if err := r.DB.Select(&points, query, params.NodeID, params.From, params.To); err != nil {
+		return nil, err
+	}
+	return points, nil
 }
 
 // func (r *NodeMetricRepo) GetLatestMetricByNodeID(nodeID string) (*nodemetric.NodeMetric, error) {

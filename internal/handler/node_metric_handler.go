@@ -46,6 +46,9 @@ func (h *NodeMetricHandler) Routes(nodeMetricMiddleware func(http.Handler) http.
 		protected.Post("/metrics", h.PostMetrics)
 	})
 
+	// User-authenticated history endpoint
+	r.With(middleware.Auth).Get("/{nodeId}/history", h.GetHistory)
+
 	return r
 }
 
@@ -130,6 +133,64 @@ func (h *NodeMetricHandler) checkThresholdAlerts(nodeID string, m *nodemetric.Cr
 	check("CPU", m.CPUUsagePercent, cfg.CPUThreshold)
 	check("RAM", m.MemoryUsagePercent, cfg.RAMThreshold)
 	check("Disk", m.DiskUsagePercent, cfg.DiskThreshold)
+}
+
+// GetHistory returns time-bucketed metric history for a node.
+// Query params: from, to (RFC3339), bucket (minute|hour|day, default hour).
+// Defaults: last 7 days, hourly buckets.
+func (h *NodeMetricHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.UserID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	nodeID := chi.URLParam(r, "nodeId")
+
+	// Verify the node belongs to the authenticated user.
+	n, err := h.nodeService.GetByID(nodeID)
+	if err != nil || n == nil {
+		http.Error(w, "node not found", http.StatusNotFound)
+		return
+	}
+	if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	now := time.Now().UTC()
+	toTime := now
+	fromTime := now.AddDate(0, 0, -7)
+
+	if v := r.URL.Query().Get("from"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			fromTime = t
+		}
+	}
+	if v := r.URL.Query().Get("to"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			toTime = t
+		}
+	}
+
+	bucket := r.URL.Query().Get("bucket")
+	if bucket == "" {
+		bucket = "hour"
+	}
+
+	points, err := h.service.GetHistory(nodemetric.HistoryParams{
+		NodeID: nodeID,
+		From:   fromTime,
+		To:     toTime,
+		Bucket: bucket,
+	})
+	if err != nil {
+		http.Error(w, "could not fetch metrics history", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(points)
 }
 
 // func (h *NodeMetricHandler) ListMetrics(w http.ResponseWriter, r *http.Request) {

@@ -21,6 +21,13 @@ func (s *Service) StoreNodeMetric(req *CreateNodeMetricRequest) (*NodeMetric, er
 	return s.repo.StoreNodeMetric(req)
 }
 
+func (s *Service) GetHistory(params HistoryParams) ([]*NodeMetricHistoryPoint, error) {
+	if params.NodeID == "" {
+		return nil, ErrInvalidNodeMetricData
+	}
+	return s.repo.GetHistoryByNodeID(params)
+}
+
 // func (s *Service) GetMetricsByNodeID(nodeID string, limit int) ([]*NodeMetric, error) {
 // 	if nodeID == "" || limit <= 0 {
 // 		return nil, ErrInvalidNodeMetricData
