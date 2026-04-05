@@ -59,3 +59,14 @@ func (s *Service) Update(id, hostname string) (*Node, error) {
 
 	return s.repo.Update(node)
 }
+
+func (s *Service) Delete(id string) error {
+	if id == "" {
+		return ErrInvalidNodeData
+	}
+	_, err := s.repo.FindByID(id)
+	if err != nil {
+		return err
+	}
+	return s.repo.Delete(id)
+}

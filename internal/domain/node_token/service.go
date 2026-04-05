@@ -28,3 +28,10 @@ func (s *Service) FindNodeTokenByHash(tokenHash string) (*NodeToken, error) {
 	}
 	return s.repo.FindNodeTokenByHash(tokenHash)
 }
+
+func (s *Service) RevokeByNodeID(nodeID string) error {
+	if nodeID == "" {
+		return ErrInvalidNodeTokenData
+	}
+	return s.repo.RevokeByNodeID(nodeID)
+}
