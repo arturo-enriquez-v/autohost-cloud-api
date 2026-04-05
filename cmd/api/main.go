@@ -3,13 +3,14 @@ package main
 import (
 	"context"
 	"log"
-	"net"
 	"net/http"
 	"os"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
 
 	"github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
@@ -37,17 +38,16 @@ func main() {
 		grpcPort = "9090"
 	}
 
-	lis, err := net.Listen("tcp", "0.0.0.0:"+grpcPort)
-	if err != nil {
-		log.Fatalf("Failed to listen on gRPC port %s: %v", grpcPort, err)
-	}
-
 	grpcSrv := grpc.NewServer()
 	nodepb.RegisterNodeAgentServiceServer(grpcSrv, app.GRPCServer)
 
+	grpcHandler := h2c.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		grpcSrv.ServeHTTP(w, r)
+	}), &http2.Server{})
+
 	go func() {
-		log.Printf("gRPC server listening on :%s", grpcPort)
-		if err := grpcSrv.Serve(lis); err != nil {
+		log.Printf("gRPC server (h2c) listening on :%s", grpcPort)
+		if err := http.ListenAndServe("0.0.0.0:"+grpcPort, grpcHandler); err != nil {
 			log.Fatalf("gRPC server error: %v", err)
 		}
 	}()
