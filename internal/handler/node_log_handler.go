@@ -98,9 +98,12 @@ func (h *NodeLogHandler) streamLogs(w http.ResponseWriter, r *http.Request) {
 			}
 			flusher.Flush()
 
-		case <-time.After(15 * time.Second):
-			// Keepalive comment — prevents proxies and browsers from closing idle connections.
-			fmt.Fprintf(w, ": ping\n\n")
+		case <-time.After(5 * time.Second):
+			// Keepalive comment — also detects a closed client connection within 5 s.
+			if _, err := fmt.Fprintf(w, ": ping\n\n"); err != nil {
+				log.Printf("[SSE] client disconnected for node %s", nodeID)
+				return
+			}
 			flusher.Flush()
 		}
 	}
