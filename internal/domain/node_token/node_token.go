@@ -15,4 +15,5 @@ type Repository interface {
 	CreateNodeToken(nodeID, token string) error
 	FindNodeTokenByHash(tokenHash string) (*NodeToken, error)
 	UpdateLastSeen(tokenID string, lastSeenAt time.Time) error
+	RevokeByNodeID(nodeID string) error
 }

@@ -189,3 +189,10 @@ func (r *NodeRepository) FindByOwnerIDWithMetrics(ownerID string) ([]*node.NodeW
 
 	return results, nil
 }
+
+func (r *NodeRepository) Delete(id string) error {
+	_, err := r.db.ExecContext(context.Background(), `
+		DELETE FROM nodes
+		WHERE id = $1`, id)
+	return err
+}

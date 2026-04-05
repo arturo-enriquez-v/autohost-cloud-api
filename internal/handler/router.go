@@ -77,7 +77,7 @@ func NewRouter(cfg *Config) *Application {
 
 	// HTTP handlers
 	authHandler := NewAuthHandler(authService, authRepo)
-	nodeHandler := NewNodeHandler(nodeService)
+	nodeHandler := NewNodeHandler(nodeService, nodeTokenService)
 	nodeMetricHandler := NewNodeMetricHandler(nodeMetricService, nodeAlertService, nodeService)
 	enrollmentHandler := NewEnrollmentHandler(enrollmentService, nodeService, nodeTokenService)
 	heartbeatsHandler := NewHeartbeatsHandler(nodeService)
