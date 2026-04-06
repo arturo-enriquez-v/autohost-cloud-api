@@ -2,17 +2,17 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
-
-	"fmt"
 	"runtime/debug"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -43,11 +43,6 @@ func main() {
 		grpcPort = "9090"
 	}
 
-	lis, err := net.Listen("tcp", "0.0.0.0:"+grpcPort)
-	if err != nil {
-		log.Fatalf("Failed to listen on gRPC port %s: %v", grpcPort, err)
-	}
-
 	recoveryInterceptor := func(p any) error {
 		log.Printf("[gRPC] panic recovered: %v\n%s", p, debug.Stack())
 		return status.Errorf(codes.Internal, "internal server error: %v", fmt.Sprintf("%v", p))
@@ -58,9 +53,15 @@ func main() {
 	)
 	nodepb.RegisterNodeAgentServiceServer(grpcSrv, app.GRPCServer)
 
+	// h2c wraps the gRPC server so cloudflared can forward HTTP/2 cleartext
+	// (h2c upgrade). Configure cloudflared origin as http://localhost:<GRPC_PORT>.
+	grpcHandler := h2c.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		grpcSrv.ServeHTTP(w, r)
+	}), &http2.Server{})
+
 	go func() {
-		log.Printf("gRPC server listening on :%s", grpcPort)
-		if err := grpcSrv.Serve(lis); err != nil {
+		log.Printf("gRPC server (h2c) listening on :%s", grpcPort)
+		if err := http.ListenAndServe("0.0.0.0:"+grpcPort, grpcHandler); err != nil {
 			log.Fatalf("gRPC server error: %v", err)
 		}
 	}()
