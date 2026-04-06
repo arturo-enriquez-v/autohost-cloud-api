@@ -2,6 +2,7 @@ package grpcserver
 
 import (
 	"context"
+	"io"
 	"log"
 
 	"github.com/arturo/autohost-cloud-api/internal/domain/job"
@@ -60,8 +61,11 @@ func (s *NodeAgentServer) RegisterCommands(
 	var count int32
 	for {
 		req, recvErr := stream.Recv()
+		if recvErr == io.EOF {
+			break
+		}
 		if recvErr != nil {
-			break // io.EOF or disconnect
+			return recvErr // propagate as gRPC status error
 		}
 		cmd := &nodecommand.NodeCommand{
 			NodeID:      nodeID,
