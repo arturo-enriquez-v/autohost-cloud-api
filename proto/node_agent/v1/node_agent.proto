@@ -1,0 +1,125 @@
+syntax = "proto3";
+
+package node_agent.v1;
+
+option go_package = "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb";
+
+// ─── Shared enums ────────────────────────────────────────────────────────────
+
+enum CommandType {
+  COMMAND_TYPE_DEFAULT     = 0;
+  COMMAND_TYPE_CUSTOM      = 1;
+  COMMAND_TYPE_INSTALL_APP = 2;
+}
+
+enum JobStatus {
+  JOB_STATUS_RUNNING   = 0;
+  JOB_STATUS_COMPLETED = 1;
+  JOB_STATUS_FAILED    = 2;
+}
+
+// ─── RegisterCommands ────────────────────────────────────────────────────────
+// The agent calls this on startup to announce the commands it supports.
+// Each message in the client stream is one command; the server responds once.
+
+message RegisterCommandRequest {
+  string node_id     = 1;  // validated against the auth token server-side
+  string name        = 2;
+  string description = 3;
+  CommandType type   = 4;
+  string script_path = 5;  // only set for COMMAND_TYPE_CUSTOM
+}
+
+message RegisterCommandsResponse {
+  int32  registered = 1;   // total commands upserted in this batch
+}
+
+
+// ─── Connect (bidirectional streaming) ───────────────────────────────────────
+// The agent opens a single long-lived stream.
+//   agent  → server : NodeMessage  (job results, heartbeats, log entries)
+//   server → agent  : ServerMessage (execute_job, stream_logs, stop_logs)
+
+message NodeMessage {
+  oneof payload {
+    JobResultPayload  job_result  = 1;
+    HeartbeatPayload  heartbeat   = 2;
+    LogEntryPayload   log_entry   = 3;
+  }
+}
+
+message ServerMessage {
+  oneof payload {
+    ExecuteJobPayload  execute_job  = 1;
+    StreamLogsPayload  stream_logs  = 2;
+    StopLogsPayload    stop_logs    = 3;
+  }
+}
+
+message JobResultPayload {
+  string    job_id  = 1;
+  JobStatus status  = 2;
+  string    output  = 3;
+  string    error   = 4;
+}
+
+message HeartbeatPayload {
+  string node_id = 1;
+}
+
+message ExecuteJobPayload {
+  string      job_id       = 1;
+  string      command_name = 2;
+  CommandType command_type = 3;
+  string      params       = 4;  // JSON-encoded parameters (e.g. for INSTALL_APP)
+}
+
+// ─── Log streaming ───────────────────────────────────────────────────────────
+
+// Sent by server to ask the agent to start streaming logs.
+message StreamLogsPayload {
+  string unit  = 1;  // systemd unit name, e.g. "autohost-agent" or "" for all
+  int32  lines = 2;  // how many historical lines to tail first (0 = no history)
+}
+
+// Sent by server to ask the agent to stop streaming logs.
+message StopLogsPayload {}
+
+// Sent by agent to the server, one per log line.
+message LogEntryPayload {
+  int64  timestamp_us = 1;  // Unix microseconds
+  string unit         = 2;  // source systemd unit
+  string message      = 3;
+}
+
+// ─── Metrics ─────────────────────────────────────────────────────────────────
+
+message MetricRequest {
+  float  cpu_usage_percent    = 1;
+  uint64 ram_total_bytes      = 2;
+  uint64 ram_used_bytes       = 3;
+  uint64 ram_available_bytes  = 4;
+  float  ram_usage_percent    = 5;
+  uint64 disk_total_bytes     = 6;
+  uint64 disk_used_bytes      = 7;
+  uint64 disk_available_bytes = 8;
+  float  disk_usage_percent   = 9;
+  int64  uptime_seconds       = 10;
+}
+
+message MetricResponse {
+  bool success = 1;
+}
+
+// ─── Service ─────────────────────────────────────────────────────────────────
+
+service NodeAgentService {
+  // Agent streams its commands; server upserts them all, then acks.
+  rpc RegisterCommands(stream RegisterCommandRequest) returns (RegisterCommandsResponse);
+
+  // Long-lived bidirectional stream used to dispatch jobs and receive results.
+  rpc Connect(stream NodeMessage) returns (stream ServerMessage);
+
+  // Send node system metrics to the server.
+  rpc ReportMetrics(MetricRequest) returns (MetricResponse);
+}

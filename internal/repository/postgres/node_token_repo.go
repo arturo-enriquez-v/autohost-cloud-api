@@ -46,3 +46,12 @@ func (r *NodeTokenRepo) UpdateLastSeen(tokenID string, lastSeenAt time.Time) err
 	}
 	return nil
 }
+
+func (r *NodeTokenRepo) RevokeByNodeID(nodeID string) error {
+	_, err := r.DB.Exec(`
+		UPDATE node_tokens
+		SET revoked_at = now()
+		WHERE node_id = $1 AND revoked_at IS NULL
+	`, nodeID)
+	return err
+}

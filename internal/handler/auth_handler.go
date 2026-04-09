@@ -4,9 +4,6 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
-	"os"
-	"strings"
-	"time"
 
 	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
@@ -32,6 +29,7 @@ func (h *AuthHandler) Routes() chi.Router {
 	r.Post("/login", h.Login)
 	r.Post("/refresh", h.Refresh)
 	r.Post("/logout", h.Logout)
+	r.Post("/oauth/google", h.OAuthGoogle)
 	r.Group(func(pr chi.Router) {
 		pr.Use(middleware.Auth)
 		pr.Get("/me", h.Me)
@@ -69,13 +67,12 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generar tokens
-	access, _ := platform.SignAccessToken(userID, in.Email)
-	rt, rtHash := platform.MakeRefreshPair()
+	platform.SignAccessToken(userID, in.Email)
+	_, rtHash := platform.MakeRefreshPair()
 
 	_ = h.repo.StoreRefreshToken(userID, rtHash, r.UserAgent(), clientIP(r))
 
-	setRefreshCookie(w, rt)
-	json.NewEncoder(w).Encode(map[string]any{"access_token": access})
+	w.WriteHeader(http.StatusCreated)
 }
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
@@ -100,47 +97,68 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	rt, rtHash := platform.MakeRefreshPair()
 	_ = h.repo.StoreRefreshToken(user.ID, rtHash, r.UserAgent(), clientIP(r))
 
-	// Setea cookies
-	setAccessCookie(w, access)
-	setRefreshCookie(w, rt)
+	// BFF pattern: devolver tokens como JSON — Next.js es el único que setea cookies
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]any{
+		"access_token":  access,
+		"refresh_token": rt,
+	})
 }
 
 func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
-	c, err := r.Cookie("refresh_token")
-	if err != nil || c.Value == "" {
-		http.Error(w, "no refresh", 401)
-		return
+	// BFF pattern: el refresh_token llega en el body JSON, no en cookie
+	var body struct {
+		RefreshToken string `json:"refresh_token"`
 	}
-	// rotación: revoca el hash anterior y emite uno nuevo
-	userID, email, err := platform.ParseRefreshToken(c.Value)
-	if err != nil {
-		http.Error(w, "invalid refresh", 401)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.RefreshToken == "" {
+		http.Error(w, "no refresh", http.StatusUnauthorized)
 		return
 	}
 
-	oldHash := platform.HashRefreshToken(c.Value)
+	oldHash := platform.HashRefreshToken(body.RefreshToken)
+
+	// Buscar el userID asociado al refresh token en BD
+	userID, err := h.repo.FindRefreshToken(oldHash)
+	if err != nil {
+		http.Error(w, "invalid or expired refresh token", http.StatusUnauthorized)
+		return
+	}
+
+	// Buscar datos del usuario para incluirlos en el nuevo access token
+	user, err := h.repo.FindUserByID(userID)
+	if err != nil || user == nil {
+		http.Error(w, "user not found", http.StatusUnauthorized)
+		return
+	}
+
+	// Revocar el token viejo (rotación)
 	_ = h.repo.RevokeRefreshToken(userID, oldHash)
 
-	access, _ := platform.SignAccessToken(userID, email)
+	// Emitir nuevos tokens
+	access, _ := platform.SignAccessToken(user.ID, user.Email)
 	rt, rtHash := platform.MakeRefreshPair()
-	_ = h.repo.StoreRefreshToken(userID, rtHash, r.UserAgent(), clientIP(r))
-	setRefreshCookie(w, rt)
-	json.NewEncoder(w).Encode(map[string]any{"access_token": access})
+	_ = h.repo.StoreRefreshToken(user.ID, rtHash, r.UserAgent(), clientIP(r))
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]any{
+		"access_token":  access,
+		"refresh_token": rt,
+	})
 }
 
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	c, err := r.Cookie("refresh_token")
-	if err == nil && c.Value != "" {
-		userID, _, err := platform.ParseRefreshToken(c.Value)
-		if err == nil {
-			_ = h.repo.RevokeRefreshToken(userID, platform.HashRefreshToken(c.Value))
+	// BFF pattern: el refresh_token llega en el body JSON
+	var body struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err == nil && body.RefreshToken != "" {
+		if userID, _, err := platform.ParseRefreshToken(body.RefreshToken); err == nil {
+			_ = h.repo.RevokeRefreshToken(userID, platform.HashRefreshToken(body.RefreshToken))
 		}
 	}
-	// borra cookie
-	http.SetCookie(w, &http.Cookie{
-		Name: "refresh_token", Value: "", Path: "/v1/auth",
-		Expires: time.Unix(0, 0), HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
-	})
+	// Next.js es el responsable de borrar las cookies — Go solo responde 204
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -156,59 +174,42 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ----------------- helpers de cookies -----------------
-
-func isProd() bool {
-	e := os.Getenv("ENV") // o APP_ENV
-	e = strings.ToLower(e)
-	return e == "prod" || e == "production"
-}
-
-func setAccessCookie(w http.ResponseWriter, token string) {
-	cookie := &http.Cookie{
-		Name:     "access_token",
-		Value:    token,
-		Path:     "/",     // disponible en todo el sitio
-		HttpOnly: true,    // no accesible por JS
-		MaxAge:   15 * 60, // 15 minutos
-	}
-
-	if isProd() {
-		cookie.Domain = ".autohst.dev"         // 👈 comparte entre cloud. y api.
-		cookie.Secure = true                   // HTTPS obligatorio
-		cookie.SameSite = http.SameSiteLaxMode // same-site (autohst.dev)
-	} else {
-		// Dev: normalmente ambos son localhost
-		cookie.SameSite = http.SameSiteLaxMode
-		cookie.Secure = false
-	}
-
-	http.SetCookie(w, cookie)
-}
-
-func setRefreshCookie(w http.ResponseWriter, rt string) {
-	ttl := 24 * time.Hour
-	if v := os.Getenv("REFRESH_TOKEN_TTL"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			ttl = d
-		}
-	}
-	println(rt)
-	http.SetCookie(w, &http.Cookie{
-		Name:     "refresh_token",
-		Value:    rt,
-		Path:     "/v1/auth",
-		MaxAge:   int(ttl.Seconds()),
-		HttpOnly: true,
-		Secure:   false,
-		SameSite: http.SameSiteLaxMode,
-	})
-}
-
 func clientIP(r *http.Request) string {
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return ""
 	}
 	return ip
+}
+
+func (h *AuthHandler) OAuthGoogle(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDToken string `json:"id_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.IDToken == "" {
+		http.Error(w, "id_token required", http.StatusBadRequest)
+		return
+	}
+
+	claims, err := platform.VerifyGoogleIDToken(body.IDToken)
+	if err != nil {
+		http.Error(w, "invalid google token", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := h.service.LoginOAuth(claims.Email, claims.Name, "google", claims.Sub)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	access, _ := platform.SignAccessToken(user.ID, user.Email)
+	rt, rtHash := platform.MakeRefreshPair()
+	_ = h.repo.StoreRefreshToken(user.ID, rtHash, r.UserAgent(), clientIP(r))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"access_token":  access,
+		"refresh_token": rt,
+	})
 }

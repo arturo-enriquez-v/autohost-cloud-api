@@ -39,16 +39,26 @@ func (s *Service) Register(email, name, password string) (userID string, err err
 	return s.repo.CreateUser(email, name, hash)
 }
 
-// Login autentica a un usuario
+// Login autentica a un usuario con email y contraseña
 func (s *Service) Login(email, password string) (*User, error) {
 	user, err := s.repo.FindUserByEmail(email)
 	if err != nil || user == nil {
 		return nil, ErrInvalidCredentials
 	}
 
-	if err := platform.CheckPassword(user.PasswordHash, password); err != nil {
+	// Usuarios de OAuth sin contraseña no pueden hacer login con password
+	if user.PasswordHash == nil {
+		return nil, ErrInvalidCredentials
+	}
+
+	if err := platform.CheckPassword(*user.PasswordHash, password); err != nil {
 		return nil, ErrInvalidCredentials
 	}
 
 	return user, nil
+}
+
+// LoginOAuth busca o crea un usuario mediante proveedor OAuth
+func (s *Service) LoginOAuth(email, name, provider, providerID string) (*User, error) {
+	return s.repo.FindOrCreateOAuthUser(email, name, provider, providerID)
 }

@@ -16,15 +16,13 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25" 
+          go-version: "1.25"
 
       - name: Build Linux binaries
         run: |
           mkdir -p dist
           GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o dist/autohost-api ./cmd/api
           GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o dist/autohost-migrate ./cmd/migrate
-
-          # 👇 Copiamos las migraciones dentro de dist
           cp -r migrations dist/migrations
 
       - name: Upload artifact
@@ -34,7 +32,7 @@ jobs:
           path: dist
 
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: build
 
     steps:
@@ -42,60 +40,49 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: autohost-api-binaries
-          path: dist  
-      - name: Debug - list files
+          path: dist
+
+      - name: Deploy locally
         run: |
-          echo "Contenido del workspace:"
-          pwd
-          ls -R
+          set -e
 
-      - name: Copy files to EC2
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: "dist/**"      
-          target: "/tmp/autohost" 
+          SHA_SHORT=$(echo "$GITHUB_SHA" | cut -c1-7)
+          RELEASE_DIR="/opt/autohost-api/releases/autohost-api-${SHA_SHORT}"
 
-      - name: SSH & deploy
-        uses: appleboy/ssh-action@v0.1.10
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          envs: GITHUB_SHA,DATABASE_URL
-          script: |
-            set -e
+          echo "Deploying release: $RELEASE_DIR"
 
-            SHA_SHORT=$(echo "$GITHUB_SHA" | cut -c1-7)
-            RELEASE_DIR="/opt/autohost-api/releases/autohost-api-${SHA_SHORT}"
+          # 🔥 Si el release ya existe, lo eliminamos
+          if [ -d "$RELEASE_DIR" ]; then
+            echo "Release already exists. Removing..."
+            sudo rm -rf "$RELEASE_DIR"
+          fi
 
-            sudo mkdir -p "$RELEASE_DIR"
+          sudo mkdir -p "$RELEASE_DIR"
 
-            # Lo que mandamos por scp queda como /tmp/autohost/dist/...
-            sudo mv /tmp/autohost/dist/autohost-api "$RELEASE_DIR/autohost-api"
-            sudo mv /tmp/autohost/dist/autohost-migrate "$RELEASE_DIR/autohost-migrate"
+          sudo mv dist/autohost-api "$RELEASE_DIR/"
+          sudo mv dist/autohost-migrate "$RELEASE_DIR/"
+          sudo mv dist/migrations "$RELEASE_DIR/"
 
-            sudo mkdir -p "$RELEASE_DIR/migrations"
-            sudo mv /tmp/autohost/dist/migrations/* "$RELEASE_DIR/migrations/"
+          sudo chmod +x "$RELEASE_DIR/autohost-api"
+          sudo chmod +x "$RELEASE_DIR/autohost-migrate"
+          sudo chown -R autohost:autohost "$RELEASE_DIR"
 
-            # Limpiamos tmp
-            sudo rm -rf /tmp/autohost
+          # 🔗 Cambio atómico del symlink
+          sudo ln -sfn "$RELEASE_DIR" /opt/autohost-api/current
+          sudo chown -h autohost:autohost /opt/autohost-api/current
 
-            sudo chmod +x "$RELEASE_DIR/autohost-api"
-            sudo chmod +x "$RELEASE_DIR/autohost-migrate"
-            sudo chown -R autohost:autohost "$RELEASE_DIR"
+          # 🚀 Ejecutar migraciones como usuario autohost
+          sudo -u autohost bash -c "
+            cd /opt/autohost-api/current
+            set -a
+            source /opt/autohost-api/.env
+            set +a
+            ./autohost-migrate up
+          "
 
-            sudo ln -sfn "$RELEASE_DIR" /opt/autohost-api/current
-            sudo chown -h autohost:autohost /opt/autohost-api/current
+          # 🔄 Reiniciar servicio
+          sudo systemctl daemon-reload
+          sudo systemctl restart autohost-api
 
-            # 🧩 Correr migraciones con DATABASE_URL del secret
-            cd "$RELEASE_DIR"
-            sudo -u autohost DATABASE_URL="$DATABASE_URL" ./autohost-migrate up
-
-            # 🚀 Reiniciar API
-            sudo systemctl restart autohost-api
-            sudo systemctl status autohost-api --no-pager -l || true
+          # 📊 Mostrar estado (no romper pipeline si falla)
+          sudo systemctl status autohost-api --no-pager -l || true

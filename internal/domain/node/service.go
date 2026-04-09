@@ -38,3 +38,35 @@ func (s *Service) GetByOwner(ownerID string) ([]*Node, error) {
 func (s *Service) GetByOwnerWithMetrics(ownerID string) ([]*NodeWithMetrics, error) {
 	return s.repo.FindByOwnerIDWithMetrics(ownerID)
 }
+
+// GetByID returns a single node by its ID.
+func (s *Service) GetByID(id string) (*Node, error) {
+	return s.repo.FindByID(id)
+}
+
+func (s *Service) Update(id, hostname string) (*Node, error) {
+	node, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, ErrNodeNotFound
+	}
+
+	if hostname != "" {
+		node.Hostname = hostname
+	}
+
+	return s.repo.Update(node)
+}
+
+func (s *Service) Delete(id string) error {
+	if id == "" {
+		return ErrInvalidNodeData
+	}
+	_, err := s.repo.FindByID(id)
+	if err != nil {
+		return err
+	}
+	return s.repo.Delete(id)
+}

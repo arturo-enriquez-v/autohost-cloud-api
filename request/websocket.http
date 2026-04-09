@@ -1,0 +1,69 @@
+### WebSocket Connection Test - Node Agent
+# Nota: Este WebSocket es para agentes/nodos, no para usuarios
+# El agente debe autenticarse con un node_token
+
+# Comando wscat (después de obtener un node_token):
+# wscat -c "ws://localhost:8080/v1/ws" -H "Authorization: Bearer ah_node_YOUR_NODE_TOKEN_HERE"
+
+### Ejemplo de cliente JavaScript para probar el WebSocket desde un nodo
+
+/*
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Test</title>
+</head>
+<body>
+    <h1>WebSocket Test</h1>
+    <div id="status">Disconnected</div>
+    <div id="messages"></div>
+    <input type="text" id="messageInput" placeholder="Enter message">
+    <button onclick="sendMessage()">Send</button>
+    <button onclick="sendPing()">Ping</button>
+
+    <script>
+        const nodeToken = 'ah_node_YOUR_NODE_TOKEN_HERE'; // Reemplaza con tu node token
+        const ws = new WebSocket('ws://localhost:8080/v1/ws');
+        
+        // Nota: WebSocket API del navegador no soporta headers personalizados
+        // Para enviar el token, deberías usar una biblioteca como 'ws' en Node.js
+        // o enviar el token como query parameter (requeriría modificar el middleware)
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            console.log('Received:', data);
+            const messagesDiv = document.getElementById('messages');
+            messagesDiv.innerHTML += `<p><strong>${data.type}</strong>: ${JSON.stringify(data.payload)} at ${data.timestamp}</p>`;
+        };
+
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+        };
+
+        ws.onclose = () => {
+            document.getElementById('status').textContent = 'Disconnected';
+            console.log('WebSocket disconnected');
+        };
+
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const message = {
+                type: 'echo',
+                payload: { text: input.value },
+                timestamp: new Date().toISOString()
+            };
+            ws.send(JSON.stringify(message));
+            input.value = '';
+        }
+
+        function sendPing() {
+            const message = {
+                type: 'ping',
+                timestamp: new Date().toISOString()
+            };
+            ws.send(JSON.stringify(message));
+        }
+    </script>
+</body>
+</html>
+*/
