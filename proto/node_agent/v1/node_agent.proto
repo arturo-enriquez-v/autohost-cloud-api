@@ -7,8 +7,9 @@ option go_package = "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb";
 // ─── Shared enums ────────────────────────────────────────────────────────────
 
 enum CommandType {
-  COMMAND_TYPE_DEFAULT = 0;
-  COMMAND_TYPE_CUSTOM  = 1;
+  COMMAND_TYPE_DEFAULT     = 0;
+  COMMAND_TYPE_CUSTOM      = 1;
+  COMMAND_TYPE_INSTALL_APP = 2;
 }
 
 enum JobStatus {
@@ -70,6 +71,7 @@ message ExecuteJobPayload {
   string      job_id       = 1;
   string      command_name = 2;
   CommandType command_type = 3;
+  string      params       = 4;  // JSON-encoded parameters (e.g. for INSTALL_APP)
 }
 
 // ─── Log streaming ───────────────────────────────────────────────────────────

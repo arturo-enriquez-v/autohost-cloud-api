@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log"
 	"net/http"
 	"os"
 
@@ -19,6 +20,7 @@ import (
 	scheduledtask "github.com/arturo/autohost-cloud-api/internal/domain/scheduled_task"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	handlerMiddleware "github.com/arturo/autohost-cloud-api/internal/handler/middleware"
+	"github.com/arturo/autohost-cloud-api/internal/platform"
 	"github.com/arturo/autohost-cloud-api/internal/repository/postgres"
 	"github.com/arturo/autohost-cloud-api/internal/scheduler"
 )
@@ -58,6 +60,7 @@ func NewRouter(cfg *Config) *Application {
 	jobRepo := postgres.NewJobRepository(cfg.DB)
 	nodeAlertRepo := postgres.NewNodeAlertRepository(cfg.DB)
 	scheduledTaskRepo := postgres.NewScheduledTaskRepository(cfg.DB)
+	marketplaceRepo := postgres.NewMarketplaceRepository(cfg.DB)
 
 	// Services
 	authService := auth.NewService(authRepo)
@@ -91,6 +94,15 @@ func NewRouter(cfg *Config) *Application {
 	dispatcher := NewMultiDispatcher(grpcSrv, wsHandler)
 	jobHandler := NewJobHandler(jobService, dispatcher)
 
+	// Marketplace: R2 client is optional — marketplace routes are only mounted
+	// when R2 credentials are present in the environment.
+	var marketplaceHandler *MarketplaceHandler
+	if r2, err := platform.NewR2Client(); err == nil {
+		marketplaceHandler = NewMarketplaceHandler(jobService, marketplaceRepo, grpcSrv, r2)
+	} else {
+		log.Printf("[WARN] marketplace: R2 not configured (%v) — /marketplace routes disabled", err)
+	}
+
 	r.Route("/v1", func(r chi.Router) {
 		r.Mount("/auth", authHandler.Routes())
 		r.Mount("/nodes", nodeHandler.Routes())
@@ -103,6 +115,9 @@ func NewRouter(cfg *Config) *Application {
 		r.Mount("/node-logs", nodeLogHandler.Routes())
 		r.Mount("/node-alerts", nodeAlertHandler.Routes())
 		r.Mount("/scheduled-tasks", scheduledTaskHandler.Routes())
+		if marketplaceHandler != nil {
+			r.Mount("/marketplace", marketplaceHandler.Routes())
+		}
 	})
 
 	sched := scheduler.NewScheduler(scheduledTaskService, jobService, dispatcher)

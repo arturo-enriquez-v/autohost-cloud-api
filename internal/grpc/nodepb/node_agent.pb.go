@@ -24,8 +24,9 @@ const (
 type CommandType int32
 
 const (
-	CommandType_COMMAND_TYPE_DEFAULT CommandType = 0
-	CommandType_COMMAND_TYPE_CUSTOM  CommandType = 1
+	CommandType_COMMAND_TYPE_DEFAULT     CommandType = 0
+	CommandType_COMMAND_TYPE_CUSTOM      CommandType = 1
+	CommandType_COMMAND_TYPE_INSTALL_APP CommandType = 2
 )
 
 // Enum value maps for CommandType.
@@ -33,10 +34,12 @@ var (
 	CommandType_name = map[int32]string{
 		0: "COMMAND_TYPE_DEFAULT",
 		1: "COMMAND_TYPE_CUSTOM",
+		2: "COMMAND_TYPE_INSTALL_APP",
 	}
 	CommandType_value = map[string]int32{
-		"COMMAND_TYPE_DEFAULT": 0,
-		"COMMAND_TYPE_CUSTOM":  1,
+		"COMMAND_TYPE_DEFAULT":     0,
+		"COMMAND_TYPE_CUSTOM":      1,
+		"COMMAND_TYPE_INSTALL_APP": 2,
 	}
 )
 
@@ -549,6 +552,7 @@ type ExecuteJobPayload struct {
 	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
 	CommandName   string                 `protobuf:"bytes,2,opt,name=command_name,json=commandName,proto3" json:"command_name,omitempty"`
 	CommandType   CommandType            `protobuf:"varint,3,opt,name=command_type,json=commandType,proto3,enum=node_agent.v1.CommandType" json:"command_type,omitempty"`
+	Params        string                 `protobuf:"bytes,4,opt,name=params,proto3" json:"params,omitempty"` // JSON-encoded parameters (e.g. for INSTALL_APP)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -602,6 +606,13 @@ func (x *ExecuteJobPayload) GetCommandType() CommandType {
 		return x.CommandType
 	}
 	return CommandType_COMMAND_TYPE_DEFAULT
+}
+
+func (x *ExecuteJobPayload) GetParams() string {
+	if x != nil {
+		return x.Params
+	}
+	return ""
 }
 
 // Sent by server to ask the agent to start streaming logs.
@@ -950,11 +961,12 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"\x06output\x18\x03 \x01(\tR\x06output\x12\x14\n" +
 	"\x05error\x18\x04 \x01(\tR\x05error\"+\n" +
 	"\x10HeartbeatPayload\x12\x17\n" +
-	"\anode_id\x18\x01 \x01(\tR\x06nodeId\"\x8c\x01\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\"\xa4\x01\n" +
 	"\x11ExecuteJobPayload\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12!\n" +
 	"\fcommand_name\x18\x02 \x01(\tR\vcommandName\x12=\n" +
-	"\fcommand_type\x18\x03 \x01(\x0e2\x1a.node_agent.v1.CommandTypeR\vcommandType\"=\n" +
+	"\fcommand_type\x18\x03 \x01(\x0e2\x1a.node_agent.v1.CommandTypeR\vcommandType\x12\x16\n" +
+	"\x06params\x18\x04 \x01(\tR\x06params\"=\n" +
 	"\x11StreamLogsPayload\x12\x12\n" +
 	"\x04unit\x18\x01 \x01(\tR\x04unit\x12\x14\n" +
 	"\x05lines\x18\x02 \x01(\x05R\x05lines\"\x11\n" +
@@ -976,10 +988,11 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"\x0euptime_seconds\x18\n" +
 	" \x01(\x03R\ruptimeSeconds\"*\n" +
 	"\x0eMetricResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess*@\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess*^\n" +
 	"\vCommandType\x12\x18\n" +
 	"\x14COMMAND_TYPE_DEFAULT\x10\x00\x12\x17\n" +
-	"\x13COMMAND_TYPE_CUSTOM\x10\x01*T\n" +
+	"\x13COMMAND_TYPE_CUSTOM\x10\x01\x12\x1c\n" +
+	"\x18COMMAND_TYPE_INSTALL_APP\x10\x02*T\n" +
 	"\tJobStatus\x12\x16\n" +
 	"\x12JOB_STATUS_RUNNING\x10\x00\x12\x18\n" +
 	"\x14JOB_STATUS_COMPLETED\x10\x01\x12\x15\n" +
