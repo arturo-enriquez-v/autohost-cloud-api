@@ -30,10 +30,10 @@ type InstallAppParams struct {
 
 // MarketplaceHandler handles marketplace app listing and deployment.
 type MarketplaceHandler struct {
-	jobService    *job.Service
+	jobService      *job.Service
 	marketplaceRepo marketplace.Repository
-	dispatcher    ParamDispatcher
-	r2            *platform.R2Client
+	dispatcher      ParamDispatcher
+	r2              *platform.R2Client
 }
 
 func NewMarketplaceHandler(
