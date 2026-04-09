@@ -12,7 +12,7 @@ docker:
 
 run-air:
 	docker compose up -d
-	air -c .air.toml
+	$(shell go env GOPATH)/bin/air -c .air.toml
 
 
 migrate-up:

@@ -1,217 +1,216 @@
 # Autohost Cloud API
 
-A REST API for managing distributed nodes and agents, built with Go and PostgreSQL.
+REST API para gestión de nodos distribuidos y agentes, construida con Go y PostgreSQL.
 
-## Features
+## Stack
 
-- 🔐 User authentication with JWT tokens
-- 🖥️ Node/server registration and management
-- 🎫 Enrollment token system for secure agent onboarding
-- 💓 Heartbeat monitoring
-- 🔄 Refresh token rotation
-- 📊 PostgreSQL database with migrations
-
-## Tech Stack
-
-- **Language:** Go 1.21+
-- **Database:** PostgreSQL 16
+- **Go** 1.25+
+- **PostgreSQL** 16
 - **Router:** Chi v5
 - **Migrations:** golang-migrate
 - **Live reload:** Air
 
-## Prerequisites
+## Requisitos previos
 
-- Go 1.21 or higher
+- Go 1.25+
 - Docker & Docker Compose
-- Make (optional, but recommended)
+- [Air](https://github.com/air-verse/air) (solo para desarrollo con live reload): `go install github.com/air-verse/air@latest`
 
-## Quick Start
+> **Nota:** tras instalar Air, asegúrate de que `~/go/bin` esté en tu `PATH`, o simplemente usa `make run-air` que ya resuelve la ruta automáticamente.
 
-### 1. Clone the repository
+## Arranque rápido
+
+### 1. Clonar el repositorio
 
 ```bash
-git clone https://github.com/mazapanuwu13/autohost-cloud-api.git
+git clone https://github.com/arturo/autohost-cloud-api.git
 cd autohost-cloud-api
 ```
 
-### 2. Set up environment variables
+### 2. Configurar variables de entorno
 
-Create a `.env` file in the root directory:
+Copia el archivo de ejemplo y edítalo:
+
+```bash
+cp .env.example .env
+```
+
+Variables disponibles:
 
 ```bash
 PORT=8080
+GRPC_PORT=9090
 DATABASE_URL=postgres://autohost:autohost@localhost:5432/autohost?sslmode=disable
-JWT_SECRET=your_super_secret_key_change_this_in_production
+JWT_SECRET=supersecret            # cambiar en producción
 ACCESS_TOKEN_TTL=15m
-REFRESH_TOKEN_TTL=720h
+REFRESH_TOKEN_TTL=24h
 FRONTEND_URL=http://localhost:3000
-ENV=development
+
+# OAuth — Google (opcional)
+GOOGLE_CLIENT_ID=
+
+# R2 Cloud Storage (opcional)
+R2_ACCOUNT_ID=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET_NAME=
 ```
 
-### 3. Start PostgreSQL with Docker Compose
-
-```bash
-docker compose up -d
-```
-
-This will start:
-- PostgreSQL on port `5432`
-- pgAdmin on port `5050` (optional)
-
-### 4. Run database migrations
-
-```bash
-make migrate-up
-```
-
-### 5. Install Go dependencies
+### 3. Instalar dependencias
 
 ```bash
 go mod download
 ```
 
-### 6. Run the application
+### 4. Levantar la base de datos
 
-**Development mode with live reload:**
+```bash
+docker compose up -d
+```
+
+Servicios que se inician:
+- **PostgreSQL** en `localhost:5432`
+- **pgAdmin** en `http://localhost:5050` (opcional)
+
+### 5. Ejecutar migraciones
+
+```bash
+make migrate-up
+```
+
+### 6. Ejecutar la aplicación
+
+**Modo desarrollo (live reload, incluye levantar docker compose):**
 ```bash
 make run-air
 ```
 
-**Production mode:**
+**Modo producción:**
 ```bash
 make run
 ```
 
-The API will be available at `http://localhost:8080`
+La API estará disponible en `http://localhost:8080`.
 
-## Project Structure
+---
+
+## Estructura del proyecto
 
 ```
 .
 ├── cmd/
-│   ├── api/              # Main application entry point
-│   └── migrate/          # Migration runner
+│   ├── api/              # Entry point principal
+│   └── migrate/          # Runner de migraciones
 ├── internal/
-│   ├── domain/           # Business logic & entities
-│   │   ├── auth/
-│   │   ├── node/
-│   │   └── enrollment/
-│   ├── repository/       # Data persistence layer
-│   │   └── postgres/
-│   ├── handler/          # HTTP handlers
-│   │   └── middleware/
-│   └── platform/         # Infrastructure utilities
-├── migrations/           # Database migrations
-├── request/              # HTTP request examples (.http files)
-├── compose.yml           # Docker Compose configuration
-└── Makefile             # Common commands
+│   ├── domain/           # Lógica de negocio y entidades
+│   ├── repository/       # Implementaciones de base de datos (postgres/)
+│   ├── handler/          # HTTP handlers y middleware
+│   └── platform/         # Utilidades de infraestructura (JWT, hashing…)
+├── migrations/           # Archivos SQL de migraciones
+├── request/              # Ejemplos de peticiones HTTP (.http)
+├── compose.yml
+└── Makefile
 ```
+
+---
 
 ## API Endpoints
 
-### Authentication
+### Health
 
-- `POST /v1/auth/register` - Register new user
-- `POST /v1/auth/login` - Login user
-- `POST /v1/auth/refresh` - Refresh access token
-- `POST /v1/auth/logout` - Logout user
-- `GET /v1/auth/me` - Get current user (requires auth)
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/health` | Estado del servicio |
 
-### Nodes
+### Auth
 
-- `POST /v1/nodes/register` - Register a new node (requires auth)
-- `GET /v1/nodes` - List user's nodes (requires auth)
+| Método | Ruta | Auth | Descripción |
+|--------|------|------|-------------|
+| `POST` | `/v1/auth/register` | — | Registrar usuario |
+| `POST` | `/v1/auth/login` | — | Iniciar sesión |
+| `POST` | `/v1/auth/refresh` | — | Refrescar access token |
+| `POST` | `/v1/auth/logout` | — | Cerrar sesión |
+| `GET` | `/v1/auth/me` | JWT | Usuario actual |
 
-### Enrollment
+### Nodos
 
-- `POST /v1/enrollments/generate` - Generate enrollment token (requires auth)
-- `POST /v1/enrollments/enroll` - Enroll node with token
+| Método | Ruta | Auth | Descripción |
+|--------|------|------|-------------|
+| `GET` | `/v1/nodes` | JWT | Listar nodos del usuario |
+| `GET` | `/v1/nodes/with-metrics` | JWT | Listar nodos con últimas métricas |
 
-## Testing API Endpoints
+### Enrollment (incorporación de agentes)
 
-### Using REST Client (VS Code)
+| Método | Ruta | Auth | Descripción |
+|--------|------|------|-------------|
+| `POST` | `/v1/enrollments/generate` | JWT | Generar token de enrollment |
+| `POST` | `/v1/enrollments/enroll` | — | Registrar nodo con token |
 
-1. Install the REST Client extension:
-```bash
-code --install-extension humao.rest-client
-```
+### Heartbeats (autenticación por node token)
 
-2. Open `request/user.http` and click "Send Request" above each endpoint
+| Método | Ruta | Auth | Descripción |
+|--------|------|------|-------------|
+| `POST` | `/v1/heartbeats/heartbeat` | Node token | Enviar heartbeat |
 
-### Using curl
+### Métricas de nodo (autenticación por node token)
 
-See examples in `request/register_user.txt` or use the `.http` files
+| Método | Ruta | Auth | Descripción |
+|--------|------|------|-------------|
+| `POST` | `/v1/node-metrics/metrics` | Node token | Enviar métricas del nodo |
 
-## Database Management
+---
 
-### pgAdmin
-
-Access pgAdmin at `http://localhost:5050`:
-- **Email:** `admin@localhost.com`
-- **Password:** `devpass`
-
-Connection settings:
-- **Host:** `postgres`
-- **Port:** `5432`
-- **Database:** `autohost`
-- **Username:** `autohost`
-- **Password:** `autohost`
-
-### Migrations
+## Comandos Make
 
 ```bash
-# Create new migration
-make migrate-create name=your_migration_name
-
-# Apply migrations
-make migrate-up
-
-# Rollback one migration
-make migrate-down
-
-# Check migration status
-make migrate-version
+make run              # Ejecutar la aplicación
+make run-air          # Levantar docker compose + live reload con Air
+make build            # Compilar binario en bin/
+make test             # Ejecutar tests
+make docker           # Construir imagen Docker
+make migrate-up       # Aplicar migraciones pendientes
+make migrate-down     # Revertir última migración
+make migrate-version  # Ver versión de migración actual
 ```
 
-### Direct database access
+---
+
+## Base de datos
+
+### Acceso directo
 
 ```bash
 docker exec -it ahcl-postgres psql -U autohost -d autohost
 ```
 
-## Available Make Commands
+### pgAdmin
 
-```bash
-make run          # Run the application
-make run-air      # Run with live reload
-make build        # Build the binary
-make test         # Run tests
-make migrate-up   # Apply database migrations
-make migrate-down # Rollback last migration
-make migrate-create name=xyz  # Create new migration
-```
+Disponible en `http://localhost:5050`:
+- **Email:** `admin@localhost.com`
+- **Password:** `devpass`
 
-## Development
+Conexión:
+- **Host:** `postgres` · **Port:** `5432`
+- **Database:** `autohost` · **User/Pass:** `autohost`
 
-### Project follows Clean Architecture:
+---
 
-1. **Domain Layer** (`internal/domain/`): Business logic, entities, and repository interfaces
-2. **Repository Layer** (`internal/repository/`): Database implementations
-3. **Handler Layer** (`internal/handler/`): HTTP request handling
-4. **Platform Layer** (`internal/platform/`): Infrastructure utilities (JWT, password hashing, etc.)
+## Arquitectura
 
-### Adding a new feature:
+El proyecto sigue Clean Architecture:
 
-1. Define domain entity and service in `internal/domain/`
-2. Implement repository in `internal/repository/postgres/`
-3. Create HTTP handler in `internal/handler/`
-4. Register routes in `internal/handler/router.go`
-5. Add migration if database changes needed
+1. **Domain** (`internal/domain/`): entidades, servicios e interfaces de repositorio
+2. **Repository** (`internal/repository/postgres/`): implementaciones de base de datos
+3. **Handler** (`internal/handler/`): HTTP handlers y middleware
+4. **Platform** (`internal/platform/`): JWT, hashing de contraseñas, etc.
 
-## License
+Para agregar una funcionalidad nueva:
+1. Definir entidad y servicio en `internal/domain/`
+2. Implementar repositorio en `internal/repository/postgres/`
+3. Crear handler HTTP en `internal/handler/`
+4. Registrar rutas en `internal/handler/router.go`
+5. Crear migración si hay cambios en el esquema
+
+## Licencia
 
 MIT
-
-## Contributing
-
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
