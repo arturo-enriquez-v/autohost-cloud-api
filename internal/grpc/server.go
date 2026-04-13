@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/arturo/autohost-cloud-api/internal/domain/job"
+	"github.com/arturo/autohost-cloud-api/internal/domain/marketplace"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
@@ -17,11 +18,12 @@ import (
 type NodeAgentServer struct {
 	pb.UnimplementedNodeAgentServiceServer
 
-	commandSvc *nodecommand.Service
-	jobSvc     *job.Service
-	tokenSvc   *nodetoken.Service
-	alertSvc   *nodealert.Service
-	nodeSvc    *node.Service
+	commandSvc      *nodecommand.Service
+	jobSvc          *job.Service
+	tokenSvc        *nodetoken.Service
+	alertSvc        *nodealert.Service
+	nodeSvc         *node.Service
+	marketplaceRepo marketplace.Repository
 
 	registry *streamRegistry
 	logs     *logBroker
@@ -34,15 +36,17 @@ func NewNodeAgentServer(
 	tokenSvc *nodetoken.Service,
 	alertSvc *nodealert.Service,
 	nodeSvc *node.Service,
+	marketplaceRepo marketplace.Repository,
 ) *NodeAgentServer {
 	reg := newStreamRegistry()
 	s := &NodeAgentServer{
-		commandSvc: commandSvc,
-		jobSvc:     jobSvc,
-		tokenSvc:   tokenSvc,
-		alertSvc:   alertSvc,
-		nodeSvc:    nodeSvc,
-		registry:   reg,
+		commandSvc:      commandSvc,
+		jobSvc:          jobSvc,
+		tokenSvc:        tokenSvc,
+		alertSvc:        alertSvc,
+		nodeSvc:         nodeSvc,
+		marketplaceRepo: marketplaceRepo,
+		registry:        reg,
 	}
 	s.logs = newLogBroker(reg.sendToNode)
 	return s
@@ -143,15 +147,31 @@ func (s *NodeAgentServer) Connect(
 		switch p := in.Payload.(type) {
 		case *pb.NodeMessage_JobResult:
 			r := p.JobResult
+			jobStatus := job.JobStatus(pbJobStatus(r.GetStatus()))
 			if err := s.jobSvc.UpdateResult(
 				r.GetJobId(),
-				job.JobStatus(pbJobStatus(r.GetStatus())),
+				jobStatus,
 				r.GetOutput(),
 				r.GetError(),
 			); err != nil {
 				log.Printf("[gRPC] update job %s: %v", r.GetJobId(), err)
 			} else {
 				log.Printf("[gRPC] job %s -> %s (node %s)", r.GetJobId(), r.GetStatus(), nodeID)
+			}
+
+			// Sync marketplace_apps status when an install job finishes.
+			if s.marketplaceRepo != nil {
+				if mApp, err := s.marketplaceRepo.FindByJobID(r.GetJobId()); err == nil {
+					var appStatus marketplace.AppStatus
+					if jobStatus == job.StatusCompleted {
+						appStatus = marketplace.StatusRunning
+					} else {
+						appStatus = marketplace.StatusFailed
+					}
+					if err := s.marketplaceRepo.UpdateStatus(mApp.ID, appStatus); err != nil {
+						log.Printf("[gRPC] update marketplace app %s status: %v", mApp.ID, err)
+					}
+				}
 			}
 
 		case *pb.NodeMessage_Heartbeat:

@@ -33,6 +33,8 @@ func (r *MarketplaceRepository) Create(app *marketplace.MarketplaceApp) (*market
 	err := r.db.QueryRowContext(context.Background(), `
 		INSERT INTO marketplace_apps (node_id, app_name, status)
 		VALUES ($1, $2, $3)
+		ON CONFLICT (node_id, app_name)
+		DO UPDATE SET status = 'installing', job_id = NULL, updated_at = NOW()
 		RETURNING id, node_id, app_name, job_id, status, created_at, updated_at`,
 		app.NodeID, app.AppName, app.Status,
 	).Scan(&m.ID, &m.NodeID, &m.AppName, &m.JobID, &m.Status, &m.CreatedAt, &m.UpdatedAt)
@@ -55,6 +57,17 @@ func (r *MarketplaceRepository) FindByNodeID(nodeID string) ([]*marketplace.Mark
 		result[i] = modelToMarketplaceApp(m)
 	}
 	return result, nil
+}
+
+func (r *MarketplaceRepository) FindByJobID(jobID string) (*marketplace.MarketplaceApp, error) {
+	var m marketplaceAppModel
+	err := r.db.GetContext(context.Background(), &m,
+		`SELECT id, node_id, app_name, job_id, status, created_at, updated_at
+		 FROM marketplace_apps WHERE job_id = $1`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	return modelToMarketplaceApp(m), nil
 }
 
 func (r *MarketplaceRepository) UpdateStatus(id string, status marketplace.AppStatus) error {

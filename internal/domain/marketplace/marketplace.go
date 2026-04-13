@@ -51,6 +51,7 @@ type MarketplaceApp struct {
 type Repository interface {
 	Create(app *MarketplaceApp) (*MarketplaceApp, error)
 	FindByNodeID(nodeID string) ([]*MarketplaceApp, error)
+	FindByJobID(jobID string) (*MarketplaceApp, error)
 	UpdateStatus(id string, status AppStatus) error
 	UpdateJobID(id, jobID string) error
 }
