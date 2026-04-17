@@ -76,7 +76,7 @@ func NewRouter(cfg *Config) *Application {
 	nodeAuthMiddleware := handlerMiddleware.NodeAuth(nodeTokenService)
 
 	// gRPC server — also a NodeDispatcher over gRPC transport
-	grpcSrv := grpcserver.NewNodeAgentServer(nodeCommandService, jobService, nodeTokenService, nodeAlertService, nodeService, nodeMetricService)
+	grpcSrv := grpcserver.NewNodeAgentServer(nodeCommandService, jobService, nodeTokenService, nodeAlertService, nodeService, nodeMetricService, marketplaceRepo)
 
 	// HTTP handlers
 	authHandler := NewAuthHandler(authService, authRepo)
