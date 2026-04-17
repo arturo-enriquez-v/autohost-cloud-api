@@ -9,8 +9,9 @@ import (
 type CommandType string
 
 const (
-	CommandTypeDefault CommandType = "default"
-	CommandTypeCustom  CommandType = "custom"
+	CommandTypeDefault    CommandType = "default"
+	CommandTypeCustom     CommandType = "custom"
+	CommandTypeInstallApp CommandType = "install_app"
 )
 
 var (

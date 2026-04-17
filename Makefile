@@ -1,4 +1,4 @@
-.PHONY: proto build test docker dev migrate-up migrate-down migrate-version
+.PHONY: proto build test docker dev run-air migrate-up migrate-down migrate-version
 
 proto:
 	protoc --go_out=. --go_opt=module=github.com/arturo/autohost-cloud-api \
@@ -14,9 +14,11 @@ test:
 docker:
 	docker build -t autohost-cloud-lite .
 
-dev:
+dev: run-air
+
+run-air:
 	docker compose up -d
-	air -c .air.toml
+	$(shell go env GOPATH)/bin/air -c .air.toml
 
 
 migrate-up:

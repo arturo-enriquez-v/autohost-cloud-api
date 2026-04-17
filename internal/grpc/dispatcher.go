@@ -22,9 +22,22 @@ func (s *NodeAgentServer) DispatchJob(
 	nodeID, jobID, commandName string,
 	commandType nodecommand.CommandType,
 ) error {
+	return s.DispatchJobWithParams(nodeID, jobID, commandName, commandType, "")
+}
+
+// DispatchJobWithParams is like DispatchJob but also sends a JSON-encoded
+// params string that the agent passes to the command handler as payload.
+func (s *NodeAgentServer) DispatchJobWithParams(
+	nodeID, jobID, commandName string,
+	commandType nodecommand.CommandType,
+	params string,
+) error {
 	ct := pb.CommandType_COMMAND_TYPE_DEFAULT
-	if commandType == nodecommand.CommandTypeCustom {
+	switch commandType {
+	case nodecommand.CommandTypeCustom:
 		ct = pb.CommandType_COMMAND_TYPE_CUSTOM
+	case nodecommand.CommandTypeInstallApp:
+		ct = pb.CommandType_COMMAND_TYPE_INSTALL_APP
 	}
 	msg := &pb.ServerMessage{
 		Payload: &pb.ServerMessage_ExecuteJob{
@@ -32,6 +45,7 @@ func (s *NodeAgentServer) DispatchJob(
 				JobId:       jobID,
 				CommandName: commandName,
 				CommandType: ct,
+				Params:      params,
 			},
 		},
 	}

@@ -7,8 +7,9 @@ option go_package = "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb";
 // ─── Shared enums ────────────────────────────────────────────────────────────
 
 enum CommandType {
-  COMMAND_TYPE_DEFAULT = 0;
-  COMMAND_TYPE_CUSTOM  = 1;
+  COMMAND_TYPE_DEFAULT     = 0;
+  COMMAND_TYPE_CUSTOM      = 1;
+  COMMAND_TYPE_INSTALL_APP = 2;
 }
 
 enum JobStatus {
@@ -44,7 +45,24 @@ message NodeMessage {
     JobResultPayload  job_result  = 1;
     HeartbeatPayload  heartbeat   = 2;
     LogEntryPayload   log_entry   = 3;
+    MetricPayload     metric      = 4;
   }
+}
+
+// ─── Metric (agent → server, via Connect stream) ─────────────────────────────
+// Mirrors MetricRequest but lives in NodeMessage for the Connect stream.
+
+message MetricPayload {
+  float  cpu_usage_percent    = 1;
+  uint64 ram_total_bytes      = 2;
+  uint64 ram_used_bytes       = 3;
+  uint64 ram_available_bytes  = 4;
+  float  ram_usage_percent    = 5;
+  uint64 disk_total_bytes     = 6;
+  uint64 disk_used_bytes      = 7;
+  uint64 disk_available_bytes = 8;
+  float  disk_usage_percent   = 9;
+  int64  uptime_seconds       = 10;
 }
 
 message ServerMessage {
@@ -70,6 +88,7 @@ message ExecuteJobPayload {
   string      job_id       = 1;
   string      command_name = 2;
   CommandType command_type = 3;
+  string      params       = 4;  // JSON-encoded parameters (e.g. for INSTALL_APP)
 }
 
 // ─── Log streaming ───────────────────────────────────────────────────────────
