@@ -11,6 +11,7 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
+	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 	"github.com/go-chi/chi/v5"
@@ -24,16 +25,18 @@ type NodeMetricHandler struct {
 	service      *nodemetric.Service
 	alertService *nodealert.Service
 	nodeService  *node.Service
+	grpc         *grpcserver.NodeAgentServer
 
 	cooldownMu sync.Mutex
 	cooldowns  map[string]time.Time // key: "nodeID:metricName"
 }
 
-func NewNodeMetricHandler(service *nodemetric.Service, alertService *nodealert.Service, nodeService *node.Service) *NodeMetricHandler {
+func NewNodeMetricHandler(service *nodemetric.Service, alertService *nodealert.Service, nodeService *node.Service, grpc *grpcserver.NodeAgentServer) *NodeMetricHandler {
 	return &NodeMetricHandler{
 		service:      service,
 		alertService: alertService,
 		nodeService:  nodeService,
+		grpc:         grpc,
 		cooldowns:    make(map[string]time.Time),
 	}
 }
@@ -46,8 +49,9 @@ func (h *NodeMetricHandler) Routes(nodeMetricMiddleware func(http.Handler) http.
 		protected.Post("/metrics", h.PostMetrics)
 	})
 
-	// User-authenticated history endpoint
+	// User-authenticated endpoints
 	r.With(middleware.Auth).Get("/{nodeId}/history", h.GetHistory)
+	r.With(middleware.Auth).Get("/{nodeId}/live", h.StreamLiveMetrics)
 
 	return r
 }
@@ -193,20 +197,96 @@ func (h *NodeMetricHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(points)
 }
 
-// func (h *NodeMetricHandler) ListMetrics(w http.ResponseWriter, r *http.Request) {
-// 	claims := middleware.GetClaims(r.Context())
-// 	if claims == nil || claims.UserID == "" {
-// 		http.Error(w, "unauthorized", http.StatusUnauthorized)
-// 		return
-// 	}
+// StreamLiveMetrics streams real-time metric updates from the node to the
+// browser via Server-Sent Events.  Requires a valid user JWT.
+func (h *NodeMetricHandler) StreamLiveMetrics(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.UserID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 
-// 	// Usar el servicio para obtener métricas
-// 	metrics, err := h.service.GetMetricsByNodeID()
-// 	if err != nil {
-// 		http.Error(w, "could not list metrics", http.StatusInternalServerError)
-// 		return
-// 	}
+	nodeID := chi.URLParam(r, "nodeId")
 
-// 	w.Header().Set("Content-Type", "application/json")
-// 	json.NewEncoder(w).Encode(metrics)
-// }
+	// Verify the node belongs to the authenticated user.
+	n, err := h.nodeService.GetByID(nodeID)
+	if err != nil || n == nil {
+		http.Error(w, "node not found", http.StatusNotFound)
+		return
+	}
+	if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	// SSE headers.
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	ch, cancel := h.grpc.SubscribeToNodeMetrics(nodeID)
+	defer cancel()
+
+	log.Printf("[SSE] live metrics stream started for node %s", nodeID)
+
+	fmt.Fprintf(w, ": connected\n\n")
+	flusher.Flush()
+
+	// Keepalive ticker so the browser knows the connection is alive.
+	keepalive := time.NewTicker(30 * time.Second)
+	defer keepalive.Stop()
+
+	type liveMetric struct {
+		CPUUsagePercent    float32 `json:"cpu_usage_percent"`
+		RAMTotalBytes      uint64  `json:"ram_total_bytes"`
+		RAMUsedBytes       uint64  `json:"ram_used_bytes"`
+		RAMAvailableBytes  uint64  `json:"ram_available_bytes"`
+		RAMUsagePercent    float32 `json:"ram_usage_percent"`
+		DiskTotalBytes     uint64  `json:"disk_total_bytes"`
+		DiskUsedBytes      uint64  `json:"disk_used_bytes"`
+		DiskAvailableBytes uint64  `json:"disk_available_bytes"`
+		DiskUsagePercent   float32 `json:"disk_usage_percent"`
+		UptimeSeconds      int64   `json:"uptime_seconds"`
+		CollectedAt        string  `json:"collected_at"`
+	}
+
+	for {
+		select {
+		case <-r.Context().Done():
+			log.Printf("[SSE] live metrics stream closed for node %s", nodeID)
+			return
+
+		case <-keepalive.C:
+			fmt.Fprintf(w, ": keepalive\n\n")
+			flusher.Flush()
+
+		case m, ok := <-ch:
+			if !ok {
+				return
+			}
+			payload := liveMetric{
+				CPUUsagePercent:    m.GetCpuUsagePercent(),
+				RAMTotalBytes:      m.GetRamTotalBytes(),
+				RAMUsedBytes:       m.GetRamUsedBytes(),
+				RAMAvailableBytes:  m.GetRamAvailableBytes(),
+				RAMUsagePercent:    m.GetRamUsagePercent(),
+				DiskTotalBytes:     m.GetDiskTotalBytes(),
+				DiskUsedBytes:      m.GetDiskUsedBytes(),
+				DiskAvailableBytes: m.GetDiskAvailableBytes(),
+				DiskUsagePercent:   m.GetDiskUsagePercent(),
+				UptimeSeconds:      m.GetUptimeSeconds(),
+				CollectedAt:        time.Now().UTC().Format(time.RFC3339),
+			}
+			data, _ := json.Marshal(payload)
+			fmt.Fprintf(w, "event: metric\ndata: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
+}
