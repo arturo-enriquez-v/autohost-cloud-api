@@ -45,7 +45,7 @@ func NewNodeAgentServer(
 	tokenSvc *nodetoken.Service,
 	alertSvc *nodealert.Service,
 	nodeSvc *node.Service,
-	metricSvc       *nodemetric.Service,
+	metricSvc *nodemetric.Service,
 	marketplaceRepo marketplace.Repository,
 ) *NodeAgentServer {
 	reg := newStreamRegistry()
@@ -56,8 +56,8 @@ func NewNodeAgentServer(
 		alertSvc:          alertSvc,
 		nodeSvc:           nodeSvc,
 		metricSvc:         metricSvc,
-		marketplaceRepo:   marketplaceRepo,
 		registry:          reg,
+		marketplaceRepo:   marketplaceRepo,
 		metricBroker:      newMetricBroker(),
 		metricLastPersist: make(map[string]time.Time),
 	}
