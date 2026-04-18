@@ -20,10 +20,10 @@ ALTER TABLE jobs ADD CONSTRAINT jobs_user_id_fkey FOREIGN KEY (user_id) REFERENC
 
 CREATE INDEX IF NOT EXISTS idx_jobs_user_id ON jobs(user_id);
 
-ALTER TABLE schedules_tasks ADD COLUMN IF NOT EXISTS user_id UUID;
-ALTER TABLE schedules_tasks ADD CONSTRAINT schedules_tasks_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS user_id UUID;
+ALTER TABLE scheduled_tasks ADD CONSTRAINT scheduled_tasks_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL;
 
-CREATE INDEX IF NOT EXISTS idx_schedules_tasks_user_id ON schedules_tasks(user_id);
+CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_user_id ON scheduled_tasks(user_id);
 
 ALTER TABLE node_tokens ADD COLUMN IF NOT EXISTS user_id UUID;
 ALTER TABLE node_tokens ADD CONSTRAINT node_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL;
