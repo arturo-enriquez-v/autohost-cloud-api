@@ -1,4 +1,4 @@
-.PHONY: proto build test docker dev run-air migrate-up migrate-down migrate-version
+.PHONY: proto build test docker dev run-air migrate-up migrate-down migrate-version migrate-force
 
 proto:
 	protoc --go_out=. --go_opt=module=github.com/arturo/autohost-cloud-api \
@@ -29,3 +29,7 @@ migrate-down:
 
 migrate-version:
 	go run ./cmd/migrate version
+
+migrate-force:
+	@if [ -z "$(VERSION)" ]; then echo "Usage: make migrate-force VERSION=<number>"; exit 1; fi
+	go run ./cmd/migrate force $(VERSION)
