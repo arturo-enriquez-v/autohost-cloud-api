@@ -27,12 +27,3 @@ CREATE POLICY node_tokens_isolation_policy ON node_tokens
 ALTER TABLE node_alerts ENABLE ROW LEVEL SECURITY;
 CREATE POLICY node_alerts_isolation_policy ON node_alerts
     USING (user_id = current_setting('autohost.current_user_id')::uuid);
-
-ALTER TABLE enroll_tokens ENABLE ROW LEVEL SECURITY;
-CREATE POLICY enroll_tokens_isolation_policy ON enroll_tokens
-    USING (user_id = current_setting('autohost.current_user_id')::uuid);
-
-ALTER TABLE refresh_tokens ENABLE ROW LEVEL SECURITY;
-CREATE POLICY refresh_tokens_isolation_policy ON refresh_tokens
-    USING (user_id = current_setting('autohost.current_user_id')::uuid);
-
