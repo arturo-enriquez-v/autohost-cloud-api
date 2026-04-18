@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jmoiron/sqlx"
 
+	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
 	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
 	"github.com/arturo/autohost-cloud-api/internal/domain/enrollment"
 	"github.com/arturo/autohost-cloud-api/internal/domain/job"
@@ -61,6 +62,7 @@ func NewRouter(cfg *Config) *Application {
 	nodeAlertRepo := postgres.NewNodeAlertRepository(cfg.DB)
 	scheduledTaskRepo := postgres.NewScheduledTaskRepository(cfg.DB)
 	marketplaceRepo := postgres.NewMarketplaceRepository(cfg.DB)
+	alertEventRepo := postgres.NewAlertEventRepository(cfg.DB)
 
 	// Services
 	authService := auth.NewService(authRepo)
@@ -72,16 +74,17 @@ func NewRouter(cfg *Config) *Application {
 	jobService := job.NewService(jobRepo)
 	nodeAlertService := nodealert.NewService(nodeAlertRepo)
 	scheduledTaskService := scheduledtask.NewService(scheduledTaskRepo)
+	alertEventService := alertevent.NewService(alertEventRepo)
 
 	nodeAuthMiddleware := handlerMiddleware.NodeAuth(nodeTokenService)
 
 	// gRPC server — also a NodeDispatcher over gRPC transport
-	grpcSrv := grpcserver.NewNodeAgentServer(nodeCommandService, jobService, nodeTokenService, nodeAlertService, nodeService, nodeMetricService, marketplaceRepo)
+	grpcSrv := grpcserver.NewNodeAgentServer(nodeCommandService, jobService, nodeTokenService, nodeAlertService, nodeService, nodeMetricService, marketplaceRepo, alertEventService)
 
 	// HTTP handlers
 	authHandler := NewAuthHandler(authService, authRepo)
 	nodeHandler := NewNodeHandler(nodeService, nodeTokenService)
-	nodeMetricHandler := NewNodeMetricHandler(nodeMetricService, nodeAlertService, nodeService, grpcSrv)
+	nodeMetricHandler := NewNodeMetricHandler(nodeMetricService, nodeAlertService, nodeService, grpcSrv, alertEventService)
 	enrollmentHandler := NewEnrollmentHandler(enrollmentService, nodeService, nodeTokenService)
 	heartbeatsHandler := NewHeartbeatsHandler(nodeService)
 	wsHandler := NewWSHandler(jobService, nodeCommandService)
@@ -89,6 +92,7 @@ func NewRouter(cfg *Config) *Application {
 	nodeLogHandler := NewNodeLogHandler(grpcSrv)
 	nodeAlertHandler := NewNodeAlertHandler(nodeAlertService)
 	scheduledTaskHandler := NewScheduledTaskHandler(scheduledTaskService)
+	alertEventHandler := NewAlertEventHandler(alertEventService)
 
 	// MultiDispatcher: tries gRPC first, falls back to WebSocket
 	dispatcher := NewMultiDispatcher(grpcSrv, wsHandler)
@@ -115,6 +119,7 @@ func NewRouter(cfg *Config) *Application {
 		r.Mount("/node-logs", nodeLogHandler.Routes())
 		r.Mount("/node-alerts", nodeAlertHandler.Routes())
 		r.Mount("/scheduled-tasks", scheduledTaskHandler.Routes())
+		r.Mount("/alert-events", alertEventHandler.Routes())
 		if marketplaceHandler != nil {
 			r.Mount("/marketplace", marketplaceHandler.Routes())
 		}

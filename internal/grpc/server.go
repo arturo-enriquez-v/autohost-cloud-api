@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
 	"github.com/arturo/autohost-cloud-api/internal/domain/job"
 	"github.com/arturo/autohost-cloud-api/internal/domain/marketplace"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
@@ -25,6 +26,7 @@ type NodeAgentServer struct {
 	jobSvc          *job.Service
 	tokenSvc        *nodetoken.Service
 	alertSvc        *nodealert.Service
+	alertEventSvc   *alertevent.Service
 	nodeSvc         *node.Service
 	metricSvc       *nodemetric.Service
 	marketplaceRepo marketplace.Repository
@@ -47,6 +49,7 @@ func NewNodeAgentServer(
 	nodeSvc *node.Service,
 	metricSvc *nodemetric.Service,
 	marketplaceRepo marketplace.Repository,
+	alertEventSvc *alertevent.Service,
 ) *NodeAgentServer {
 	reg := newStreamRegistry()
 	s := &NodeAgentServer{
@@ -54,6 +57,7 @@ func NewNodeAgentServer(
 		jobSvc:            jobSvc,
 		tokenSvc:          tokenSvc,
 		alertSvc:          alertSvc,
+		alertEventSvc:     alertEventSvc,
 		nodeSvc:           nodeSvc,
 		metricSvc:         metricSvc,
 		registry:          reg,
@@ -220,6 +224,8 @@ func (s *NodeAgentServer) Connect(
 				if err := s.nodeSvc.UpdateLastSeen(nodeID); err != nil {
 					log.Printf("[gRPC] update last_seen (metric) for node %s: %v", nodeID, err)
 				}
+				// Check alert thresholds asynchronously; never block the stream.
+				go s.checkThresholdAlerts(nodeID, req)
 			}
 
 		case *pb.NodeMessage_LogEntry:

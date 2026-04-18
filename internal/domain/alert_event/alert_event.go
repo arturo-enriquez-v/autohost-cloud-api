@@ -1,0 +1,29 @@
+package alertevent
+
+import "time"
+
+// AlertEventType identifies what triggered the alert.
+type AlertEventType string
+
+const (
+	AlertEventTypeOffline AlertEventType = "offline"
+	AlertEventTypeCPU     AlertEventType = "cpu"
+	AlertEventTypeRAM     AlertEventType = "ram"
+	AlertEventTypeDisk    AlertEventType = "disk"
+)
+
+// AlertEvent is a persisted record of a fired alert notification.
+type AlertEvent struct {
+	ID        string         `db:"id"         json:"id"`
+	UserID    *string        `db:"user_id"    json:"user_id"`
+	NodeID    string         `db:"node_id"    json:"node_id"`
+	AlertType AlertEventType `db:"alert_type" json:"alert_type"`
+	Message   string         `db:"message"    json:"message"`
+	CreatedAt time.Time      `db:"created_at" json:"created_at"`
+}
+
+// Repository defines the persistence interface for alert events.
+type Repository interface {
+	Create(event *AlertEvent) (*AlertEvent, error)
+	ListByUserID(userID string, limit, offset int) ([]*AlertEvent, error)
+}
