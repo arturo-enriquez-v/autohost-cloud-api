@@ -1,0 +1,52 @@
+package postgres
+
+import (
+	"context"
+
+	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
+	"github.com/jmoiron/sqlx"
+)
+
+// AlertEventRepository implements alertevent.Repository using PostgreSQL.
+type AlertEventRepository struct {
+	db *sqlx.DB
+}
+
+func NewAlertEventRepository(db *sqlx.DB) *AlertEventRepository {
+	return &AlertEventRepository{db: db}
+}
+
+// Create inserts a new alert event and returns the persisted record.
+func (r *AlertEventRepository) Create(event *alertevent.AlertEvent) (*alertevent.AlertEvent, error) {
+	var result alertevent.AlertEvent
+	err := r.db.QueryRowxContext(context.Background(), `
+		INSERT INTO alert_events (user_id, node_id, alert_type, message)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, user_id, node_id, alert_type, message, created_at`,
+		event.UserID, event.NodeID, event.AlertType, event.Message,
+	).StructScan(&result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ListByUserID returns alert events for a user ordered by most recent first.
+func (r *AlertEventRepository) ListByUserID(userID string, limit, offset int) ([]*alertevent.AlertEvent, error) {
+	var events []*alertevent.AlertEvent
+	err := r.db.SelectContext(context.Background(), &events, `
+		SELECT id, user_id, node_id, alert_type, message, created_at
+		FROM alert_events
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3`,
+		userID, limit, offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if events == nil {
+		events = []*alertevent.AlertEvent{}
+	}
+	return events, nil
+}

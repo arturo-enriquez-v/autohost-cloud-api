@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
@@ -22,22 +23,24 @@ import (
 const alertCooldown = 10 * time.Minute
 
 type NodeMetricHandler struct {
-	service      *nodemetric.Service
-	alertService *nodealert.Service
-	nodeService  *node.Service
-	grpc         *grpcserver.NodeAgentServer
+	service       *nodemetric.Service
+	alertService  *nodealert.Service
+	nodeService   *node.Service
+	grpc          *grpcserver.NodeAgentServer
+	alertEventSvc *alertevent.Service
 
 	cooldownMu sync.Mutex
 	cooldowns  map[string]time.Time // key: "nodeID:metricName"
 }
 
-func NewNodeMetricHandler(service *nodemetric.Service, alertService *nodealert.Service, nodeService *node.Service, grpc *grpcserver.NodeAgentServer) *NodeMetricHandler {
+func NewNodeMetricHandler(service *nodemetric.Service, alertService *nodealert.Service, nodeService *node.Service, grpc *grpcserver.NodeAgentServer, alertEventSvc *alertevent.Service) *NodeMetricHandler {
 	return &NodeMetricHandler{
-		service:      service,
-		alertService: alertService,
-		nodeService:  nodeService,
-		grpc:         grpc,
-		cooldowns:    make(map[string]time.Time),
+		service:       service,
+		alertService:  alertService,
+		nodeService:   nodeService,
+		grpc:          grpc,
+		alertEventSvc: alertEventSvc,
+		cooldowns:     make(map[string]time.Time),
 	}
 }
 
@@ -109,7 +112,7 @@ func (h *NodeMetricHandler) checkThresholdAlerts(nodeID string, m *nodemetric.Cr
 		}
 	}
 
-	check := func(name string, value float64, threshold *float32) {
+	check := func(name string, value float64, threshold *float32, evType alertevent.AlertEventType) {
 		if threshold == nil {
 			return
 		}
@@ -132,11 +135,28 @@ func (h *NodeMetricHandler) checkThresholdAlerts(nodeID string, m *nodemetric.Cr
 		if err := platform.SendTelegramMessage(cfg.TelegramBotToken, cfg.TelegramChatID, msg); err != nil {
 			log.Printf("[alert] telegram send for node %s (%s): %v", nodeID, name, err)
 		}
+
+		// Persist so the event appears in the cloud UI.
+		if h.alertEventSvc != nil {
+			var userID *string
+			if n, err := h.nodeService.GetByID(nodeID); err == nil && n.OwnerID != nil {
+				userID = n.OwnerID
+			}
+			ev := &alertevent.AlertEvent{
+				UserID:    userID,
+				NodeID:    nodeID,
+				AlertType: evType,
+				Message:   msg,
+			}
+			if _, err := h.alertEventSvc.Create(ev); err != nil {
+				log.Printf("[alert] persist threshold alert event for node %s (%s): %v", nodeID, name, err)
+			}
+		}
 	}
 
-	check("CPU", m.CPUUsagePercent, cfg.CPUThreshold)
-	check("RAM", m.MemoryUsagePercent, cfg.RAMThreshold)
-	check("Disk", m.DiskUsagePercent, cfg.DiskThreshold)
+	check("CPU", m.CPUUsagePercent, cfg.CPUThreshold, alertevent.AlertEventTypeCPU)
+	check("RAM", m.MemoryUsagePercent, cfg.RAMThreshold, alertevent.AlertEventTypeRAM)
+	check("Disk", m.DiskUsagePercent, cfg.DiskThreshold, alertevent.AlertEventTypeDisk)
 }
 
 // GetHistory returns time-bucketed metric history for a node.
