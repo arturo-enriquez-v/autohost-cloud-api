@@ -77,16 +77,6 @@ jobs:
             set -a
             source /opt/autohost-api/.env
             set +a
-
-            # Si la DB está en estado dirty, forzar a la versión anterior para re-intentar
-            VERSION_OUT=\$(./autohost-migrate version 2>&1)
-            if echo \"\$VERSION_OUT\" | grep -q 'dirty=true'; then
-              DIRTY_VERSION=\$(echo \"\$VERSION_OUT\" | grep -oP 'version=\K[0-9]+')
-              FORCE_VERSION=\$((DIRTY_VERSION - 1))
-              echo \"⚠️  DB dirty at version \$DIRTY_VERSION — forcing to \$FORCE_VERSION\"
-              ./autohost-migrate force \$FORCE_VERSION
-            fi
-
             ./autohost-migrate up
           "
 
