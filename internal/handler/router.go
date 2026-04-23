@@ -22,6 +22,7 @@ import (
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	handlerMiddleware "github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
+	projectdomain "github.com/arturo/autohost-cloud-api/internal/domain/project"
 	"github.com/arturo/autohost-cloud-api/internal/repository/postgres"
 	"github.com/arturo/autohost-cloud-api/internal/scheduler"
 )
@@ -63,6 +64,7 @@ func NewRouter(cfg *Config) *Application {
 	scheduledTaskRepo := postgres.NewScheduledTaskRepository(cfg.DB)
 	marketplaceRepo := postgres.NewMarketplaceRepository(cfg.DB)
 	alertEventRepo := postgres.NewAlertEventRepository(cfg.DB)
+	projectRepo := postgres.NewProjectRepository(cfg.DB)
 
 	// Services
 	authService := auth.NewService(authRepo)
@@ -75,6 +77,7 @@ func NewRouter(cfg *Config) *Application {
 	nodeAlertService := nodealert.NewService(nodeAlertRepo)
 	scheduledTaskService := scheduledtask.NewService(scheduledTaskRepo)
 	alertEventService := alertevent.NewService(alertEventRepo)
+	projectService := projectdomain.NewService(projectRepo)
 
 	nodeAuthMiddleware := handlerMiddleware.NodeAuth(nodeTokenService)
 
@@ -93,6 +96,7 @@ func NewRouter(cfg *Config) *Application {
 	nodeAlertHandler := NewNodeAlertHandler(nodeAlertService)
 	scheduledTaskHandler := NewScheduledTaskHandler(scheduledTaskService)
 	alertEventHandler := NewAlertEventHandler(alertEventService)
+	projectHandler := NewProjectHandler(projectService, nodeService)
 
 	// MultiDispatcher: tries gRPC first, falls back to WebSocket
 	dispatcher := NewMultiDispatcher(grpcSrv, wsHandler)
@@ -120,6 +124,7 @@ func NewRouter(cfg *Config) *Application {
 		r.Mount("/node-alerts", nodeAlertHandler.Routes())
 		r.Mount("/scheduled-tasks", scheduledTaskHandler.Routes())
 		r.Mount("/alert-events", alertEventHandler.Routes())
+		r.Mount("/projects", projectHandler.Routes())
 		if marketplaceHandler != nil {
 			r.Mount("/marketplace", marketplaceHandler.Routes())
 		}

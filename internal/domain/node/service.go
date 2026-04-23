@@ -70,3 +70,19 @@ func (s *Service) Delete(id string) error {
 	}
 	return s.repo.Delete(id)
 }
+
+// AssignToProject sets the project_id of a node.
+func (s *Service) AssignToProject(nodeID, projectID string) error {
+	if nodeID == "" || projectID == "" {
+		return ErrInvalidNodeData
+	}
+	return s.repo.AssignProject(nodeID, &projectID)
+}
+
+// RemoveFromProject clears the project_id of a node.
+func (s *Service) RemoveFromProject(nodeID string) error {
+	if nodeID == "" {
+		return ErrInvalidNodeData
+	}
+	return s.repo.AssignProject(nodeID, nil)
+}

@@ -1,2 +1,4 @@
 
+ALTER TABLE nodes DROP COLUMN IF EXISTS project_id;
+
 DROP TABLE IF EXISTS projects;
