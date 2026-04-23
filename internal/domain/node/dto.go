@@ -12,6 +12,7 @@ type NodeWithMetrics struct {
 	Arch         string     `json:"arch"`
 	VersionAgent string     `json:"version_agent"`
 	OwnerID      *string    `json:"owner_id"`
+	ProjectID    *string    `json:"project_id"`
 	LastSeenAt   *time.Time `json:"last_seen_at"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`

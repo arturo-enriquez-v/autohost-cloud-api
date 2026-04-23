@@ -51,6 +51,7 @@ type NodeModel struct {
 	Arch         string     `db:"arch"`
 	VersionAgent string     `db:"version_agent"`
 	OwnerID      *string    `db:"owner_id"`
+	ProjectID    *string    `db:"project_id"`
 	LastSeenAt   *time.Time `db:"last_seen_at"`
 	CreatedAt    time.Time  `db:"created_at"`
 	UpdatedAt    time.Time  `db:"updated_at"`

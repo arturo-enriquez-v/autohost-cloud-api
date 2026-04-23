@@ -24,7 +24,7 @@ func (r *NodeRepository) Register(n *node.Node) (*node.Node, error) {
 	err := r.db.QueryRowContext(context.Background(), `
 		INSERT INTO nodes (hostname, ip_local, os, arch, version_agent, owner_id)
 		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, hostname, ip_local, os, arch, version_agent, owner_id, last_seen_at, created_at, updated_at`,
+		RETURNING id, hostname, ip_local, os, arch, version_agent, owner_id, project_id, last_seen_at, created_at, updated_at`,
 		n.Hostname, n.IPLocal, n.OS, n.Arch, n.VersionAgent, n.OwnerID).Scan(
 		&model.ID,
 		&model.Hostname,
@@ -33,6 +33,7 @@ func (r *NodeRepository) Register(n *node.Node) (*node.Node, error) {
 		&model.Arch,
 		&model.VersionAgent,
 		&model.OwnerID,
+		&model.ProjectID,
 		&model.LastSeenAt,
 		&model.CreatedAt,
 		&model.UpdatedAt,
@@ -43,6 +44,7 @@ func (r *NodeRepository) Register(n *node.Node) (*node.Node, error) {
 
 	// Actualizar el nodo con los datos devueltos
 	n.ID = model.ID
+	n.ProjectID = model.ProjectID
 	n.LastSeenAt = model.LastSeenAt
 	n.CreatedAt = model.CreatedAt
 	n.UpdatedAt = model.UpdatedAt
@@ -65,7 +67,7 @@ func (r *NodeRepository) Update(node *node.Node) (*node.Node, error) {
 func (r *NodeRepository) FindByID(id string) (*node.Node, error) {
 	var model NodeModel
 	err := r.db.Get(&model, `
-		SELECT id, hostname, ip_local, os, arch, version_agent, owner_id, 
+		SELECT id, hostname, ip_local, os, arch, version_agent, owner_id, project_id,
 		       last_seen_at, created_at, updated_at
 		FROM nodes 
 		WHERE id = $1`, id)
@@ -85,6 +87,7 @@ func (r *NodeRepository) FindByID(id string) (*node.Node, error) {
 		Arch:         model.Arch,
 		VersionAgent: model.VersionAgent,
 		OwnerID:      model.OwnerID,
+		ProjectID:    model.ProjectID,
 		LastSeenAt:   model.LastSeenAt,
 		CreatedAt:    model.CreatedAt,
 		UpdatedAt:    model.UpdatedAt,
@@ -95,7 +98,7 @@ func (r *NodeRepository) FindByID(id string) (*node.Node, error) {
 func (r *NodeRepository) FindByOwnerID(ownerID string) ([]*node.Node, error) {
 	var models []NodeModel
 	err := r.db.Select(&models, `
-		SELECT id, hostname, ip_local, os, arch, version_agent, owner_id, 
+		SELECT id, hostname, ip_local, os, arch, version_agent, owner_id, project_id,
 		       last_seen_at, created_at, updated_at
 		FROM nodes 
 		WHERE owner_id = $1
@@ -115,6 +118,7 @@ func (r *NodeRepository) FindByOwnerID(ownerID string) ([]*node.Node, error) {
 			Arch:         model.Arch,
 			VersionAgent: model.VersionAgent,
 			OwnerID:      model.OwnerID,
+			ProjectID:    model.ProjectID,
 			LastSeenAt:   model.LastSeenAt,
 			CreatedAt:    model.CreatedAt,
 			UpdatedAt:    model.UpdatedAt,
@@ -139,7 +143,7 @@ func (r *NodeRepository) FindByOwnerIDWithMetrics(ownerID string) ([]*node.NodeW
 	query := `
 		SELECT 
 			n.id, n.hostname, n.ip_local, n.os, n.arch, n.version_agent, 
-			n.owner_id, n.last_seen_at, n.created_at, n.updated_at,
+			n.owner_id, n.project_id, n.last_seen_at, n.created_at, n.updated_at,
 			m.cpu_usage_percent, m.memory_usage_percent, m.disk_usage_percent, m.collected_at
 		FROM nodes n
 		LEFT JOIN LATERAL (
@@ -166,7 +170,7 @@ func (r *NodeRepository) FindByOwnerIDWithMetrics(ownerID string) ([]*node.NodeW
 
 		err := rows.Scan(
 			&nwm.ID, &nwm.Hostname, &nwm.IPLocal, &nwm.OS, &nwm.Arch,
-			&nwm.VersionAgent, &nwm.OwnerID, &nwm.LastSeenAt,
+			&nwm.VersionAgent, &nwm.OwnerID, &nwm.ProjectID, &nwm.LastSeenAt,
 			&nwm.CreatedAt, &nwm.UpdatedAt,
 			&cpuUsage, &memUsage, &diskUsage, &collectedAt,
 		)
@@ -194,5 +198,13 @@ func (r *NodeRepository) Delete(id string) error {
 	_, err := r.db.ExecContext(context.Background(), `
 		DELETE FROM nodes
 		WHERE id = $1`, id)
+	return err
+}
+
+// AssignProject sets (or clears) the project_id of a node.
+func (r *NodeRepository) AssignProject(nodeID string, projectID *string) error {
+	_, err := r.db.ExecContext(context.Background(), `
+		UPDATE nodes SET project_id = $1, updated_at = NOW() WHERE id = $2`,
+		projectID, nodeID)
 	return err
 }
