@@ -22,6 +22,7 @@ const (
 // ScheduledTask represents a recurring execution of a custom command on a node.
 type ScheduledTask struct {
 	ID              string       `db:"id"               json:"id"`
+	UserID          string       `db:"user_id"          json:"user_id"`
 	NodeID          string       `db:"node_id"          json:"node_id"`
 	CommandID       string       `db:"command_id"       json:"command_id"`
 	CommandName     string       `db:"command_name"     json:"command_name"`
@@ -46,6 +47,7 @@ type ScheduledTask struct {
 type Repository interface {
 	Create(task *ScheduledTask) (*ScheduledTask, error)
 	List() ([]*ScheduledTask, error)
+	ListByUserID(userID string) ([]*ScheduledTask, error)
 	ListEnabled() ([]*ScheduledTask, error)
 	FindByID(id string) (*ScheduledTask, error)
 	Update(task *ScheduledTask) (*ScheduledTask, error)
