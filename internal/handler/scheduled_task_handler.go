@@ -30,10 +30,16 @@ func (h *ScheduledTaskHandler) Routes() chi.Router {
 	return r
 }
 
-// List returns all scheduled tasks.
+// List returns all scheduled tasks owned by the authenticated user.
 // GET /v1/scheduled-tasks
 func (h *ScheduledTaskHandler) List(w http.ResponseWriter, r *http.Request) {
-	tasks, err := h.service.List()
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.UserID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	tasks, err := h.service.ListByUserID(claims.UserID)
 	if err != nil {
 		log.Printf("[ERROR] list scheduled tasks: %v", err)
 		http.Error(w, "could not list tasks", http.StatusInternalServerError)
@@ -56,6 +62,12 @@ type createTaskRequest struct {
 // Create registers a new scheduled task.
 // POST /v1/scheduled-tasks
 func (h *ScheduledTaskHandler) Create(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.UserID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	var req createTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.NodeID == "" || req.CommandID == "" || req.CommandName == "" || req.ScheduleType == "" {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -68,6 +80,7 @@ func (h *ScheduledTaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	task := &scheduledtask.ScheduledTask{
+		UserID:          claims.UserID,
 		NodeID:          req.NodeID,
 		CommandID:       req.CommandID,
 		CommandName:     req.CommandName,
@@ -101,6 +114,12 @@ type updateTaskRequest struct {
 // Update modifies an existing scheduled task.
 // PUT /v1/scheduled-tasks/{id}
 func (h *ScheduledTaskHandler) Update(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.UserID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 
 	existing, err := h.service.FindByID(id)
@@ -110,6 +129,10 @@ func (h *ScheduledTaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, "could not fetch task", http.StatusInternalServerError)
+		return
+	}
+	if existing.UserID != claims.UserID {
+		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 
@@ -140,12 +163,28 @@ func (h *ScheduledTaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 // Delete removes a scheduled task.
 // DELETE /v1/scheduled-tasks/{id}
 func (h *ScheduledTaskHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.UserID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	id := chi.URLParam(r, "id")
-	if err := h.service.Delete(id); err != nil {
+	task, err := h.service.FindByID(id)
+	if err != nil {
 		if errors.Is(err, scheduledtask.ErrNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		http.Error(w, "could not fetch task", http.StatusInternalServerError)
+		return
+	}
+	if task.UserID != claims.UserID {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	if err := h.service.Delete(id); err != nil {
 		log.Printf("[ERROR] delete scheduled task: %v", err)
 		http.Error(w, "could not delete task", http.StatusInternalServerError)
 		return
@@ -156,6 +195,12 @@ func (h *ScheduledTaskHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // Toggle enables or disables a scheduled task.
 // PATCH /v1/scheduled-tasks/{id}/toggle
 func (h *ScheduledTaskHandler) Toggle(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.UserID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 
 	task, err := h.service.FindByID(id)
@@ -165,6 +210,10 @@ func (h *ScheduledTaskHandler) Toggle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, "could not fetch task", http.StatusInternalServerError)
+		return
+	}
+	if task.UserID != claims.UserID {
+		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 

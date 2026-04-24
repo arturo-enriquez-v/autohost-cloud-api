@@ -35,6 +35,10 @@ func (s *Service) List() ([]*ScheduledTask, error) {
 	return s.repo.List()
 }
 
+func (s *Service) ListByUserID(userID string) ([]*ScheduledTask, error) {
+	return s.repo.ListByUserID(userID)
+}
+
 func (s *Service) ListEnabled() ([]*ScheduledTask, error) {
 	return s.repo.ListEnabled()
 }
