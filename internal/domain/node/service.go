@@ -30,6 +30,13 @@ func (s *Service) UpdateLastSeen(nodeID string) error {
 	return s.repo.UpdateLastSeen(nodeID)
 }
 
+func (s *Service) UpdateVersionAgent(nodeID, version string) error {
+	if nodeID == "" || version == "" {
+		return ErrInvalidNodeData
+	}
+	return s.repo.UpdateVersionAgent(nodeID, version)
+}
+
 func (s *Service) GetByOwner(ownerID string) ([]*Node, error) {
 	return s.repo.FindByOwnerID(ownerID)
 }

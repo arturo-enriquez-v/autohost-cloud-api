@@ -136,6 +136,14 @@ func (r *NodeRepository) UpdateLastSeen(nodeID string) error {
 	return err
 }
 
+func (r *NodeRepository) UpdateVersionAgent(nodeID, version string) error {
+	_, err := r.db.ExecContext(context.Background(), `
+		UPDATE nodes
+		SET version_agent = $1, updated_at = now()
+		WHERE id = $2`, version, nodeID)
+	return err
+}
+
 // FindByOwnerIDWithMetrics busca todos los nodos de un propietario con sus últimas métricas
 func (r *NodeRepository) FindByOwnerIDWithMetrics(ownerID string) ([]*node.NodeWithMetrics, error) {
 	var results []*node.NodeWithMetrics
