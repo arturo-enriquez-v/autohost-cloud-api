@@ -25,7 +25,7 @@ func (h *HeartbeatsHandler) Routes(nodeAuthMiddleware func(http.Handler) http.Ha
 	r.Group(func(protected chi.Router) {
 		protected.Use(nodeAuthMiddleware)
 		protected.Post("/heartbeat", h.HandleHeartbeat)
-		protected.Patch("/version", h.HandleVersionReport)
+		protected.Post("/version", h.HandleVersionReport)
 	})
 
 	return r
