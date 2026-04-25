@@ -42,10 +42,11 @@ message RegisterCommandsResponse {
 
 message NodeMessage {
   oneof payload {
-    JobResultPayload  job_result  = 1;
-    HeartbeatPayload  heartbeat   = 2;
-    LogEntryPayload   log_entry   = 3;
-    MetricPayload     metric      = 4;
+    JobResultPayload         job_result     = 1;
+    HeartbeatPayload         heartbeat      = 2;
+    LogEntryPayload          log_entry      = 3;
+    MetricPayload            metric         = 4;
+    HealthCheckResultPayload health_result  = 5;
   }
 }
 
@@ -67,9 +68,11 @@ message MetricPayload {
 
 message ServerMessage {
   oneof payload {
-    ExecuteJobPayload  execute_job  = 1;
-    StreamLogsPayload  stream_logs  = 2;
-    StopLogsPayload    stop_logs    = 3;
+    ExecuteJobPayload         execute_job   = 1;
+    StreamLogsPayload         stream_logs   = 2;
+    StopLogsPayload           stop_logs     = 3;
+    ConfigureHealthCheckPayload configure_health_check = 4;
+    StopHealthCheckPayload    stop_health_check = 5;
   }
 }
 
@@ -107,6 +110,38 @@ message LogEntryPayload {
   int64  timestamp_us = 1;  // Unix microseconds
   string unit         = 2;  // source systemd unit
   string message      = 3;
+}
+
+// ─── Health Check (server → agent) ───────────────────────────────────────────
+
+// Sent by the server to configure or update a health check on the agent.
+message ConfigureHealthCheckPayload {
+  string monitor_id           = 1;
+  string service_name         = 2;
+  string check_type           = 3;  // "process" | "tcp" | "http"
+  string http_url             = 4;
+  int32  http_expected_status = 5;
+  string tcp_host             = 6;
+  int32  tcp_port             = 7;
+  int32  interval_seconds     = 8;
+  int32  failure_threshold    = 9;
+  bool   enabled              = 10;
+}
+
+// Sent by the server to remove a health check from the agent.
+message StopHealthCheckPayload {
+  string monitor_id = 1;
+}
+
+// ─── Health Check Result (agent → server) ────────────────────────────────────
+
+// Sent by the agent after each health check execution.
+message HealthCheckResultPayload {
+  string monitor_id            = 1;
+  string status                = 2;  // "up" | "down"
+  int32  latency_ms            = 3;
+  string message               = 4;
+  int32  consecutive_failures  = 5;
 }
 
 // ─── Metrics ─────────────────────────────────────────────────────────────────

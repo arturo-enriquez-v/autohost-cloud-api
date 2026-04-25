@@ -15,7 +15,7 @@ var (
 // Project represents a user-defined group of nodes.
 type Project struct {
 	ID        string    `db:"id"         json:"id"`
-	UserID    string    `db:"user_id"    json:"user_id"`
+	UserID    string    `db:"owner_id"   json:"user_id"`
 	Name      string    `db:"name"        json:"name"`
 	CreatedAt time.Time `db:"created_at" json:"created_at"`
 	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`

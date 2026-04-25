@@ -18,11 +18,12 @@ import (
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
+	projectdomain "github.com/arturo/autohost-cloud-api/internal/domain/project"
 	scheduledtask "github.com/arturo/autohost-cloud-api/internal/domain/scheduled_task"
+	servicemonitor "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	handlerMiddleware "github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
-	projectdomain "github.com/arturo/autohost-cloud-api/internal/domain/project"
 	"github.com/arturo/autohost-cloud-api/internal/repository/postgres"
 	"github.com/arturo/autohost-cloud-api/internal/scheduler"
 )
@@ -65,6 +66,7 @@ func NewRouter(cfg *Config) *Application {
 	marketplaceRepo := postgres.NewMarketplaceRepository(cfg.DB)
 	alertEventRepo := postgres.NewAlertEventRepository(cfg.DB)
 	projectRepo := postgres.NewProjectRepository(cfg.DB)
+	serviceMonitorRepo := postgres.NewServiceMonitorRepository(cfg.DB)
 
 	// Services
 	authService := auth.NewService(authRepo)
@@ -78,11 +80,12 @@ func NewRouter(cfg *Config) *Application {
 	scheduledTaskService := scheduledtask.NewService(scheduledTaskRepo)
 	alertEventService := alertevent.NewService(alertEventRepo)
 	projectService := projectdomain.NewService(projectRepo)
+	serviceMonitorService := servicemonitor.NewService(serviceMonitorRepo)
 
 	nodeAuthMiddleware := handlerMiddleware.NodeAuth(nodeTokenService)
 
 	// gRPC server — also a NodeDispatcher over gRPC transport
-	grpcSrv := grpcserver.NewNodeAgentServer(nodeCommandService, jobService, nodeTokenService, nodeAlertService, nodeService, nodeMetricService, marketplaceRepo, alertEventService)
+	grpcSrv := grpcserver.NewNodeAgentServer(nodeCommandService, jobService, nodeTokenService, nodeAlertService, nodeService, nodeMetricService, marketplaceRepo, alertEventService, serviceMonitorService)
 
 	// HTTP handlers
 	authHandler := NewAuthHandler(authService, authRepo)
@@ -97,6 +100,7 @@ func NewRouter(cfg *Config) *Application {
 	scheduledTaskHandler := NewScheduledTaskHandler(scheduledTaskService)
 	alertEventHandler := NewAlertEventHandler(alertEventService)
 	projectHandler := NewProjectHandler(projectService, nodeService)
+	serviceMonitorHandler := NewServiceMonitorHandler(serviceMonitorService, grpcSrv)
 
 	// MultiDispatcher: tries gRPC first, falls back to WebSocket
 	dispatcher := NewMultiDispatcher(grpcSrv, wsHandler)
@@ -125,6 +129,7 @@ func NewRouter(cfg *Config) *Application {
 		r.Mount("/scheduled-tasks", scheduledTaskHandler.Routes())
 		r.Mount("/alert-events", alertEventHandler.Routes())
 		r.Mount("/projects", projectHandler.Routes())
+		r.Mount("/service-monitors", serviceMonitorHandler.Routes())
 		if marketplaceHandler != nil {
 			r.Mount("/marketplace", marketplaceHandler.Routes())
 		}

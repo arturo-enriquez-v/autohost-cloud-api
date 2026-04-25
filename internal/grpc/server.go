@@ -15,21 +15,24 @@ import (
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
+	sm "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
+	"github.com/arturo/autohost-cloud-api/internal/platform"
 )
 
 // NodeAgentServer implements pb.NodeAgentServiceServer.
 type NodeAgentServer struct {
 	pb.UnimplementedNodeAgentServiceServer
 
-	commandSvc      *nodecommand.Service
-	jobSvc          *job.Service
-	tokenSvc        *nodetoken.Service
-	alertSvc        *nodealert.Service
-	alertEventSvc   *alertevent.Service
-	nodeSvc         *node.Service
-	metricSvc       *nodemetric.Service
-	marketplaceRepo marketplace.Repository
+	commandSvc        *nodecommand.Service
+	jobSvc            *job.Service
+	tokenSvc          *nodetoken.Service
+	alertSvc          *nodealert.Service
+	alertEventSvc     *alertevent.Service
+	nodeSvc           *node.Service
+	metricSvc         *nodemetric.Service
+	marketplaceRepo   marketplace.Repository
+	serviceMonitorSvc *sm.Service
 
 	registry     *streamRegistry
 	logs         *logBroker
@@ -50,6 +53,7 @@ func NewNodeAgentServer(
 	metricSvc *nodemetric.Service,
 	marketplaceRepo marketplace.Repository,
 	alertEventSvc *alertevent.Service,
+	serviceMonitorSvc *sm.Service,
 ) *NodeAgentServer {
 	reg := newStreamRegistry()
 	s := &NodeAgentServer{
@@ -62,6 +66,7 @@ func NewNodeAgentServer(
 		metricSvc:         metricSvc,
 		registry:          reg,
 		marketplaceRepo:   marketplaceRepo,
+		serviceMonitorSvc: serviceMonitorSvc,
 		metricBroker:      newMetricBroker(),
 		metricLastPersist: make(map[string]time.Time),
 	}
@@ -134,6 +139,23 @@ func (s *NodeAgentServer) Connect(
 			log.Printf("[gRPC] re-start log stream for node %s: %v", nodeID, err)
 		} else {
 			log.Printf("[gRPC] re-issued StreamLogs to reconnected node %s", nodeID)
+		}
+	}
+
+	// Re-send all enabled health check configs so the agent resumes monitoring
+	// after a reconnect (agent discards all loops on disconnect).
+	if s.serviceMonitorSvc != nil {
+		if monitors, err := s.serviceMonitorSvc.ListByNodeID(nodeID); err != nil {
+			log.Printf("[gRPC] list monitors for node %s on reconnect: %v", nodeID, err)
+		} else {
+			for _, m := range monitors {
+				if m.Enabled {
+					s.SendHealthCheckConfig(nodeID, m)
+				}
+			}
+			if len(monitors) > 0 {
+				log.Printf("[gRPC] re-sent %d health check config(s) to reconnected node %s", len(monitors), nodeID)
+			}
 		}
 	}
 
@@ -231,6 +253,9 @@ func (s *NodeAgentServer) Connect(
 		case *pb.NodeMessage_LogEntry:
 			s.logs.fanOut(nodeID, p.LogEntry)
 
+		case *pb.NodeMessage_HealthResult:
+			go s.handleHealthCheckResult(nodeID, p.HealthResult)
+
 		default:
 			log.Printf("[gRPC] unknown payload from node %s", nodeID)
 		}
@@ -274,4 +299,101 @@ func (s *NodeAgentServer) shouldPersistMetric(nodeID string) bool {
 // payloads for the given node, plus a cancel function to unsubscribe.
 func (s *NodeAgentServer) SubscribeToNodeMetrics(nodeID string) (<-chan *pb.MetricPayload, func()) {
 	return s.metricBroker.subscribe(nodeID)
+}
+
+// ---- Health Check helpers ---------------------------------------------------
+
+// SendHealthCheckConfig pushes a monitor configuration to a connected agent.
+func (s *NodeAgentServer) SendHealthCheckConfig(nodeID string, m *sm.ServiceMonitor) {
+	msg := &pb.ServerMessage{
+		Payload: &pb.ServerMessage_ConfigureHealthCheck{
+			ConfigureHealthCheck: &pb.ConfigureHealthCheckPayload{
+				MonitorId:          m.ID,
+				ServiceName:        m.ServiceName,
+				CheckType:          m.CheckType,
+				HttpUrl:            m.HTTPURL,
+				HttpExpectedStatus: int32(m.HTTPExpectedStatus),
+				TcpHost:            m.TCPHost,
+				TcpPort:            int32(m.TCPPort),
+				IntervalSeconds:    int32(m.IntervalSeconds),
+				FailureThreshold:   int32(m.FailureThreshold),
+				Enabled:            m.Enabled,
+			},
+		},
+	}
+	if err := s.registry.sendToNode(nodeID, msg); err != nil {
+		log.Printf("[gRPC] SendHealthCheckConfig node %s monitor %s: %v", nodeID, m.ID, err)
+	}
+}
+
+// StopHealthCheck tells a connected agent to remove the given monitor.
+func (s *NodeAgentServer) StopHealthCheck(nodeID, monitorID string) {
+	msg := &pb.ServerMessage{
+		Payload: &pb.ServerMessage_StopHealthCheck{
+			StopHealthCheck: &pb.StopHealthCheckPayload{
+				MonitorId: monitorID,
+			},
+		},
+	}
+	if err := s.registry.sendToNode(nodeID, msg); err != nil {
+		log.Printf("[gRPC] StopHealthCheck node %s monitor %s: %v", nodeID, monitorID, err)
+	}
+}
+
+// handleHealthCheckResult persists an incoming health check result from the agent.
+func (s *NodeAgentServer) handleHealthCheckResult(nodeID string, r *pb.HealthCheckResultPayload) {
+	if s.serviceMonitorSvc == nil {
+		return
+	}
+
+	monitor, err := s.serviceMonitorSvc.FindByID(r.GetMonitorId())
+	if err != nil {
+		log.Printf("[gRPC] health check result for unknown monitor %s: %v", r.GetMonitorId(), err)
+		return
+	}
+
+	// Determine new aggregate status.
+	newStatus := sm.StatusHealthy
+	if r.GetStatus() == "down" {
+		if int(r.GetConsecutiveFailures()) >= monitor.FailureThreshold {
+			newStatus = sm.StatusDown
+		} else {
+			newStatus = sm.StatusDegraded
+		}
+	}
+
+	if err := s.serviceMonitorSvc.UpdateStatus(monitor.ID, newStatus, int(r.GetConsecutiveFailures())); err != nil {
+		log.Printf("[gRPC] update service monitor status %s: %v", monitor.ID, err)
+	}
+
+	event := &sm.ServiceHealthEvent{
+		MonitorID: monitor.ID,
+		NodeID:    nodeID,
+		UserID:    monitor.UserID,
+		Status:    r.GetStatus(),
+		LatencyMs: int(r.GetLatencyMs()),
+		Message:   r.GetMessage(),
+		CheckedAt: time.Now(),
+	}
+	if err := s.serviceMonitorSvc.RecordEvent(event); err != nil {
+		log.Printf("[gRPC] record health event monitor %s: %v", monitor.ID, err)
+	}
+
+	// Send Telegram alert on state transition to down.
+	if newStatus == sm.StatusDown && monitor.NotifyTelegram {
+		go s.sendServiceDownAlert(nodeID, monitor)
+	}
+
+	log.Printf("[gRPC] health check %s (%s): %s latency=%dms",
+		monitor.ServiceName, monitor.ID, r.GetStatus(), r.GetLatencyMs())
+}
+
+// sendServiceDownAlert sends a Telegram notification when a service goes down.
+func (s *NodeAgentServer) sendServiceDownAlert(nodeID string, monitor *sm.ServiceMonitor) {
+	alert, err := s.alertSvc.FindByNodeID(nodeID)
+	if err != nil || alert.TelegramBotToken == "" || alert.TelegramChatID == "" {
+		return
+	}
+	message := "🔴 Service DOWN: " + monitor.ServiceName + " on node " + nodeID
+	platform.SendTelegramMessage(alert.TelegramBotToken, alert.TelegramChatID, message) //nolint:errcheck
 }
