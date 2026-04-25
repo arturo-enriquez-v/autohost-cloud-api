@@ -26,5 +26,6 @@ type Repository interface {
 	FindByOwnerID(ownerID string) ([]*Node, error)
 	FindByOwnerIDWithMetrics(ownerID string) ([]*NodeWithMetrics, error)
 	UpdateLastSeen(nodeID string) error
+	UpdateVersionAgent(nodeID, version string) error
 	AssignProject(nodeID string, projectID *string) error
 }
