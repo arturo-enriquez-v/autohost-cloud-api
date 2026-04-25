@@ -19,7 +19,7 @@ func NewProjectRepository(db *sqlx.DB) *ProjectRepository {
 
 type projectModel struct {
 	ID        string `db:"id"`
-	UserID    string `db:"owner_id"`
+	UserID    string `db:"user_id"`
 	Name      string `db:"name"`
 	CreatedAt string `db:"created_at"`
 	UpdatedAt string `db:"updated_at"`
@@ -28,9 +28,9 @@ type projectModel struct {
 func (r *ProjectRepository) Create(p *project.Project) (*project.Project, error) {
 	var m project.Project
 	err := r.db.QueryRowContext(context.Background(), `
-		INSERT INTO projects (owner_id, name)
+		INSERT INTO projects (user_id, name)
 		VALUES ($1, $2)
-		RETURNING id, owner_id, name, created_at, updated_at`,
+		RETURNING id, user_id, name, created_at, updated_at`,
 		p.UserID, p.Name,
 	).Scan(&m.ID, &m.UserID, &m.Name, &m.CreatedAt, &m.UpdatedAt)
 	if err != nil {
@@ -42,7 +42,7 @@ func (r *ProjectRepository) Create(p *project.Project) (*project.Project, error)
 func (r *ProjectRepository) FindByID(id string) (*project.Project, error) {
 	var m project.Project
 	err := r.db.GetContext(context.Background(), &m, `
-		SELECT id, owner_id, name, created_at, updated_at
+		SELECT id, user_id, name, created_at, updated_at
 		FROM projects WHERE id = $1`, id)
 	if err == sql.ErrNoRows {
 		return nil, project.ErrProjectNotFound
@@ -56,9 +56,9 @@ func (r *ProjectRepository) FindByID(id string) (*project.Project, error) {
 func (r *ProjectRepository) FindByUserID(userID string) ([]*project.Project, error) {
 	var projects []*project.Project
 	err := r.db.SelectContext(context.Background(), &projects, `
-		SELECT id, owner_id, name, created_at, updated_at
+		SELECT id, user_id, name, created_at, updated_at
 		FROM projects
-		WHERE owner_id = $1
+		WHERE user_id = $1
 		ORDER BY name ASC`, userID)
 	if err != nil {
 		return nil, err
@@ -72,7 +72,7 @@ func (r *ProjectRepository) Update(p *project.Project) (*project.Project, error)
 		UPDATE projects
 		SET name = $1, updated_at = NOW()
 		WHERE id = $2
-		RETURNING id, owner_id, name, created_at, updated_at`,
+		RETURNING id, user_id, name, created_at, updated_at`,
 		p.Name, p.ID,
 	).Scan(&m.ID, &m.UserID, &m.Name, &m.CreatedAt, &m.UpdatedAt)
 	if err == sql.ErrNoRows {
