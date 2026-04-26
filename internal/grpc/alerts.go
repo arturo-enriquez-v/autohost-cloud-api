@@ -13,7 +13,7 @@ import (
 
 // alertCooldown is the minimum duration between repeated threshold alerts for
 // the same node+metric, shared across the gRPC path.
-const grpcAlertCooldown = 10 * time.Minute
+const grpcAlertCooldown = 1 * time.Minute
 
 var (
 	grpcCooldownMu sync.Mutex
