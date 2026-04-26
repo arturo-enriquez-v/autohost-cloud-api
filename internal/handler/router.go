@@ -11,6 +11,7 @@ import (
 
 	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
 	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
+	caddyroute "github.com/arturo/autohost-cloud-api/internal/domain/caddy_route"
 	"github.com/arturo/autohost-cloud-api/internal/domain/enrollment"
 	"github.com/arturo/autohost-cloud-api/internal/domain/job"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
@@ -67,6 +68,7 @@ func NewRouter(cfg *Config) *Application {
 	alertEventRepo := postgres.NewAlertEventRepository(cfg.DB)
 	projectRepo := postgres.NewProjectRepository(cfg.DB)
 	serviceMonitorRepo := postgres.NewServiceMonitorRepository(cfg.DB)
+	caddyRouteRepo := postgres.NewCaddyRouteRepository(cfg.DB)
 
 	// Services
 	authService := auth.NewService(authRepo)
@@ -81,6 +83,7 @@ func NewRouter(cfg *Config) *Application {
 	alertEventService := alertevent.NewService(alertEventRepo)
 	projectService := projectdomain.NewService(projectRepo)
 	serviceMonitorService := servicemonitor.NewService(serviceMonitorRepo)
+	caddyRouteService := caddyroute.NewService(caddyRouteRepo)
 
 	nodeAuthMiddleware := handlerMiddleware.NodeAuth(nodeTokenService)
 
@@ -101,6 +104,7 @@ func NewRouter(cfg *Config) *Application {
 	alertEventHandler := NewAlertEventHandler(alertEventService)
 	projectHandler := NewProjectHandler(projectService, nodeService)
 	serviceMonitorHandler := NewServiceMonitorHandler(serviceMonitorService, grpcSrv)
+	caddyRouteHandler := NewCaddyRouteHandler(caddyRouteService, jobService, grpcSrv)
 
 	// MultiDispatcher: tries gRPC first, falls back to WebSocket
 	dispatcher := NewMultiDispatcher(grpcSrv, wsHandler)
@@ -130,6 +134,7 @@ func NewRouter(cfg *Config) *Application {
 		r.Mount("/alert-events", alertEventHandler.Routes())
 		r.Mount("/projects", projectHandler.Routes())
 		r.Mount("/service-monitors", serviceMonitorHandler.Routes())
+		r.Mount("/caddy-routes", caddyRouteHandler.Routes())
 		if marketplaceHandler != nil {
 			r.Mount("/marketplace", marketplaceHandler.Routes())
 		}
