@@ -64,13 +64,25 @@ func (r *NodeRepository) Update(node *node.Node) (*node.Node, error) {
 	return node, nil
 }
 
-func (r *NodeRepository) FindByID(id string) (*node.Node, error) {
+func (r *NodeRepository) FindByID(ctx context.Context, id string, userID string) (*node.Node, error) {
 	var model NodeModel
-	err := r.db.Get(&model, `
-		SELECT id, hostname, ip_local, os, arch, version_agent, owner_id, project_id,
-		       last_seen_at, created_at, updated_at
-		FROM nodes 
-		WHERE id = $1`, id)
+
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, "SELECT set_config('autohost.current_user_id', $1, true)", userID)
+	if err != nil {
+		return nil, err
+	}
+
+	err = tx.GetContext(ctx, &model, `
+        SELECT id, hostname, ip_local, os, arch, version_agent, owner_id, project_id,
+               last_seen_at, created_at, updated_at
+        FROM nodes 
+        WHERE id = $1`, id)
 
 	if err == sql.ErrNoRows {
 		return nil, node.ErrNodeNotFound
