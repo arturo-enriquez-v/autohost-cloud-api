@@ -2,25 +2,22 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 
 	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
-	"github.com/arturo/autohost-cloud-api/internal/platform"
+	"github.com/arturo/autohost-cloud-api/internal/handler/response"
 	"github.com/go-chi/chi/v5"
 )
 
 type AuthHandler struct {
 	service *auth.Service
-	repo    auth.Repository
 }
 
-func NewAuthHandler(service *auth.Service, repo auth.Repository) *AuthHandler {
-	return &AuthHandler{
-		service: service,
-		repo:    repo,
-	}
+func NewAuthHandler(service *auth.Service) *AuthHandler {
+	return &AuthHandler{service: service}
 }
 
 func (h *AuthHandler) Routes() chi.Router {
@@ -55,9 +52,8 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Usar el servicio para registrar
-	userID, err := h.service.Register(in.Email, in.Name, in.Password)
-	if err == auth.ErrUserAlreadyExists {
+	pair, err := h.service.RegisterAndIssue(in.Email, in.Name, in.Password, r.UserAgent(), clientIP(r))
+	if errors.Is(err, auth.ErrUserAlreadyExists) {
 		http.Error(w, "email already exists", http.StatusConflict)
 		return
 	}
@@ -66,13 +62,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generar tokens
-	platform.SignAccessToken(userID, in.Email)
-	_, rtHash := platform.MakeRefreshPair()
-
-	_ = h.repo.StoreRefreshToken(userID, rtHash, r.UserAgent(), clientIP(r))
-
-	w.WriteHeader(http.StatusCreated)
+	response.RespondJSON(w, http.StatusCreated, pair)
 }
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
@@ -82,8 +72,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.service.Login(in.Email, in.Password)
-	if err == auth.ErrInvalidCredentials {
+	pair, err := h.service.LoginAndIssue(in.Email, in.Password, r.UserAgent(), clientIP(r))
+	if errors.Is(err, auth.ErrInvalidCredentials) {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
@@ -92,22 +82,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generar tokens
-	access, _ := platform.SignAccessToken(user.ID, user.Email)
-	rt, rtHash := platform.MakeRefreshPair()
-	_ = h.repo.StoreRefreshToken(user.ID, rtHash, r.UserAgent(), clientIP(r))
-
-	// BFF pattern: devolver tokens como JSON — Next.js es el único que setea cookies
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]any{
-		"access_token":  access,
-		"refresh_token": rt,
-	})
+	response.RespondJSON(w, http.StatusOK, pair)
 }
 
 func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
-	// BFF pattern: el refresh_token llega en el body JSON, no en cookie
 	var body struct {
 		RefreshToken string `json:"refresh_token"`
 	}
@@ -116,49 +94,26 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	oldHash := platform.HashRefreshToken(body.RefreshToken)
-
-	// Buscar el userID asociado al refresh token en BD
-	userID, err := h.repo.FindRefreshToken(oldHash)
-	if err != nil {
+	pair, err := h.service.RefreshTokens(body.RefreshToken, r.UserAgent(), clientIP(r))
+	if errors.Is(err, auth.ErrInvalidRefreshToken) {
 		http.Error(w, "invalid or expired refresh token", http.StatusUnauthorized)
 		return
 	}
-
-	// Buscar datos del usuario para incluirlos en el nuevo access token
-	user, err := h.repo.FindUserByID(userID)
-	if err != nil || user == nil {
-		http.Error(w, "user not found", http.StatusUnauthorized)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	// Revocar el token viejo (rotación)
-	_ = h.repo.RevokeRefreshToken(userID, oldHash)
-
-	// Emitir nuevos tokens
-	access, _ := platform.SignAccessToken(user.ID, user.Email)
-	rt, rtHash := platform.MakeRefreshPair()
-	_ = h.repo.StoreRefreshToken(user.ID, rtHash, r.UserAgent(), clientIP(r))
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]any{
-		"access_token":  access,
-		"refresh_token": rt,
-	})
+	response.RespondJSON(w, http.StatusOK, pair)
 }
 
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	// BFF pattern: el refresh_token llega en el body JSON
 	var body struct {
 		RefreshToken string `json:"refresh_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err == nil && body.RefreshToken != "" {
-		if userID, _, err := platform.ParseRefreshToken(body.RefreshToken); err == nil {
-			_ = h.repo.RevokeRefreshToken(userID, platform.HashRefreshToken(body.RefreshToken))
-		}
+		h.service.RevokeToken(body.RefreshToken)
 	}
-	// Next.js es el responsable de borrar las cookies — Go solo responde 204
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -168,18 +123,10 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]any{
+	response.RespondJSON(w, http.StatusOK, map[string]any{
 		"user_id": claims.UserID,
 		"email":   claims.Email,
 	})
-}
-
-func clientIP(r *http.Request) string {
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return ""
-	}
-	return ip
 }
 
 func (h *AuthHandler) OAuthGoogle(w http.ResponseWriter, r *http.Request) {
@@ -191,25 +138,19 @@ func (h *AuthHandler) OAuthGoogle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claims, err := platform.VerifyGoogleIDToken(body.IDToken)
-	if err != nil {
-		http.Error(w, "invalid google token", http.StatusUnauthorized)
-		return
-	}
-
-	user, err := h.service.LoginOAuth(claims.Email, claims.Name, "google", claims.Sub)
+	pair, err := h.service.OAuthLoginAndIssue(body.IDToken, r.UserAgent(), clientIP(r))
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	access, _ := platform.SignAccessToken(user.ID, user.Email)
-	rt, rtHash := platform.MakeRefreshPair()
-	_ = h.repo.StoreRefreshToken(user.ID, rtHash, r.UserAgent(), clientIP(r))
+	response.RespondJSON(w, http.StatusOK, pair)
+}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"access_token":  access,
-		"refresh_token": rt,
-	})
+func clientIP(r *http.Request) string {
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return ""
+	}
+	return ip
 }

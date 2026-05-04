@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/arturo/autohost-cloud-api/internal/domain/enrollment"
@@ -156,8 +157,23 @@ func (h *EnrollmentHandler) EnrollNode(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{
-		"node_id":   createdNode.ID,
-		"api_token": plainToken,
+		"node_id":      createdNode.ID,
+		"api_token":    plainToken,
+		"grpc_address": grpcAddress(),
 	})
 
+}
+
+// grpcAddress returns the gRPC address that agents should connect to.
+// It reads GRPC_ADDRESS from the environment; if not set it falls back to
+// ":<GRPC_PORT>" so local dev still works without extra configuration.
+func grpcAddress() string {
+	if addr := os.Getenv("GRPC_ADDRESS"); addr != "" {
+		return addr
+	}
+	port := os.Getenv("GRPC_PORT")
+	if port == "" {
+		port = "9090"
+	}
+	return ":" + port
 }
