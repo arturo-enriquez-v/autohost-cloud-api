@@ -48,9 +48,13 @@ func (r *AuthRepository) FindUserByEmail(email string) (*auth.User, error) {
 
 // StoreRefreshToken almacena un token de refresco
 func (r *AuthRepository) StoreRefreshToken(userID, tokenHash, userAgent, ip string) error {
+	var ipVal interface{}
+	if ip != "" {
+		ipVal = ip
+	}
 	_, err := r.db.Exec(`
 		INSERT INTO refresh_tokens (user_id, token_hash, user_agent, ip)
-		VALUES ($1, $2, $3, $4)`, userID, tokenHash, userAgent, ip)
+		VALUES ($1, $2, $3, $4)`, userID, tokenHash, userAgent, ipVal)
 	return err
 }
 

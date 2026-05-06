@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
@@ -150,6 +151,16 @@ func (h *AuthHandler) OAuthGoogle(w http.ResponseWriter, r *http.Request) {
 }
 
 func clientIP(r *http.Request) string {
+	if ip := r.Header.Get("X-Real-IP"); ip != "" {
+		return ip
+	}
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		// X-Forwarded-For puede ser una lista; tomar el primero
+		if i := strings.Index(fwd, ","); i != -1 {
+			return strings.TrimSpace(fwd[:i])
+		}
+		return strings.TrimSpace(fwd)
+	}
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return ""
