@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net"
 	"net/http"
 
@@ -140,6 +141,7 @@ func (h *AuthHandler) OAuthGoogle(w http.ResponseWriter, r *http.Request) {
 
 	pair, err := h.service.OAuthLoginAndIssue(body.IDToken, r.UserAgent(), clientIP(r))
 	if err != nil {
+		log.Printf("[AUTH] OAuthGoogle error: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
