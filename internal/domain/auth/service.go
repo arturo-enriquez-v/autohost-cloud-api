@@ -7,8 +7,9 @@ import (
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrUserAlreadyExists  = errors.New("user already exists")
+	ErrInvalidCredentials  = errors.New("invalid credentials")
+	ErrUserAlreadyExists   = errors.New("user already exists")
+	ErrInvalidRefreshToken = errors.New("invalid or expired refresh token")
 )
 
 // Service encapsula la lógica de negocio de autenticación
@@ -21,22 +22,49 @@ func NewService(repo Repository) *Service {
 	return &Service{repo: repo}
 }
 
+// issueTokenPair firma un access token y genera un refresh token para el usuario dado.
+func (s *Service) issueTokenPair(user *User, ua, ip string) (TokenPair, error) {
+	access, err := platform.SignAccessToken(user.ID, user.Email)
+	if err != nil {
+		return TokenPair{}, err
+	}
+	rt, rtHash := platform.MakeRefreshPair()
+	if err := s.repo.StoreRefreshToken(user.ID, rtHash, ua, ip); err != nil {
+		return TokenPair{}, err
+	}
+	return TokenPair{AccessToken: access, RefreshToken: rt}, nil
+}
+
 // Register registra un nuevo usuario
 func (s *Service) Register(email, name, password string) (userID string, err error) {
-	// Verificar si el usuario ya existe
 	existing, _ := s.repo.FindUserByEmail(email)
 	if existing != nil {
 		return "", ErrUserAlreadyExists
 	}
 
-	// Hashear contraseña
 	hash, err := platform.HashPassword(password)
 	if err != nil {
 		return "", err
 	}
 
-	// Crear usuario
 	return s.repo.CreateUser(email, name, hash)
+}
+
+// RegisterAndIssue registra un nuevo usuario y emite tokens.
+func (s *Service) RegisterAndIssue(email, name, password, ua, ip string) (TokenPair, error) {
+	userID, err := s.Register(email, name, password)
+	if err != nil {
+		return TokenPair{}, err
+	}
+	access, err := platform.SignAccessToken(userID, email)
+	if err != nil {
+		return TokenPair{}, err
+	}
+	rt, rtHash := platform.MakeRefreshPair()
+	if err := s.repo.StoreRefreshToken(userID, rtHash, ua, ip); err != nil {
+		return TokenPair{}, err
+	}
+	return TokenPair{AccessToken: access, RefreshToken: rt}, nil
 }
 
 // Login autentica a un usuario con email y contraseña
@@ -46,7 +74,6 @@ func (s *Service) Login(email, password string) (*User, error) {
 		return nil, ErrInvalidCredentials
 	}
 
-	// Usuarios de OAuth sin contraseña no pueden hacer login con password
 	if user.PasswordHash == nil {
 		return nil, ErrInvalidCredentials
 	}
@@ -58,7 +85,60 @@ func (s *Service) Login(email, password string) (*User, error) {
 	return user, nil
 }
 
-// LoginOAuth busca o crea un usuario mediante proveedor OAuth
+// LoginAndIssue autentica con email/password y emite tokens.
+func (s *Service) LoginAndIssue(email, password, ua, ip string) (TokenPair, error) {
+	user, err := s.Login(email, password)
+	if err != nil {
+		return TokenPair{}, err
+	}
+	return s.issueTokenPair(user, ua, ip)
+}
+
+// RefreshTokens rota el refresh token y emite un nuevo par.
+func (s *Service) RefreshTokens(oldPlain, ua, ip string) (TokenPair, error) {
+	oldHash := platform.HashRefreshToken(oldPlain)
+
+	userID, err := s.repo.FindRefreshToken(oldHash)
+	if err != nil {
+		return TokenPair{}, ErrInvalidRefreshToken
+	}
+
+	user, err := s.repo.FindUserByID(userID)
+	if err != nil || user == nil {
+		return TokenPair{}, ErrInvalidRefreshToken
+	}
+
+	_ = s.repo.RevokeRefreshToken(userID, oldHash)
+
+	return s.issueTokenPair(user, ua, ip)
+}
+
+// RevokeToken revoca un refresh token si existe.
+func (s *Service) RevokeToken(plainToken string) {
+	hash := platform.HashRefreshToken(plainToken)
+	userID, err := s.repo.FindRefreshToken(hash)
+	if err != nil {
+		return
+	}
+	_ = s.repo.RevokeRefreshToken(userID, hash)
+}
+
+// LoginOAuth busca o crea un usuario mediante proveedor OAuth y emite tokens.
 func (s *Service) LoginOAuth(email, name, provider, providerID string) (*User, error) {
 	return s.repo.FindOrCreateOAuthUser(email, name, provider, providerID)
+}
+
+// OAuthLoginAndIssue verifica un ID token de Google y emite tokens.
+func (s *Service) OAuthLoginAndIssue(idToken, ua, ip string) (TokenPair, error) {
+	claims, err := platform.VerifyGoogleIDToken(idToken)
+	if err != nil {
+		return TokenPair{}, err
+	}
+
+	user, err := s.LoginOAuth(claims.Email, claims.Name, "google", claims.Sub)
+	if err != nil {
+		return TokenPair{}, err
+	}
+
+	return s.issueTokenPair(user, ua, ip)
 }

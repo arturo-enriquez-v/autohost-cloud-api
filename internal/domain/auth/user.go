@@ -2,6 +2,12 @@ package auth
 
 import "time"
 
+// TokenPair holds the access and refresh tokens issued after authentication.
+type TokenPair struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+}
+
 // User representa un usuario del sistema
 type User struct {
 	ID              string    `db:"id"`
