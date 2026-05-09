@@ -32,6 +32,7 @@ type RouterParams struct {
 	ServiceMonitorHandler *handler.ServiceMonitorHandler
 	CaddyRouteHandler     *handler.CaddyRouteHandler
 	MarketplaceHandler    *handler.MarketplaceHandler
+	WebhookHandler        *handler.WebhookHandler
 
 	NodeTokenService *nodetoken.Service
 }
@@ -71,6 +72,7 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/service-monitors", p.ServiceMonitorHandler.Routes())
 		r.Mount("/caddy-routes", p.CaddyRouteHandler.Routes())
 		r.Mount("/marketplace", p.MarketplaceHandler.Routes())
+		r.Mount("/webhooks", p.WebhookHandler.Routes())
 	})
 
 	return r

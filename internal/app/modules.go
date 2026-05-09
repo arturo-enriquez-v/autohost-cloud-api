@@ -74,6 +74,7 @@ var HandlerModule = fx.Provide(
 	handler.NewServiceMonitorHandler,
 	handler.NewCaddyRouteHandler,
 	handler.NewMarketplaceHandler,
+	handler.NewWebhookHandler,
 )
 
 var InfraModule = fx.Provide(
