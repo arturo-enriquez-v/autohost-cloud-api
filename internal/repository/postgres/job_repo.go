@@ -23,12 +23,12 @@ func NewJobRepository(db *sqlx.DB) *JobRepository {
 func (r *JobRepository) Create(j *job.Job) (*job.Job, error) {
 	var m JobModel
 	err := r.db.QueryRowContext(context.Background(), `
-		INSERT INTO jobs (node_id, command_name, command_type, status)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, node_id, command_name, command_type, status, output, error, created_at, started_at, finished_at`,
-		j.NodeID, j.CommandName, j.CommandType, j.Status,
+		INSERT INTO jobs (node_id, command_name, command_type, status, params)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, node_id, command_name, command_type, status, params, output, error, created_at, started_at, finished_at`,
+		j.NodeID, j.CommandName, j.CommandType, j.Status, j.Params,
 	).Scan(
-		&m.ID, &m.NodeID, &m.CommandName, &m.CommandType, &m.Status,
+		&m.ID, &m.NodeID, &m.CommandName, &m.CommandType, &m.Status, &m.Params,
 		&m.Output, &m.Error, &m.CreatedAt, &m.StartedAt, &m.FinishedAt,
 	)
 	if err != nil {
@@ -41,7 +41,7 @@ func (r *JobRepository) Create(j *job.Job) (*job.Job, error) {
 func (r *JobRepository) FindByID(id string) (*job.Job, error) {
 	var m JobModel
 	err := r.db.GetContext(context.Background(), &m,
-		`SELECT id, node_id, command_name, command_type, status, output, error, created_at, started_at, finished_at
+		`SELECT id, node_id, command_name, command_type, status, params, output, error, created_at, started_at, finished_at
 		 FROM jobs WHERE id = $1`, id)
 	if err == sql.ErrNoRows {
 		return nil, job.ErrJobNotFound
@@ -56,8 +56,25 @@ func (r *JobRepository) FindByID(id string) (*job.Job, error) {
 func (r *JobRepository) FindByNodeID(nodeID string) ([]*job.Job, error) {
 	var models []JobModel
 	err := r.db.SelectContext(context.Background(), &models,
-		`SELECT id, node_id, command_name, command_type, status, output, error, created_at, started_at, finished_at
+		`SELECT id, node_id, command_name, command_type, status, params, output, error, created_at, started_at, finished_at
 		 FROM jobs WHERE node_id = $1 ORDER BY created_at DESC`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*job.Job, len(models))
+	for i, m := range models {
+		out[i] = modelToJob(m)
+	}
+	return out, nil
+}
+
+// FindPendingByNodeID returns pending jobs of a specific command type for a node.
+func (r *JobRepository) FindPendingByNodeID(nodeID string, commandType nodecommand.CommandType) ([]*job.Job, error) {
+	var models []JobModel
+	err := r.db.SelectContext(context.Background(), &models,
+		`SELECT id, node_id, command_name, command_type, status, params, output, error, created_at, started_at, finished_at
+		 FROM jobs WHERE node_id = $1 AND command_type = $2 AND status = 'pending'
+		 ORDER BY created_at ASC`, nodeID, string(commandType))
 	if err != nil {
 		return nil, err
 	}
@@ -109,6 +126,7 @@ func modelToJob(m JobModel) *job.Job {
 		CommandName: m.CommandName,
 		CommandType: nodecommand.CommandType(m.CommandType),
 		Status:      job.JobStatus(m.Status),
+		Params:      m.Params,
 		Output:      m.Output.String,
 		Error:       m.Error.String,
 		CreatedAt:   m.CreatedAt,

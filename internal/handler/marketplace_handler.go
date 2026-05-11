@@ -99,6 +99,11 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.r2 == nil {
+		http.Error(w, "marketplace storage (R2) is not configured on this server", http.StatusNotImplemented)
+		return
+	}
+
 	// Download compose template from R2.
 	composeKey := req.AppName + ".yml"
 	composeContent, err := h.r2.GetObject(r.Context(), composeKey)
@@ -107,6 +112,20 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not fetch app template", http.StatusInternalServerError)
 		return
 	}
+
+	// Build the JSON params to send to the agent (and persist in the DB).
+	installParams := InstallAppParams{
+		AppName: req.AppName,
+		Compose: string(composeContent),
+		Env:     req.EnvVars,
+	}
+	paramsBytes, err := json.Marshal(installParams)
+	if err != nil {
+		log.Printf("[ERROR] marketplace: marshal params: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	paramsJSON := string(paramsBytes)
 
 	// Create the tracking record.
 	mApp, err := h.marketplaceRepo.Create(&marketplace.MarketplaceApp{
@@ -120,8 +139,8 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create the job.
-	j, err := h.jobService.Dispatch(req.NodeID, "marketplace.install", nodecommand.CommandTypeInstallApp)
+	// Create the job — params are persisted so the node can receive them on reconnect.
+	j, err := h.jobService.DispatchWithParams(req.NodeID, "marketplace.install", nodecommand.CommandTypeInstallApp, paramsJSON)
 	if err != nil {
 		log.Printf("[ERROR] marketplace: dispatch job: %v", err)
 		http.Error(w, "could not create job", http.StatusInternalServerError)
@@ -133,24 +152,11 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[WARN] marketplace: update job_id on app %s: %v", mApp.ID, err)
 	}
 
-	// Build the JSON params to send to the agent.
-	installParams := InstallAppParams{
-		AppName: req.AppName,
-		Compose: string(composeContent),
-		Env:     req.EnvVars,
-	}
-	paramsBytes, err := json.Marshal(installParams)
-	if err != nil {
-		log.Printf("[ERROR] marketplace: marshal params: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
 	if err := h.dispatcher.DispatchJobWithParams(
 		req.NodeID, j.ID, "marketplace.install",
-		nodecommand.CommandTypeInstallApp, string(paramsBytes),
+		nodecommand.CommandTypeInstallApp, paramsJSON,
 	); err != nil {
-		log.Printf("[WARN] marketplace: node %s not connected, job %s stays pending: %v", req.NodeID, j.ID, err)
+		log.Printf("[WARN] marketplace: node %s not connected, job %s will be dispatched on reconnect: %v", req.NodeID, j.ID, err)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
