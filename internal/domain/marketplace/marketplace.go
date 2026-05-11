@@ -87,6 +87,16 @@ var Catalog = []AppCatalogEntry{
 		},
 	},
 	{
+		Name:        "navidrome",
+		DisplayName: "Navidrome",
+		Description: "Self-hosted music streaming server compatible with Subsonic/Airsonic clients.",
+		Category:    "media",
+		EnvVars: []AppEnvVar{
+			{Key: "service-name", Label: "Service Name", Required: true, Default: "navidrome"},
+			{Key: "port", Label: "Navidrome Port", Description: "External port to expose Navidrome", Required: true, Default: "4533"},
+		},
+	},
+	{
 		Name:        "nextcloud",
 		DisplayName: "Nextcloud",
 		Description: "Self-hosted productivity platform with file sync, calendar, contacts and more.",

@@ -13,6 +13,12 @@ func NewService(repo Repository) *Service {
 // Dispatch creates a new pending job and returns it so the caller can send it
 // via WebSocket.
 func (s *Service) Dispatch(nodeID, commandName string, commandType nodecommand.CommandType) (*Job, error) {
+	return s.DispatchWithParams(nodeID, commandName, commandType, "")
+}
+
+// DispatchWithParams creates a new pending job with an optional JSON-encoded
+// params string that is persisted in the DB and re-sent on node reconnect.
+func (s *Service) DispatchWithParams(nodeID, commandName string, commandType nodecommand.CommandType, params string) (*Job, error) {
 	if nodeID == "" || commandName == "" {
 		return nil, ErrInvalidJobData
 	}
@@ -23,9 +29,15 @@ func (s *Service) Dispatch(nodeID, commandName string, commandType nodecommand.C
 		NodeID:      nodeID,
 		CommandName: commandName,
 		CommandType: commandType,
+		Params:      params,
 		Status:      StatusPending,
 	}
 	return s.repo.Create(j)
+}
+
+// FindPendingByNodeID returns pending jobs of the given command type for re-dispatch.
+func (s *Service) FindPendingByNodeID(nodeID string, commandType nodecommand.CommandType) ([]*Job, error) {
+	return s.repo.FindPendingByNodeID(nodeID, commandType)
 }
 
 // GetByID returns a job by its ID.

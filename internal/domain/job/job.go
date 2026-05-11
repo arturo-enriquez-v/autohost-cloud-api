@@ -29,6 +29,7 @@ type Job struct {
 	CommandName string                  `db:"command_name"`
 	CommandType nodecommand.CommandType `db:"command_type"`
 	Status      JobStatus               `db:"status"`
+	Params      string                  `db:"params"` // JSON-encoded params for parameterized commands
 	Output      string                  `db:"output"`
 	Error       string                  `db:"error"`
 	CreatedAt   time.Time               `db:"created_at"`
@@ -41,5 +42,6 @@ type Repository interface {
 	Create(j *Job) (*Job, error)
 	FindByID(id string) (*Job, error)
 	FindByNodeID(nodeID string) ([]*Job, error)
+	FindPendingByNodeID(nodeID string, commandType nodecommand.CommandType) ([]*Job, error)
 	UpdateStatus(id string, status JobStatus, output, errMsg string) error
 }

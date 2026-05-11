@@ -23,6 +23,7 @@ type JobModel struct {
 	CommandName string         `db:"command_name"`
 	CommandType string         `db:"command_type"`
 	Status      string         `db:"status"`
+	Params      string         `db:"params"`
 	Output      sql.NullString `db:"output"`
 	Error       sql.NullString `db:"error"`
 	CreatedAt   time.Time      `db:"created_at"`

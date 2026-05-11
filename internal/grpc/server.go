@@ -159,6 +159,23 @@ func (s *NodeAgentServer) Connect(
 		}
 	}
 
+	// Re-dispatch pending install_app jobs so the agent receives params it may
+	// have missed while it was offline.
+	if pendingJobs, err := s.jobSvc.FindPendingByNodeID(nodeID, nodecommand.CommandTypeInstallApp); err != nil {
+		log.Printf("[gRPC] list pending install_app jobs for node %s: %v", nodeID, err)
+	} else {
+		for _, j := range pendingJobs {
+			if j.Params == "" {
+				continue // no params to send; skip
+			}
+			if err := s.DispatchJobWithParams(nodeID, j.ID, j.CommandName, j.CommandType, j.Params); err != nil {
+				log.Printf("[gRPC] re-dispatch pending job %s to node %s: %v", j.ID, nodeID, err)
+			} else {
+				log.Printf("[gRPC] re-dispatched pending job %s (%s) to reconnected node %s", j.ID, j.CommandName, nodeID)
+			}
+		}
+	}
+
 	// Forward queued ServerMessages to the stream.
 	sendErr := make(chan error, 1)
 	go func() {
