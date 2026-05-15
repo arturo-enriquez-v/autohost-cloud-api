@@ -1,11 +1,13 @@
 # Etapa 1: build
-FROM golang:1.23 AS builder
+FROM golang:1.25 AS builder
 WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
 COPY . .
-RUN go build -o autohost-cloud-lite ./cmd/api
+RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o autohost-cloud-api ./cmd/api
 
 # Etapa 2: runtime
 FROM gcr.io/distroless/base-debian12
-COPY --from=builder /app/autohost-cloud-lite /usr/local/bin/autohost-cloud-lite
+COPY --from=builder /app/autohost-cloud-api /usr/local/bin/autohost-cloud-api
 EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/autohost-cloud-lite"]
+ENTRYPOINT ["/usr/local/bin/autohost-cloud-api"]
