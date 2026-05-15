@@ -12,7 +12,7 @@ test:
 	go test ./...
 
 docker:
-	docker build -t autohost-cloud-lite .
+	docker build -t autohost-cloud-api .
 
 dev: run-air
 
