@@ -32,13 +32,22 @@ func Auth(next http.Handler) http.Handler {
 			jwtSecret = mustJWTSecret()
 		}
 
-		authz := r.Header.Get("Authorization")
-		parts := strings.SplitN(authz, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			http.Error(w, "invalid Authorization header", http.StatusUnauthorized)
+		// Priority 1: Authorization: Bearer <token> (APIs, CLI, agents)
+		// Priority 2: access_token cookie (browser sessions via Next.js)
+		var raw string
+		if authz := r.Header.Get("Authorization"); authz != "" {
+			parts := strings.SplitN(authz, " ", 2)
+			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+				http.Error(w, "invalid Authorization header", http.StatusUnauthorized)
+				return
+			}
+			raw = parts[1]
+		} else if c, err := r.Cookie("access_token"); err == nil && c.Value != "" {
+			raw = c.Value
+		} else {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		raw := parts[1]
 
 		parser := jwt.NewParser(
 			jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Name}),
