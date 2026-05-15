@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -16,6 +17,10 @@ type JWTClaims struct {
 	jwt.RegisteredClaims
 }
 
+func jwtSecret() []byte {
+	return []byte(strings.TrimSpace(os.Getenv("JWT_SECRET")))
+}
+
 func SignAccessToken(userID string, email string) (string, error) {
 	ttl := 15 * time.Minute
 	if v := os.Getenv("ACCESS_TOKEN_TTL"); v != "" {
@@ -23,7 +28,7 @@ func SignAccessToken(userID string, email string) (string, error) {
 			ttl = d
 		}
 	}
-	secret := []byte(os.Getenv("JWT_SECRET"))
+	secret := jwtSecret()
 	now := time.Now().UTC()
 	claims := JWTClaims{
 		UserID: userID,
@@ -37,7 +42,7 @@ func SignAccessToken(userID string, email string) (string, error) {
 }
 
 func ParseAccessToken(tok string) (*JWTClaims, error) {
-	secret := []byte(os.Getenv("JWT_SECRET"))
+	secret := jwtSecret()
 	token, err := jwt.ParseWithClaims(tok, &JWTClaims{}, func(t *jwt.Token) (interface{}, error) {
 		return secret, nil
 	})
