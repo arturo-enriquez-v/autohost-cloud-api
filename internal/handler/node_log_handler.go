@@ -81,6 +81,11 @@ func (h *NodeLogHandler) streamLogs(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 
+	// Use a Ticker instead of time.After to avoid creating a new timer (and its
+	// associated goroutine) on every iteration of the select loop.
+	keepalive := time.NewTicker(5 * time.Second)
+	defer keepalive.Stop()
+
 	for {
 		select {
 		case <-r.Context().Done():
@@ -98,7 +103,7 @@ func (h *NodeLogHandler) streamLogs(w http.ResponseWriter, r *http.Request) {
 			}
 			flusher.Flush()
 
-		case <-time.After(5 * time.Second):
+		case <-keepalive.C:
 			// Keepalive comment — also detects a closed client connection within 5 s.
 			if _, err := fmt.Fprintf(w, ": ping\n\n"); err != nil {
 				log.Printf("[SSE] client disconnected for node %s", nodeID)

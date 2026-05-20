@@ -33,8 +33,7 @@ type RouterParams struct {
 	CaddyRouteHandler     *handler.CaddyRouteHandler
 	MarketplaceHandler    *handler.MarketplaceHandler
 	WebhookHandler        *handler.WebhookHandler
-
-	NodeTokenService *nodetoken.Service
+	NodeTokenService      *nodetoken.Service
 }
 
 // NewRouter construye el mux de Chi
