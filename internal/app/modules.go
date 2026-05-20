@@ -75,13 +75,19 @@ var HandlerModule = fx.Provide(
 	handler.NewCaddyRouteHandler,
 	handler.NewMarketplaceHandler,
 	handler.NewWebhookHandler,
+	handler.NewNodeProfileHandler,
 )
 
 var InfraModule = fx.Provide(
 	grpcserver.NewNodeAgentServer,
+	grpcserver.NewProfileManager,
 	// NodeAgentServer also satisfies ParamDispatcher (used by CaddyRoute and Marketplace handlers).
 	fx.Annotate(
 		func(s *grpcserver.NodeAgentServer) handler.ParamDispatcher { return s },
+	),
+	// NodeAgentServer satisfies ProfileRequester (used by NodeProfileHandler).
+	fx.Annotate(
+		func(s *grpcserver.NodeAgentServer) handler.ProfileRequester { return s },
 	),
 	// Non-variadic wrapper: wire grpc + ws into MultiDispatcher.
 	// Exposed as handler.NodeDispatcher (JobHandler) and scheduler.Dispatcher (Scheduler).

@@ -12,6 +12,12 @@ enum CommandType {
   COMMAND_TYPE_INSTALL_APP = 2;
 }
 
+// ProfileType selects what the agent should sample.
+enum ProfileType {
+  PROFILE_TYPE_HEAP = 0;  // Heap / memory allocation snapshot (instantaneous)
+  PROFILE_TYPE_CPU  = 1;  // CPU sampling for duration_seconds
+}
+
 enum JobStatus {
   JOB_STATUS_RUNNING   = 0;
   JOB_STATUS_COMPLETED = 1;
@@ -47,6 +53,7 @@ message NodeMessage {
     LogEntryPayload          log_entry      = 3;
     MetricPayload            metric         = 4;
     HealthCheckResultPayload health_result  = 5;
+    ProfileDataPayload       profile_data   = 6;
   }
 }
 
@@ -68,11 +75,12 @@ message MetricPayload {
 
 message ServerMessage {
   oneof payload {
-    ExecuteJobPayload         execute_job   = 1;
-    StreamLogsPayload         stream_logs   = 2;
-    StopLogsPayload           stop_logs     = 3;
+    ExecuteJobPayload         execute_job           = 1;
+    StreamLogsPayload         stream_logs           = 2;
+    StopLogsPayload           stop_logs             = 3;
     ConfigureHealthCheckPayload configure_health_check = 4;
-    StopHealthCheckPayload    stop_health_check = 5;
+    StopHealthCheckPayload    stop_health_check     = 5;
+    RequestProfilePayload     request_profile       = 6;
   }
 }
 
@@ -142,6 +150,23 @@ message HealthCheckResultPayload {
   int32  latency_ms            = 3;
   string message               = 4;
   int32  consecutive_failures  = 5;
+}
+
+// ─── Profiling (server → agent, then agent → server) ─────────────────────────
+
+// Sent by server to ask the agent to collect a pprof profile.
+message RequestProfilePayload {
+  string      request_id       = 1;  // correlation ID (UUID)
+  ProfileType profile_type     = 2;
+  int32       duration_seconds = 3;  // only relevant for PROFILE_TYPE_CPU (0 → 30 s default)
+}
+
+// Sent by agent to deliver the raw pprof bytes back to the server.
+message ProfileDataPayload {
+  string      request_id   = 1;  // matches RequestProfilePayload.request_id
+  ProfileType profile_type = 2;
+  bytes       data         = 3;  // raw pprof binary (pprof.WriteHeapProfile / StopCPUProfile output)
+  string      error        = 4;  // non-empty when collection failed
 }
 
 // ─── Metrics ─────────────────────────────────────────────────────────────────
