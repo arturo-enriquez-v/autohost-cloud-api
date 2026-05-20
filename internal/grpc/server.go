@@ -34,10 +34,9 @@ type NodeAgentServer struct {
 	marketplaceRepo   marketplace.Repository
 	serviceMonitorSvc *sm.Service
 
-	registry      *streamRegistry
-	logs          *logBroker
-	metricBroker  *metricBroker
-	profileBroker *profileBroker
+	registry     *streamRegistry
+	logs         *logBroker
+	metricBroker *metricBroker
 
 	// metricPersistMu guards metricLastPersist to throttle DB writes.
 	metricPersistMu   sync.Mutex
@@ -69,7 +68,6 @@ func NewNodeAgentServer(
 		marketplaceRepo:   marketplaceRepo,
 		serviceMonitorSvc: serviceMonitorSvc,
 		metricBroker:      newMetricBroker(),
-		profileBroker:     newProfileBroker(),
 		metricLastPersist: make(map[string]time.Time),
 	}
 	s.logs = newLogBroker(reg.sendToNode)
@@ -274,10 +272,6 @@ func (s *NodeAgentServer) Connect(
 
 		case *pb.NodeMessage_HealthResult:
 			go s.handleHealthCheckResult(nodeID, p.HealthResult)
-
-		case *pb.NodeMessage_ProfileData:
-			// Route the raw pprof bytes to the HTTP handler that is waiting.
-			s.profileBroker.deliver(p.ProfileData)
 
 		default:
 			log.Printf("[gRPC] unknown payload from node %s", nodeID)

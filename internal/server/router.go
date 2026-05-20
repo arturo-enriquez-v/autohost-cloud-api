@@ -33,9 +33,7 @@ type RouterParams struct {
 	CaddyRouteHandler     *handler.CaddyRouteHandler
 	MarketplaceHandler    *handler.MarketplaceHandler
 	WebhookHandler        *handler.WebhookHandler
-	NodeProfileHandler    *handler.NodeProfileHandler
-
-	NodeTokenService *nodetoken.Service
+	NodeTokenService      *nodetoken.Service
 }
 
 // NewRouter construye el mux de Chi
@@ -75,12 +73,6 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/marketplace", p.MarketplaceHandler.Routes())
 		r.Mount("/webhooks", p.WebhookHandler.Routes())
 	})
-
-	// Top-level pprof proxy — must live outside /v1/nodes/... so that
-	// pprof's absolute-path asset references (/static/pprof.js, etc.)
-	// resolve correctly within the iframe.
-	r.Mount("/v1/pprof/{sessionID}", p.NodeProfileHandler.ProxyRoutes())
-	r.Mount("/v1/nodes/{nodeID}/profile", p.NodeProfileHandler.NodeRoutes())
 
 	return r
 }

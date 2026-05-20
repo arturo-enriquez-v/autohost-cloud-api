@@ -1,11 +1,6 @@
 package grpcserver
 
 import (
-	"context"
-	"fmt"
-	"time"
-
-	"github.com/google/uuid"
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
 )
@@ -72,69 +67,4 @@ func (s *NodeAgentServer) StartNodeLogStream(nodeID, unit string, lines int32) e
 // StopNodeLogStream asks the agent to stop streaming logs.
 func (s *NodeAgentServer) StopNodeLogStream(nodeID string) error {
 	return s.logs.stopStream(nodeID)
-}
-
-// RequestProfile sends a profile-collection request to the agent and blocks
-// until the agent replies with the raw pprof bytes (or ctx is cancelled).
-//
-// profileType must be "cpu" or "heap".
-// durationSec is only used for CPU profiles; use 0 to accept the agent default (30 s).
-//
-// The returned bytes are the raw output of pprof.StartCPUProfile /
-// pprof.WriteHeapProfile — compatible with `go tool pprof`.
-func (s *NodeAgentServer) RequestProfile(
-	ctx context.Context,
-	nodeID, profileType string,
-	durationSec int32,
-) ([]byte, error) {
-	var pt pb.ProfileType
-	switch profileType {
-	case "cpu":
-		pt = pb.ProfileType_PROFILE_TYPE_CPU
-	case "heap":
-		pt = pb.ProfileType_PROFILE_TYPE_HEAP
-	default:
-		return nil, fmt.Errorf("unknown profile type %q; use \"cpu\" or \"heap\"", profileType)
-	}
-
-	requestID := uuid.New().String()
-
-	// Register before sending so we never miss the reply.
-	resultCh := s.profileBroker.register(requestID)
-	defer s.profileBroker.cancel(requestID)
-
-	// Budget: sampling window + 15 s grace for collection + transmission.
-	timeout := time.Duration(durationSec+15) * time.Second
-	if pt == pb.ProfileType_PROFILE_TYPE_HEAP {
-		timeout = 15 * time.Second
-	}
-	if timeout < 15*time.Second {
-		timeout = 15 * time.Second
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	msg := &pb.ServerMessage{
-		Payload: &pb.ServerMessage_RequestProfile{
-			RequestProfile: &pb.RequestProfilePayload{
-				RequestId:       requestID,
-				ProfileType:     pt,
-				DurationSeconds: durationSec,
-			},
-		},
-	}
-	if err := s.SendToNode(nodeID, msg); err != nil {
-		return nil, fmt.Errorf("send profile request to node %s: %w", nodeID, err)
-	}
-
-	select {
-	case result := <-resultCh:
-		if result.GetError() != "" {
-			return nil, fmt.Errorf("agent profiling error: %s", result.GetError())
-		}
-		return result.GetData(), nil
-	case <-ctx.Done():
-		return nil, fmt.Errorf("profile request timed out waiting for node %s: %w", nodeID, ctx.Err())
-	}
 }
