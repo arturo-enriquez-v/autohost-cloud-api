@@ -14,7 +14,9 @@ test:
 docker:
 	docker build -t autohost-cloud-api .
 
-dev: run-air
+dev: 
+	-kill -9 $$(lsof -t -i :9090) 2>/dev/null || true
+	$(MAKE) run-air
 
 run-air:
 	docker compose up -d

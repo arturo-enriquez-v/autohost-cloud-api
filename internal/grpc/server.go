@@ -34,9 +34,10 @@ type NodeAgentServer struct {
 	marketplaceRepo   marketplace.Repository
 	serviceMonitorSvc *sm.Service
 
-	registry     *streamRegistry
-	logs         *logBroker
-	metricBroker *metricBroker
+	registry         *streamRegistry
+	logs             *logBroker
+	metricBroker     *metricBroker
+	containerBroker  *containerBroker
 
 	// metricPersistMu guards metricLastPersist to throttle DB writes.
 	metricPersistMu   sync.Mutex
@@ -71,6 +72,7 @@ func NewNodeAgentServer(
 		metricLastPersist: make(map[string]time.Time),
 	}
 	s.logs = newLogBroker(reg.sendToNode)
+	s.containerBroker = newContainerBroker(reg.sendToNode)
 	return s
 }
 
@@ -131,6 +133,15 @@ func (s *NodeAgentServer) Connect(
 	}()
 
 	log.Printf("[gRPC] node %s connected", nodeID)
+
+	// Re-issue StreamContainers if there are active subscribers waiting.
+	if s.containerBroker.hasSubscribers(nodeID) {
+		if err := s.containerBroker.startStream(nodeID); err != nil {
+			log.Printf("[gRPC] re-start container stream for node %s: %v", nodeID, err)
+		} else {
+			log.Printf("[gRPC] re-issued StreamContainers to reconnected node %s", nodeID)
+		}
+	}
 
 	// If there are active SSE subscribers from before a disconnect, re-issue
 	// the StreamLogs command so the agent starts sending again.
@@ -269,6 +280,9 @@ func (s *NodeAgentServer) Connect(
 
 		case *pb.NodeMessage_LogEntry:
 			s.logs.fanOut(nodeID, p.LogEntry)
+
+		case *pb.NodeMessage_ContainerList:
+			s.containerBroker.fanOut(nodeID, p.ContainerList)
 
 		case *pb.NodeMessage_HealthResult:
 			go s.handleHealthCheckResult(nodeID, p.HealthResult)

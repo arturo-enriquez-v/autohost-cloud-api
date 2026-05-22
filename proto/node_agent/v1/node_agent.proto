@@ -48,12 +48,13 @@ message RegisterCommandsResponse {
 
 message NodeMessage {
   oneof payload {
-    JobResultPayload         job_result     = 1;
-    HeartbeatPayload         heartbeat      = 2;
-    LogEntryPayload          log_entry      = 3;
-    MetricPayload            metric         = 4;
-    HealthCheckResultPayload health_result  = 5;
-    ProfileDataPayload       profile_data   = 6;
+    JobResultPayload         job_result      = 1;
+    HeartbeatPayload         heartbeat       = 2;
+    LogEntryPayload          log_entry       = 3;
+    MetricPayload            metric          = 4;
+    HealthCheckResultPayload health_result   = 5;
+    ProfileDataPayload       profile_data    = 6;
+    ContainerListPayload     container_list  = 7;
   }
 }
 
@@ -81,6 +82,8 @@ message ServerMessage {
     ConfigureHealthCheckPayload configure_health_check = 4;
     StopHealthCheckPayload    stop_health_check     = 5;
     RequestProfilePayload     request_profile       = 6;
+    StreamContainersPayload   stream_containers     = 7;
+    StopContainersPayload     stop_containers       = 8;
   }
 }
 
@@ -167,6 +170,32 @@ message ProfileDataPayload {
   ProfileType profile_type = 2;
   bytes       data         = 3;  // raw pprof binary (pprof.WriteHeapProfile / StopCPUProfile output)
   string      error        = 4;  // non-empty when collection failed
+}
+
+// ─── Container streaming (server → agent, then agent → server) ───────────────
+
+// Sent by server to ask the agent to start streaming container state snapshots.
+message StreamContainersPayload {}
+
+// Sent by server to ask the agent to stop streaming container state.
+message StopContainersPayload {}
+
+// One Docker container entry within a ContainerListPayload snapshot.
+message ContainerInfo {
+  string id       = 1;
+  string name     = 2;
+  string image    = 3;
+  string state    = 4;  // "running" | "exited" | "paused" | "restarting" | …
+  string status   = 5;  // human-readable, e.g. "Up 2 hours"
+  string cpu      = 6;  // CPU usage percentage string (only for running containers)
+  string mem      = 7;  // memory usage/limit string (only for running containers)
+  string mem_perc = 8;  // memory percentage string (only for running containers)
+}
+
+// Full container list snapshot sent by the agent whenever the list changes.
+message ContainerListPayload {
+  repeated ContainerInfo containers = 1;
+  string error = 2;  // non-empty when Docker is unavailable
 }
 
 // ─── Metrics ─────────────────────────────────────────────────────────────────
