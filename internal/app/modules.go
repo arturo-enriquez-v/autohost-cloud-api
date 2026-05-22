@@ -67,6 +67,7 @@ var HandlerModule = fx.Provide(
 	handler.NewWSHandler,
 	handler.NewNodeCommandHandler,
 	handler.NewNodeLogHandler,
+	handler.NewNodeContainerHandler,
 	handler.NewNodeAlertHandler,
 	handler.NewScheduledTaskHandler,
 	handler.NewAlertEventHandler,

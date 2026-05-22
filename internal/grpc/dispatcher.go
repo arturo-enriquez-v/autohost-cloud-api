@@ -58,6 +58,14 @@ func (s *NodeAgentServer) SubscribeToNodeLogs(nodeID, unit string, lines int32) 
 	return s.logs.subscribe(nodeID, unit, lines)
 }
 
+// SubscribeToContainers returns a channel that receives ContainerListPayload
+// snapshots from the given node and a cancel function the caller must invoke
+// when done.  The first subscriber causes a StreamContainers command to be sent
+// to the agent; the last unsubscribe sends StopContainers.
+func (s *NodeAgentServer) SubscribeToContainers(nodeID string) (<-chan *pb.ContainerListPayload, func()) {
+	return s.containerBroker.subscribe(nodeID)
+}
+
 // StartNodeLogStream sends a StreamLogs command to the agent so it starts
 // sending LogEntry messages back. unit="" means all units.
 func (s *NodeAgentServer) StartNodeLogStream(nodeID, unit string, lines int32) error {

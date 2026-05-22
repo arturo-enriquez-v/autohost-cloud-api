@@ -25,6 +25,7 @@ type RouterParams struct {
 	JobsHandler           *handler.JobHandler
 	WSHandler             *handler.WSHandler
 	NodeLogHandler        *handler.NodeLogHandler
+	NodeContainerHandler  *handler.NodeContainerHandler
 	NodeAlertHandler      *handler.NodeAlertHandler
 	ScheduledTaskHandler  *handler.ScheduledTaskHandler
 	AlertEventHandler     *handler.AlertEventHandler
@@ -64,6 +65,7 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/jobs", p.JobsHandler.Routes())
 		r.Mount("/ws", p.WSHandler.Routes(nodeAuthMiddleware))
 		r.Mount("/node-logs", p.NodeLogHandler.Routes())
+		r.Mount("/node-containers", p.NodeContainerHandler.Routes())
 		r.Mount("/node-alerts", p.NodeAlertHandler.Routes())
 		r.Mount("/scheduled-tasks", p.ScheduledTaskHandler.Routes())
 		r.Mount("/alert-events", p.AlertEventHandler.Routes())
