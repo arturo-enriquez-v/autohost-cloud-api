@@ -66,6 +66,14 @@ func (s *NodeAgentServer) SubscribeToContainers(nodeID string) (<-chan *pb.Conta
 	return s.containerBroker.subscribe(nodeID)
 }
 
+// RefreshContainerStream re-sends a StreamContainers command to the agent,
+// causing it to push a fresh container snapshot immediately.  This is used as
+// a server-side backup for agents that do not send periodic snapshots on their
+// own (i.e. older agent builds without the 15 s internal ticker).
+func (s *NodeAgentServer) RefreshContainerStream(nodeID string) error {
+	return s.containerBroker.startStream(nodeID)
+}
+
 // StartNodeLogStream sends a StreamLogs command to the agent so it starts
 // sending LogEntry messages back. unit="" means all units.
 func (s *NodeAgentServer) StartNodeLogStream(nodeID, unit string, lines int32) error {
