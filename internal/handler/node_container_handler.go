@@ -103,6 +103,14 @@ func (h *NodeContainerHandler) streamContainers(w http.ResponseWriter, r *http.R
 	keepalive := time.NewTicker(30 * time.Second)
 	defer keepalive.Stop()
 
+	// Periodic snapshot refresh: re-requests a fresh container list from the
+	// agent every 30 s so CPU/mem stats stay current even when no Docker
+	// lifecycle events occur.  This is the server-side counterpart of the
+	// agent's own 15 s internal ticker introduced in the same release; it also
+	// acts as a fallback for older agent builds that lack that ticker.
+	snapshotRefresh := time.NewTicker(30 * time.Second)
+	defer snapshotRefresh.Stop()
+
 	for {
 		select {
 		case <-r.Context().Done():
@@ -115,6 +123,13 @@ func (h *NodeContainerHandler) streamContainers(w http.ResponseWriter, r *http.R
 				return
 			}
 			flusher.Flush()
+
+		case <-snapshotRefresh.C:
+			if h.grpc.IsNodeConnected(nodeID) {
+				if err := h.grpc.RefreshContainerStream(nodeID); err != nil {
+					log.Printf("[SSE] container snapshot refresh for node %s: %v", nodeID, err)
+				}
+			}
 
 		case snapshot, ok := <-ch:
 			if !ok {
