@@ -34,10 +34,10 @@ type NodeAgentServer struct {
 	marketplaceRepo   marketplace.Repository
 	serviceMonitorSvc *sm.Service
 
-	registry         *streamRegistry
-	logs             *logBroker
-	metricBroker     *metricBroker
-	containerBroker  *containerBroker
+	registry        *streamRegistry
+	logs            *logBroker
+	metricBroker    *metricBroker
+	containerBroker *containerBroker
 
 	// metricPersistMu guards metricLastPersist to throttle DB writes.
 	metricPersistMu   sync.Mutex
@@ -313,9 +313,11 @@ func (s *NodeAgentServer) ReportMetrics(
 // ---- Live metrics SSE subscription -----------------------------------------
 
 // shouldPersistMetric returns true if enough time has passed since the last
-// DB write for nodeID (throttled to once per minute).
+// DB write for nodeID (throttled to once every 15 s).
+// 15 s keeps DB writes low while staying close enough to the 10 s frontend
+// polling interval so the nodes-list always shows a fresh value.
 func (s *NodeAgentServer) shouldPersistMetric(nodeID string) bool {
-	const persistInterval = 60 * time.Second
+	const persistInterval = 15 * time.Second
 	now := time.Now()
 	s.metricPersistMu.Lock()
 	defer s.metricPersistMu.Unlock()
