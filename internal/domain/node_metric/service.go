@@ -1,6 +1,9 @@
 package nodemetric
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 var (
 	ErrInvalidNodeMetricData = errors.New("invalid node metric data")
@@ -26,6 +29,12 @@ func (s *Service) GetHistory(params HistoryParams) ([]*NodeMetricHistoryPoint, e
 		return nil, ErrInvalidNodeMetricData
 	}
 	return s.repo.GetHistoryByNodeID(params)
+}
+
+// GetNodePeriodStats returns per-node AVG/MAX metrics for all nodes of an owner
+// over the window [since, now].
+func (s *Service) GetNodePeriodStats(ownerID string, since time.Time) ([]*NodePeriodStats, error) {
+	return s.repo.GetNodePeriodStatsByOwnerID(ownerID, since)
 }
 
 // func (s *Service) GetMetricsByNodeID(nodeID string, limit int) ([]*NodeMetric, error) {

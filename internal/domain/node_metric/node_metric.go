@@ -54,4 +54,17 @@ type HistoryParams struct {
 type Repository interface {
 	StoreNodeMetric(metric *CreateNodeMetricRequest) (*NodeMetric, error)
 	GetHistoryByNodeID(params HistoryParams) ([]*NodeMetricHistoryPoint, error)
+	// GetNodePeriodStatsByOwnerID returns avg+max metrics per node for a given owner
+	// over the window [since, now].
+	GetNodePeriodStatsByOwnerID(ownerID string, since time.Time) ([]*NodePeriodStats, error)
+}
+
+// NodePeriodStats holds aggregate CPU/RAM/disk stats for a node over a time window.
+type NodePeriodStats struct {
+	NodeID      string  `db:"node_id"`
+	Hostname    string  `db:"hostname"`
+	CPUAvg      float64 `db:"cpu_avg"`
+	CPUMax      float64 `db:"cpu_max"`
+	RAMAvg      float64 `db:"ram_avg"`
+	DiskFreeAvg float64 `db:"disk_free_avg"` // avg of (100 - disk_usage_percent)
 }
