@@ -142,3 +142,8 @@ func (s *Service) OAuthLoginAndIssue(idToken, ua, ip string) (TokenPair, error) 
 
 	return s.issueTokenPair(user, ua, ip)
 }
+
+// GetByID returns the user with the given ID.
+func (s *Service) GetByID(id string) (*User, error) {
+	return s.repo.FindUserByID(id)
+}
