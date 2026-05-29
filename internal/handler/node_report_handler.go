@@ -66,14 +66,14 @@ type nodeReportUmbrales struct {
 }
 
 type nodeReportMetric struct {
-	Nodo                     string               `json:"nodo"`
-	CPUPromedio              float64              `json:"cpu_promedio"`
-	CPUPico                  float64              `json:"cpu_pico"`
-	RAMPromedio              float64              `json:"ram_promedio"`
-	AlmacenamientoDisponible float64              `json:"almacenamiento_disponible"`
-	Alertas24h               int                  `json:"alertas_24h"`
-	TiposAlerta              []string             `json:"tipos_alerta"`
-	Umbrales                 *nodeReportUmbrales  `json:"umbrales,omitempty"`
+	Nodo                     string              `json:"nodo"`
+	CPUPromedio              float64             `json:"cpu_promedio"`
+	CPUPico                  float64             `json:"cpu_pico"`
+	RAMPromedio              float64             `json:"ram_promedio"`
+	AlmacenamientoDisponible float64             `json:"almacenamiento_disponible"`
+	Alertas24h               int                 `json:"alertas_24h"`
+	TiposAlerta              []string            `json:"tipos_alerta"`
+	Umbrales                 *nodeReportUmbrales `json:"umbrales,omitempty"`
 }
 
 type nodeReportInfra struct {
