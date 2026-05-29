@@ -76,10 +76,12 @@ var HandlerModule = fx.Provide(
 	handler.NewCaddyRouteHandler,
 	handler.NewMarketplaceHandler,
 	handler.NewWebhookHandler,
+	handler.NewNodeReportHandler,
 )
 
 var InfraModule = fx.Provide(
 	grpcserver.NewNodeAgentServer,
+	platform.NewRedisClient,
 	// NodeAgentServer also satisfies ParamDispatcher (used by CaddyRoute and Marketplace handlers).
 	fx.Annotate(
 		func(s *grpcserver.NodeAgentServer) handler.ParamDispatcher { return s },
