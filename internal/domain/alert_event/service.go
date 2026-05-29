@@ -30,3 +30,9 @@ func (s *Service) ListByUserID(userID string, limit, offset int) ([]*AlertEvent,
 func (s *Service) CountDistinctNodesWithRecentAlerts(userID string, since time.Time) (int, error) {
 	return s.repo.CountDistinctNodesWithRecentAlerts(userID, since)
 }
+
+// ListNodeAlertSummaryByUserID returns per-node alert count and distinct types
+// for events fired since `since`.
+func (s *Service) ListNodeAlertSummaryByUserID(userID string, since time.Time) ([]*NodeAlertSummary, error) {
+	return s.repo.ListNodeAlertSummaryByUserID(userID, since)
+}

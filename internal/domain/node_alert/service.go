@@ -24,3 +24,8 @@ func (s *Service) Upsert(alert *NodeAlert) (*NodeAlert, error) {
 func (s *Service) FindByNodeID(nodeID string) (*NodeAlert, error) {
 	return s.repo.FindByNodeID(nodeID)
 }
+
+// FindAllByOwnerID returns all alert configs for nodes owned by ownerID.
+func (s *Service) FindAllByOwnerID(ownerID string) ([]*NodeAlert, error) {
+	return s.repo.FindAllByOwnerID(ownerID)
+}

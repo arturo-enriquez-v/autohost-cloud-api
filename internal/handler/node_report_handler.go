@@ -10,6 +10,7 @@ import (
 	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
 	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/handler/response"
@@ -28,6 +29,7 @@ type NodeReportHandler struct {
 	authService       *auth.Service
 	metricService     *nodemetric.Service
 	alertEventService *alertevent.Service
+	nodeAlertService  *nodealert.Service
 	redis             *redis.Client
 }
 
@@ -36,6 +38,7 @@ func NewNodeReportHandler(
 	authService *auth.Service,
 	metricService *nodemetric.Service,
 	alertEventService *alertevent.Service,
+	nodeAlertService *nodealert.Service,
 	redis *redis.Client,
 ) *NodeReportHandler {
 	return &NodeReportHandler{
@@ -43,6 +46,7 @@ func NewNodeReportHandler(
 		authService:       authService,
 		metricService:     metricService,
 		alertEventService: alertEventService,
+		nodeAlertService:  nodeAlertService,
 		redis:             redis,
 	}
 }
@@ -54,12 +58,22 @@ func (h *NodeReportHandler) Routes() chi.Router {
 	return r
 }
 
+type nodeReportUmbrales struct {
+	CPU     *float32 `json:"cpu,omitempty"`
+	RAM     *float32 `json:"ram,omitempty"`
+	Disk    *float32 `json:"disk,omitempty"`
+	Offline bool     `json:"offline"`
+}
+
 type nodeReportMetric struct {
-	Nodo                     string  `json:"nodo"`
-	CPUPromedio              float64 `json:"cpu_promedio"`
-	CPUPico                  float64 `json:"cpu_pico"`
-	RAMPromedio              float64 `json:"ram_promedio"`
-	AlmacenamientoDisponible float64 `json:"almacenamiento_disponible"`
+	Nodo                     string               `json:"nodo"`
+	CPUPromedio              float64              `json:"cpu_promedio"`
+	CPUPico                  float64              `json:"cpu_pico"`
+	RAMPromedio              float64              `json:"ram_promedio"`
+	AlmacenamientoDisponible float64              `json:"almacenamiento_disponible"`
+	Alertas24h               int                  `json:"alertas_24h"`
+	TiposAlerta              []string             `json:"tipos_alerta"`
+	Umbrales                 *nodeReportUmbrales  `json:"umbrales,omitempty"`
 }
 
 type nodeReportInfra struct {
@@ -84,7 +98,6 @@ func (h *NodeReportHandler) TriggerNodeStatusReport(w http.ResponseWriter, r *ht
 	now := time.Now()
 	since := now.Add(-reportWindow)
 
-	// Fetch user for email
 	user, err := h.authService.GetByID(userID)
 	if err != nil || user == nil {
 		log.Printf("[ERROR] node report: fetch user: %v", err)
@@ -92,7 +105,6 @@ func (h *NodeReportHandler) TriggerNodeStatusReport(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Active status from last heartbeat
 	nodes, err := h.nodeService.GetByOwnerWithMetrics(userID)
 	if err != nil {
 		log.Printf("[ERROR] node report: fetch nodes: %v", err)
@@ -100,7 +112,6 @@ func (h *NodeReportHandler) TriggerNodeStatusReport(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Avg + max metrics over the last 24h
 	periodStats, err := h.metricService.GetNodePeriodStats(userID, since)
 	if err != nil {
 		log.Printf("[ERROR] node report: fetch period stats: %v", err)
@@ -108,17 +119,30 @@ func (h *NodeReportHandler) TriggerNodeStatusReport(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Index period stats by node ID for O(1) lookup
+	alertSummaries, err := h.alertEventService.ListNodeAlertSummaryByUserID(userID, since)
+	if err != nil {
+		log.Printf("[WARN] node report: alert summaries: %v", err)
+	}
+
+	alertConfigs, err := h.nodeAlertService.FindAllByOwnerID(userID)
+	if err != nil {
+		log.Printf("[WARN] node report: alert configs: %v", err)
+	}
+
+	// Index all lookups by node ID
 	statsByID := make(map[string]*nodemetric.NodePeriodStats, len(periodStats))
 	for _, s := range periodStats {
 		statsByID[s.NodeID] = s
 	}
 
-	// Real alert count from DB (distinct nodes with alerts in last 24h)
-	alertCount, err := h.alertEventService.CountDistinctNodesWithRecentAlerts(userID, since)
-	if err != nil {
-		log.Printf("[WARN] node report: alert count: %v", err)
-		// non-fatal: continue with 0
+	alertSummaryByID := make(map[string]*alertevent.NodeAlertSummary, len(alertSummaries))
+	for _, a := range alertSummaries {
+		alertSummaryByID[a.NodeID] = a
+	}
+
+	alertConfigByID := make(map[string]*nodealert.NodeAlert, len(alertConfigs))
+	for _, c := range alertConfigs {
+		alertConfigByID[c.NodeID] = c
 	}
 
 	var activeCount int
@@ -139,18 +163,48 @@ func (h *NodeReportHandler) TriggerNodeStatusReport(w http.ResponseWriter, r *ht
 			diskFree = stats.DiskFreeAvg
 		}
 
+		alertCount24h := 0
+		var tiposAlerta []string
+		if summary := alertSummaryByID[n.ID]; summary != nil {
+			alertCount24h = summary.Count
+			for _, t := range summary.Types {
+				tiposAlerta = append(tiposAlerta, string(t))
+			}
+		}
+		if tiposAlerta == nil {
+			tiposAlerta = []string{}
+		}
+
+		var umbrales *nodeReportUmbrales
+		if cfg := alertConfigByID[n.ID]; cfg != nil {
+			umbrales = &nodeReportUmbrales{
+				CPU:     cfg.CPUThreshold,
+				RAM:     cfg.RAMThreshold,
+				Disk:    cfg.DiskThreshold,
+				Offline: cfg.AlertOnOffline,
+			}
+		}
+
 		metricas = append(metricas, nodeReportMetric{
 			Nodo:                     n.Hostname,
 			CPUPromedio:              cpuAvg,
 			CPUPico:                  cpuMax,
 			RAMPromedio:              ramAvg,
 			AlmacenamientoDisponible: diskFree,
+			Alertas24h:               alertCount24h,
+			TiposAlerta:              tiposAlerta,
+			Umbrales:                 umbrales,
 		})
 	}
 
 	uptimePct := 0.0
 	if len(nodes) > 0 {
 		uptimePct = float64(activeCount) / float64(len(nodes)) * 100
+	}
+
+	alertCount, err := h.alertEventService.CountDistinctNodesWithRecentAlerts(userID, since)
+	if err != nil {
+		log.Printf("[WARN] node report: alert count: %v", err)
 	}
 
 	payload := nodeStatusReport{
