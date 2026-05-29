@@ -1,5 +1,7 @@
 package alertevent
 
+import "time"
+
 // Service wraps the repository for alert event business logic.
 type Service struct {
 	repo Repository
@@ -21,4 +23,10 @@ func (s *Service) ListByUserID(userID string, limit, offset int) ([]*AlertEvent,
 		limit = 50
 	}
 	return s.repo.ListByUserID(userID, limit, offset)
+}
+
+// CountDistinctNodesWithRecentAlerts returns how many distinct nodes fired
+// alerts within the given duration window (e.g. last 24h).
+func (s *Service) CountDistinctNodesWithRecentAlerts(userID string, since time.Time) (int, error) {
+	return s.repo.CountDistinctNodesWithRecentAlerts(userID, since)
 }

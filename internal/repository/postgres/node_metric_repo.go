@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"fmt"
+	"time"
 
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	"github.com/jmoiron/sqlx"
@@ -104,3 +105,28 @@ func (r *NodeMetricRepo) GetHistoryByNodeID(params nodemetric.HistoryParams) ([]
 // 	}
 // 	return models, nil
 // }
+
+// GetNodePeriodStatsByOwnerID returns AVG and MAX metrics per node for all nodes
+// owned by ownerID, computed over [since, now].
+func (r *NodeMetricRepo) GetNodePeriodStatsByOwnerID(ownerID string, since time.Time) ([]*nodemetric.NodePeriodStats, error) {
+	var stats []*nodemetric.NodePeriodStats
+	err := r.DB.Select(&stats, `
+		SELECT
+			n.id                                            AS node_id,
+			n.hostname                                      AS hostname,
+			COALESCE(AVG(m.cpu_usage_percent), 0)           AS cpu_avg,
+			COALESCE(MAX(m.cpu_usage_percent), 0)           AS cpu_max,
+			COALESCE(AVG(m.memory_usage_percent), 0)        AS ram_avg,
+			COALESCE(AVG(100.0 - m.disk_usage_percent), 0)  AS disk_free_avg
+		FROM nodes n
+		LEFT JOIN node_metrics m
+			ON m.node_id = n.id AND m.collected_at >= $2
+		WHERE n.owner_id = $1
+		GROUP BY n.id, n.hostname
+		ORDER BY n.hostname
+	`, ownerID, since)
+	if err != nil {
+		return nil, err
+	}
+	return stats, nil
+}

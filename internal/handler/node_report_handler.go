@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"time"
 
+	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
 	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/handler/response"
 	"github.com/go-chi/chi/v5"
@@ -18,20 +20,31 @@ import (
 const (
 	nodeStatusReportKey = "reports:enqueue"
 	activeThreshold     = 5 * time.Minute
-	// Thresholds for alert detection
-	cpuAlertThreshold  = 85.0
-	ramAlertThreshold  = 85.0
-	diskAlertThreshold = 90.0
+	reportWindow        = 24 * time.Hour
 )
 
 type NodeReportHandler struct {
-	nodeService *node.Service
-	authService *auth.Service
-	redis       *redis.Client
+	nodeService       *node.Service
+	authService       *auth.Service
+	metricService     *nodemetric.Service
+	alertEventService *alertevent.Service
+	redis             *redis.Client
 }
 
-func NewNodeReportHandler(nodeService *node.Service, authService *auth.Service, redis *redis.Client) *NodeReportHandler {
-	return &NodeReportHandler{nodeService: nodeService, authService: authService, redis: redis}
+func NewNodeReportHandler(
+	nodeService *node.Service,
+	authService *auth.Service,
+	metricService *nodemetric.Service,
+	alertEventService *alertevent.Service,
+	redis *redis.Client,
+) *NodeReportHandler {
+	return &NodeReportHandler{
+		nodeService:       nodeService,
+		authService:       authService,
+		metricService:     metricService,
+		alertEventService: alertEventService,
+		redis:             redis,
+	}
 }
 
 func (h *NodeReportHandler) Routes() chi.Router {
@@ -68,13 +81,10 @@ func (h *NodeReportHandler) TriggerNodeStatusReport(w http.ResponseWriter, r *ht
 		return
 	}
 
-	nodes, err := h.nodeService.GetByOwnerWithMetrics(userID)
-	if err != nil {
-		log.Printf("[ERROR] node report: fetch nodes: %v", err)
-		response.RespondError(w, http.StatusInternalServerError, "could not fetch node metrics")
-		return
-	}
+	now := time.Now()
+	since := now.Add(-reportWindow)
 
+	// Fetch user for email
 	user, err := h.authService.GetByID(userID)
 	if err != nil || user == nil {
 		log.Printf("[ERROR] node report: fetch user: %v", err)
@@ -82,8 +92,36 @@ func (h *NodeReportHandler) TriggerNodeStatusReport(w http.ResponseWriter, r *ht
 		return
 	}
 
-	now := time.Now()
-	var activeCount, alertCount int
+	// Active status from last heartbeat
+	nodes, err := h.nodeService.GetByOwnerWithMetrics(userID)
+	if err != nil {
+		log.Printf("[ERROR] node report: fetch nodes: %v", err)
+		response.RespondError(w, http.StatusInternalServerError, "could not fetch nodes")
+		return
+	}
+
+	// Avg + max metrics over the last 24h
+	periodStats, err := h.metricService.GetNodePeriodStats(userID, since)
+	if err != nil {
+		log.Printf("[ERROR] node report: fetch period stats: %v", err)
+		response.RespondError(w, http.StatusInternalServerError, "could not fetch metric stats")
+		return
+	}
+
+	// Index period stats by node ID for O(1) lookup
+	statsByID := make(map[string]*nodemetric.NodePeriodStats, len(periodStats))
+	for _, s := range periodStats {
+		statsByID[s.NodeID] = s
+	}
+
+	// Real alert count from DB (distinct nodes with alerts in last 24h)
+	alertCount, err := h.alertEventService.CountDistinctNodesWithRecentAlerts(userID, since)
+	if err != nil {
+		log.Printf("[WARN] node report: alert count: %v", err)
+		// non-fatal: continue with 0
+	}
+
+	var activeCount int
 	var metricas []nodeReportMetric
 
 	for _, n := range nodes {
@@ -92,26 +130,21 @@ func (h *NodeReportHandler) TriggerNodeStatusReport(w http.ResponseWriter, r *ht
 			activeCount++
 		}
 
-		var cpuPct, ramPct, diskUsagePct float64
-		if n.LastMetric != nil {
-			cpuPct = n.LastMetric.CPUUsagePercent
-			ramPct = n.LastMetric.MemoryUsagePercent
-			diskUsagePct = n.LastMetric.DiskUsagePercent
-
-			if isActive && (cpuPct > cpuAlertThreshold || ramPct > ramAlertThreshold || diskUsagePct > diskAlertThreshold) {
-				alertCount++
-			}
+		stats := statsByID[n.ID]
+		var cpuAvg, cpuMax, ramAvg, diskFree float64
+		if stats != nil {
+			cpuAvg = stats.CPUAvg
+			cpuMax = stats.CPUMax
+			ramAvg = stats.RAMAvg
+			diskFree = stats.DiskFreeAvg
 		}
-
-		// disk_disponible is reported as free % (100 - usage)
-		diskFreePct := 100.0 - diskUsagePct
 
 		metricas = append(metricas, nodeReportMetric{
 			Nodo:                     n.Hostname,
-			CPUPromedio:              cpuPct,
-			CPUPico:                  cpuPct,
-			RAMPromedio:              ramPct,
-			AlmacenamientoDisponible: diskFreePct,
+			CPUPromedio:              cpuAvg,
+			CPUPico:                  cpuMax,
+			RAMPromedio:              ramAvg,
+			AlmacenamientoDisponible: diskFree,
 		})
 	}
 

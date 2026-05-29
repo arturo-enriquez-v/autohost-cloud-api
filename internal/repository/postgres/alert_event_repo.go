@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"time"
 
 	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
 	"github.com/jmoiron/sqlx"
@@ -29,6 +30,19 @@ func (r *AlertEventRepository) Create(event *alertevent.AlertEvent) (*alertevent
 		return nil, err
 	}
 	return &result, nil
+}
+
+// CountDistinctNodesWithRecentAlerts returns the number of distinct node IDs
+// that fired at least one alert since `since` for the given user.
+func (r *AlertEventRepository) CountDistinctNodesWithRecentAlerts(userID string, since time.Time) (int, error) {
+	var count int
+	err := r.db.QueryRowxContext(context.Background(), `
+		SELECT COUNT(DISTINCT node_id)
+		FROM alert_events
+		WHERE user_id = $1 AND created_at >= $2`,
+		userID, since,
+	).Scan(&count)
+	return count, err
 }
 
 // ListByUserID returns alert events for a user ordered by most recent first.
