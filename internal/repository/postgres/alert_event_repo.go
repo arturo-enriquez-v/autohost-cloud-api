@@ -6,6 +6,7 @@ import (
 
 	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 // AlertEventRepository implements alertevent.Repository using PostgreSQL.
@@ -43,6 +44,42 @@ func (r *AlertEventRepository) CountDistinctNodesWithRecentAlerts(userID string,
 		userID, since,
 	).Scan(&count)
 	return count, err
+}
+
+// ListNodeAlertSummaryByUserID returns per-node alert count and distinct types
+// for events fired since `since`.
+func (r *AlertEventRepository) ListNodeAlertSummaryByUserID(userID string, since time.Time) ([]*alertevent.NodeAlertSummary, error) {
+	rows, err := r.db.QueryxContext(context.Background(), `
+		SELECT node_id, COUNT(*) AS cnt, ARRAY_AGG(DISTINCT alert_type) AS types
+		FROM alert_events
+		WHERE user_id = $1 AND created_at >= $2
+		GROUP BY node_id`,
+		userID, since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*alertevent.NodeAlertSummary
+	for rows.Next() {
+		var nodeID string
+		var cnt int
+		var rawTypes []string
+		if err := rows.Scan(&nodeID, &cnt, pq.Array(&rawTypes)); err != nil {
+			return nil, err
+		}
+		types := make([]alertevent.AlertEventType, len(rawTypes))
+		for i, t := range rawTypes {
+			types[i] = alertevent.AlertEventType(t)
+		}
+		result = append(result, &alertevent.NodeAlertSummary{
+			NodeID: nodeID,
+			Count:  cnt,
+			Types:  types,
+		})
+	}
+	return result, nil
 }
 
 // ListByUserID returns alert events for a user ordered by most recent first.

@@ -20,4 +20,6 @@ type NodeAlert struct {
 type Repository interface {
 	Upsert(alert *NodeAlert) (*NodeAlert, error)
 	FindByNodeID(nodeID string) (*NodeAlert, error)
+	// FindAllByOwnerID returns all alert configs for nodes owned by ownerID.
+	FindAllByOwnerID(ownerID string) ([]*NodeAlert, error)
 }

@@ -29,4 +29,14 @@ type Repository interface {
 	// CountDistinctNodesWithRecentAlerts returns the number of distinct nodes
 	// that fired at least one alert event since `since`.
 	CountDistinctNodesWithRecentAlerts(userID string, since time.Time) (int, error)
+	// ListNodeAlertSummaryByUserID returns per-node alert count and distinct
+	// alert types for events fired since `since`.
+	ListNodeAlertSummaryByUserID(userID string, since time.Time) ([]*NodeAlertSummary, error)
+}
+
+// NodeAlertSummary holds aggregated alert info for a single node.
+type NodeAlertSummary struct {
+	NodeID string
+	Count  int
+	Types  []AlertEventType
 }

@@ -61,3 +61,21 @@ func (r *NodeAlertRepository) FindByNodeID(nodeID string) (*nodealert.NodeAlert,
 	}
 	return &alert, nil
 }
+
+func (r *NodeAlertRepository) FindAllByOwnerID(ownerID string) ([]*nodealert.NodeAlert, error) {
+	var alerts []*nodealert.NodeAlert
+	err := r.db.Select(&alerts, `
+		SELECT na.id, na.node_id, na.telegram_bot_token, na.telegram_chat_id,
+		       na.cpu_threshold, na.ram_threshold, na.disk_threshold,
+		       na.alert_on_offline, na.created_at, na.updated_at
+		FROM node_alerts na
+		JOIN nodes n ON n.id = na.node_id
+		WHERE n.owner_id = $1`, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	if alerts == nil {
+		alerts = []*nodealert.NodeAlert{}
+	}
+	return alerts, nil
+}
