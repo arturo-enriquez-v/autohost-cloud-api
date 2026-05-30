@@ -37,6 +37,7 @@ func main() {
 			server.StartHTTPServer,
 			server.StartGRPCServer,
 			server.StartScheduler,
+			server.StartReportScheduler,
 		),
 	).Run()
 }

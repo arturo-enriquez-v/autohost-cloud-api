@@ -100,6 +100,11 @@ var InfraModule = fx.Provide(
 	),
 	handler.NewJobHandler,
 	scheduler.NewScheduler,
+	scheduler.NewReportScheduler,
+	// Wire NodeReportHandler as ReportTrigger for the ReportScheduler.
+	fx.Annotate(
+		func(h *handler.NodeReportHandler) scheduler.ReportTrigger { return h },
+	),
 	provideOptionalR2Client,
 )
 

@@ -11,6 +11,7 @@ type ReportSettings struct {
 type Repository interface {
 	Get(userID string) (*ReportSettings, error)
 	Upsert(userID string, enabled bool, hourUTC int) error
+	ListEnabledAtHour(hourUTC int) ([]*ReportSettings, error)
 }
 
 // Service encapsulates business logic for report settings.
@@ -31,4 +32,8 @@ func (s *Service) Upsert(userID string, enabled bool, hourUTC int) error {
 		hourUTC = 8
 	}
 	return s.repo.Upsert(userID, enabled, hourUTC)
+}
+
+func (s *Service) ListEnabledAtHour(hourUTC int) ([]*ReportSettings, error) {
+	return s.repo.ListEnabledAtHour(hourUTC)
 }

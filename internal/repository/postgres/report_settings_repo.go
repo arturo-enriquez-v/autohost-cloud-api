@@ -42,3 +42,21 @@ func (r *ReportSettingsRepository) Upsert(userID string, enabled bool, hourUTC i
 	`, userID, enabled, hourUTC)
 	return err
 }
+
+func (r *ReportSettingsRepository) ListEnabledAtHour(hourUTC int) ([]*reportsettings.ReportSettings, error) {
+	var rows []struct {
+		UserID  string `db:"user_id"`
+		HourUTC int    `db:"hour_utc"`
+	}
+	err := r.db.Select(&rows,
+		`SELECT user_id, hour_utc FROM user_report_settings WHERE enabled = true AND hour_utc = $1`,
+		hourUTC)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*reportsettings.ReportSettings, len(rows))
+	for i, row := range rows {
+		out[i] = &reportsettings.ReportSettings{UserID: row.UserID, Enabled: true, HourUTC: row.HourUTC}
+	}
+	return out, nil
+}

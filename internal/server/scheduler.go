@@ -29,3 +29,25 @@ func StartScheduler(lc fx.Lifecycle, sched *scheduler.Scheduler) {
 		},
 	})
 }
+
+func StartReportScheduler(lc fx.Lifecycle, sched *scheduler.ReportScheduler) {
+	var cancel context.CancelFunc
+
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			var schedCtx context.Context
+			schedCtx, cancel = context.WithCancel(context.Background())
+
+			log.Println("Iniciando ReportScheduler en segundo plano...")
+			go sched.Start(schedCtx)
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			log.Println("Deteniendo ReportScheduler...")
+			if cancel != nil {
+				cancel()
+			}
+			return nil
+		},
+	})
+}
