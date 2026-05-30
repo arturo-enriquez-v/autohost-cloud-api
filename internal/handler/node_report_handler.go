@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -142,28 +143,35 @@ func (h *NodeReportHandler) TriggerNodeStatusReport(w http.ResponseWriter, r *ht
 		return
 	}
 
+	result, err := h.BuildAndPushForUser(context.Background(), userID)
+	if err != nil {
+		log.Printf("[ERROR] node report trigger: %v", err)
+		response.RespondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	response.RespondJSON(w, http.StatusOK, result)
+}
+
+// BuildAndPushForUser builds the node status report for the given user and pushes it to Redis.
+// Returns a summary map suitable for API responses.
+func (h *NodeReportHandler) BuildAndPushForUser(ctx context.Context, userID string) (map[string]any, error) {
 	now := time.Now()
 	since := now.Add(-reportWindow)
 
 	user, err := h.authService.GetByID(userID)
 	if err != nil || user == nil {
-		log.Printf("[ERROR] node report: fetch user: %v", err)
-		response.RespondError(w, http.StatusInternalServerError, "could not resolve user")
-		return
+		return nil, fmt.Errorf("could not resolve user")
 	}
 
 	nodes, err := h.nodeService.GetByOwnerWithMetrics(userID)
 	if err != nil {
-		log.Printf("[ERROR] node report: fetch nodes: %v", err)
-		response.RespondError(w, http.StatusInternalServerError, "could not fetch nodes")
-		return
+		return nil, fmt.Errorf("could not fetch nodes")
 	}
 
 	periodStats, err := h.metricService.GetNodePeriodStats(userID, since)
 	if err != nil {
-		log.Printf("[ERROR] node report: fetch period stats: %v", err)
-		response.RespondError(w, http.StatusInternalServerError, "could not fetch metric stats")
-		return
+		return nil, fmt.Errorf("could not fetch metric stats")
 	}
 
 	alertSummaries, err := h.alertEventService.ListNodeAlertSummaryByUserID(userID, since)
@@ -176,7 +184,6 @@ func (h *NodeReportHandler) TriggerNodeStatusReport(w http.ResponseWriter, r *ht
 		log.Printf("[WARN] node report: alert configs: %v", err)
 	}
 
-	// Index all lookups by node ID
 	statsByID := make(map[string]*nodemetric.NodePeriodStats, len(periodStats))
 	for _, s := range periodStats {
 		statsByID[s.NodeID] = s
@@ -267,26 +274,21 @@ func (h *NodeReportHandler) TriggerNodeStatusReport(w http.ResponseWriter, r *ht
 
 	data, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("[ERROR] node report: marshal payload: %v", err)
-		response.RespondError(w, http.StatusInternalServerError, "could not build report")
-		return
+		return nil, fmt.Errorf("could not build report")
 	}
 
-	ctx := context.Background()
 	if err := h.redis.LPush(ctx, nodeStatusReportKey, data).Err(); err != nil {
-		log.Printf("[ERROR] node report: redis push: %v", err)
-		response.RespondError(w, http.StatusInternalServerError, "could not queue report")
-		return
+		return nil, fmt.Errorf("could not queue report")
 	}
 
 	log.Printf("[INFO] node status report queued for user %s: active=%d alerts=%d nodes=%d",
 		userID, activeCount, alertCount, len(nodes))
 
-	response.RespondJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"status":        "queued",
 		"nodes_total":   len(nodes),
 		"nodes_active":  activeCount,
 		"nodes_alerts":  alertCount,
 		"fecha_reporte": payload.FechaReporte,
-	})
+	}, nil
 }
