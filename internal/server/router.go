@@ -47,6 +47,8 @@ func NewRouter(p RouterParams) *chi.Mux {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(corsMiddleware)
+	r.Use(securityHeaders)
+	r.Use(limitRequestBody)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -92,6 +94,28 @@ func corsMiddleware(next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// securityHeaders adds hardening headers to every response.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// limitRequestBody caps every incoming request body at 2 MB to prevent memory
+// exhaustion attacks. Endpoints that legitimately need larger payloads (e.g.
+// file uploads) should replace r.Body with a new http.MaxBytesReader before
+// reading.
+func limitRequestBody(next http.Handler) http.Handler {
+	const maxBytes = 2 << 20 // 2 MB
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 		next.ServeHTTP(w, r)
 	})
 }

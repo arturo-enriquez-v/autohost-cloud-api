@@ -139,6 +139,10 @@ func (h *ServiceMonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not fetch monitor", http.StatusInternalServerError)
 		return
 	}
+	if existing.UserID != claims.UserID {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 
 	var req upsertMonitorRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -189,6 +193,10 @@ func (h *ServiceMonitorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, "could not fetch monitor", http.StatusInternalServerError)
+		return
+	}
+	if monitor.UserID != claims.UserID {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 

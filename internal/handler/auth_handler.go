@@ -6,7 +6,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"strings"
 
 	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
@@ -151,20 +150,15 @@ func (h *AuthHandler) OAuthGoogle(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, http.StatusOK, pair)
 }
 
+// clientIP returns the remote IP address of the request.
+// chi's middleware.RealIP (registered globally in the router) has already
+// rewritten r.RemoteAddr to the value of X-Real-IP / X-Forwarded-For coming
+// from the trusted reverse-proxy, so we only read r.RemoteAddr here to avoid
+// letting arbitrary clients spoof their IP via raw headers.
 func clientIP(r *http.Request) string {
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return ip
-	}
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		// X-Forwarded-For puede ser una lista; tomar el primero
-		if i := strings.Index(fwd, ","); i != -1 {
-			return strings.TrimSpace(fwd[:i])
-		}
-		return strings.TrimSpace(fwd)
-	}
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return ""
+		return r.RemoteAddr
 	}
 	return ip
 }

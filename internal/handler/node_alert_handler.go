@@ -5,17 +5,19 @@ import (
 	"errors"
 	"net/http"
 
+	node "github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
 )
 
 type NodeAlertHandler struct {
-	service *nodealert.Service
+	service     *nodealert.Service
+	nodeService *node.Service
 }
 
-func NewNodeAlertHandler(service *nodealert.Service) *NodeAlertHandler {
-	return &NodeAlertHandler{service: service}
+func NewNodeAlertHandler(service *nodealert.Service, nodeService *node.Service) *NodeAlertHandler {
+	return &NodeAlertHandler{service: service, nodeService: nodeService}
 }
 
 func (h *NodeAlertHandler) Routes() chi.Router {
@@ -33,6 +35,14 @@ func (h *NodeAlertHandler) GetByNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	nodeID := chi.URLParam(r, "nodeId")
+
+	// Verify the requesting user owns this node (prevents IDOR).
+	n, err := h.nodeService.GetByID(nodeID)
+	if err != nil || n == nil || n.OwnerID == nil || *n.OwnerID != claims.UserID {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
 	alert, err := h.service.FindByNodeID(nodeID)
 	if err != nil {
 		if errors.Is(err, nodealert.ErrNotFound) {
@@ -66,6 +76,13 @@ func (h *NodeAlertHandler) UpsertByNode(w http.ResponseWriter, r *http.Request) 
 	}
 
 	nodeID := chi.URLParam(r, "nodeId")
+
+	// Verify the requesting user owns this node (prevents IDOR).
+	n, err := h.nodeService.GetByID(nodeID)
+	if err != nil || n == nil || n.OwnerID == nil || *n.OwnerID != claims.UserID {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 
 	var req upsertAlertRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

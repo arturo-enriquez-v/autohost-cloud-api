@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 )
@@ -26,7 +27,9 @@ func VerifyGoogleIDToken(idToken string) (*GoogleClaims, error) {
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get("https://oauth2.googleapis.com/tokeninfo?id_token=" + idToken)
+	params := url.Values{}
+	params.Set("id_token", idToken)
+	resp, err := client.Get("https://oauth2.googleapis.com/tokeninfo?" + params.Encode())
 	if err != nil {
 		return nil, fmt.Errorf("verify google token: %w", err)
 	}
