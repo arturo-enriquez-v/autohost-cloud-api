@@ -12,6 +12,7 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
+	reportsettings "github.com/arturo/autohost-cloud-api/internal/domain/report_settings"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/handler/response"
 	"github.com/go-chi/chi/v5"
@@ -25,12 +26,13 @@ const (
 )
 
 type NodeReportHandler struct {
-	nodeService       *node.Service
-	authService       *auth.Service
-	metricService     *nodemetric.Service
-	alertEventService *alertevent.Service
-	nodeAlertService  *nodealert.Service
-	redis             *redis.Client
+	nodeService           *node.Service
+	authService           *auth.Service
+	metricService         *nodemetric.Service
+	alertEventService     *alertevent.Service
+	nodeAlertService      *nodealert.Service
+	reportSettingsService *reportsettings.Service
+	redis                 *redis.Client
 }
 
 func NewNodeReportHandler(
@@ -39,15 +41,17 @@ func NewNodeReportHandler(
 	metricService *nodemetric.Service,
 	alertEventService *alertevent.Service,
 	nodeAlertService *nodealert.Service,
+	reportSettingsService *reportsettings.Service,
 	redis *redis.Client,
 ) *NodeReportHandler {
 	return &NodeReportHandler{
-		nodeService:       nodeService,
-		authService:       authService,
-		metricService:     metricService,
-		alertEventService: alertEventService,
-		nodeAlertService:  nodeAlertService,
-		redis:             redis,
+		nodeService:           nodeService,
+		authService:           authService,
+		metricService:         metricService,
+		alertEventService:     alertEventService,
+		nodeAlertService:      nodeAlertService,
+		reportSettingsService: reportSettingsService,
+		redis:                 redis,
 	}
 }
 
@@ -55,7 +59,50 @@ func (h *NodeReportHandler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Use(middleware.Auth)
 	r.Post("/node-status/trigger", h.TriggerNodeStatusReport)
+	r.Get("/settings", h.GetReportSettings)
+	r.Put("/settings", h.UpdateReportSettings)
 	return r
+}
+
+func (h *NodeReportHandler) GetReportSettings(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.RequireUserID(w, r)
+	if !ok {
+		return
+	}
+	settings, err := h.reportSettingsService.Get(userID)
+	if err != nil {
+		log.Printf("[ERROR] get report settings: %v", err)
+		response.RespondError(w, http.StatusInternalServerError, "could not get report settings")
+		return
+	}
+	response.RespondJSON(w, http.StatusOK, map[string]any{
+		"enabled":  settings.Enabled,
+		"hour_utc": settings.HourUTC,
+	})
+}
+
+func (h *NodeReportHandler) UpdateReportSettings(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.RequireUserID(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+		HourUTC int  `json:"hour_utc"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		response.RespondError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := h.reportSettingsService.Upsert(userID, body.Enabled, body.HourUTC); err != nil {
+		log.Printf("[ERROR] update report settings: %v", err)
+		response.RespondError(w, http.StatusInternalServerError, "could not update report settings")
+		return
+	}
+	response.RespondJSON(w, http.StatusOK, map[string]any{
+		"enabled":  body.Enabled,
+		"hour_utc": body.HourUTC,
+	})
 }
 
 type nodeReportUmbrales struct {

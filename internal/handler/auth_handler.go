@@ -126,8 +126,9 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.RespondJSON(w, http.StatusOK, map[string]any{
-		"user_id": claims.UserID,
-		"email":   claims.Email,
+		"uid":   claims.UserID,
+		"email": claims.Email,
+		"name":  claims.Name,
 	})
 }
 

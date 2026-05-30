@@ -15,6 +15,7 @@ import (
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
 	projectdomain "github.com/arturo/autohost-cloud-api/internal/domain/project"
+	reportsettings "github.com/arturo/autohost-cloud-api/internal/domain/report_settings"
 	scheduledtask "github.com/arturo/autohost-cloud-api/internal/domain/scheduled_task"
 	servicemonitor "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
@@ -40,6 +41,7 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewProjectRepository, fx.As(new(projectdomain.Repository))),
 	fx.Annotate(postgres.NewServiceMonitorRepository, fx.As(new(servicemonitor.Repository))),
 	fx.Annotate(postgres.NewCaddyRouteRepository, fx.As(new(caddyroute.Repository))),
+	fx.Annotate(postgres.NewReportSettingsRepository, fx.As(new(reportsettings.Repository))),
 )
 
 var ServiceModule = fx.Provide(
@@ -56,6 +58,7 @@ var ServiceModule = fx.Provide(
 	projectdomain.NewService,
 	servicemonitor.NewService,
 	caddyroute.NewService,
+	reportsettings.NewService,
 )
 
 var HandlerModule = fx.Provide(

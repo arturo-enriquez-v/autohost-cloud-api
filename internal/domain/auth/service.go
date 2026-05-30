@@ -24,7 +24,11 @@ func NewService(repo Repository) *Service {
 
 // issueTokenPair firma un access token y genera un refresh token para el usuario dado.
 func (s *Service) issueTokenPair(user *User, ua, ip string) (TokenPair, error) {
-	access, err := platform.SignAccessToken(user.ID, user.Email)
+	name := ""
+	if user.Name != nil {
+		name = *user.Name
+	}
+	access, err := platform.SignAccessToken(user.ID, user.Email, name)
 	if err != nil {
 		return TokenPair{}, err
 	}
@@ -56,7 +60,7 @@ func (s *Service) RegisterAndIssue(email, name, password, ua, ip string) (TokenP
 	if err != nil {
 		return TokenPair{}, err
 	}
-	access, err := platform.SignAccessToken(userID, email)
+	access, err := platform.SignAccessToken(userID, email, name)
 	if err != nil {
 		return TokenPair{}, err
 	}

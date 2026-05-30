@@ -22,6 +22,7 @@ const claimsKey ctxKey = iota
 type Claims struct {
 	UserID string `json:"uid"`
 	Email  string `json:"email"`
+	Name   string `json:"name,omitempty"`
 	jwt.RegisteredClaims
 }
 
