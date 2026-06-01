@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
@@ -100,4 +102,54 @@ func (r *AlertEventRepository) ListByUserID(userID string, limit, offset int) ([
 		events = []*alertevent.AlertEvent{}
 	}
 	return events, nil
+}
+
+// ListFiltered returns alert events matching the filter plus the total matching count.
+func (r *AlertEventRepository) ListFiltered(userID string, filter alertevent.AlertFilter, limit, offset int) ([]*alertevent.AlertEvent, int, error) {
+	conds := []string{"user_id = $1"}
+	args := []interface{}{userID}
+	n := 2
+
+	if filter.NodeID != "" {
+		conds = append(conds, fmt.Sprintf("node_id = $%d", n))
+		args = append(args, filter.NodeID)
+		n++
+	}
+	if filter.From != nil {
+		conds = append(conds, fmt.Sprintf("created_at >= $%d", n))
+		args = append(args, *filter.From)
+		n++
+	}
+	if filter.To != nil {
+		conds = append(conds, fmt.Sprintf("created_at <= $%d", n))
+		args = append(args, *filter.To)
+		n++
+	}
+
+	where := "WHERE " + strings.Join(conds, " AND ")
+
+	var total int
+	if err := r.db.QueryRowxContext(context.Background(),
+		"SELECT COUNT(*) FROM alert_events "+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	dataArgs := make([]interface{}, len(args)+2)
+	copy(dataArgs, args)
+	dataArgs[len(args)] = limit
+	dataArgs[len(args)+1] = offset
+	query := fmt.Sprintf(`
+		SELECT id, user_id, node_id, alert_type, message, created_at
+		FROM alert_events %s
+		ORDER BY created_at DESC
+		LIMIT $%d OFFSET $%d`, where, n, n+1)
+
+	var events []*alertevent.AlertEvent
+	if err := r.db.SelectContext(context.Background(), &events, query, dataArgs...); err != nil {
+		return nil, 0, err
+	}
+	if events == nil {
+		events = []*alertevent.AlertEvent{}
+	}
+	return events, total, nil
 }

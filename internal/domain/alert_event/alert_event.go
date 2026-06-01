@@ -2,6 +2,13 @@ package alertevent
 
 import "time"
 
+// AlertFilter narrows the events returned by ListFiltered.
+type AlertFilter struct {
+	NodeID string     // if non-empty, only events for this node
+	From   *time.Time // if non-nil, events at or after this time
+	To     *time.Time // if non-nil, events at or before this time
+}
+
 // AlertEventType identifies what triggered the alert.
 type AlertEventType string
 
@@ -26,6 +33,8 @@ type AlertEvent struct {
 type Repository interface {
 	Create(event *AlertEvent) (*AlertEvent, error)
 	ListByUserID(userID string, limit, offset int) ([]*AlertEvent, error)
+	// ListFiltered returns events matching the filter plus the total matching count.
+	ListFiltered(userID string, filter AlertFilter, limit, offset int) ([]*AlertEvent, int, error)
 	// CountDistinctNodesWithRecentAlerts returns the number of distinct nodes
 	// that fired at least one alert event since `since`.
 	CountDistinctNodesWithRecentAlerts(userID string, since time.Time) (int, error)

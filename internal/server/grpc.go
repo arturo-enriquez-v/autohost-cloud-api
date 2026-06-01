@@ -7,10 +7,12 @@ import (
 	"net"
 	"os"
 	"runtime/debug"
+	"time"
 
 	"go.uber.org/fx"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
@@ -29,6 +31,14 @@ func StartGRPCServer(lc fx.Lifecycle, agentServer *grpcserver.NodeAgentServer) {
 	}
 
 	grpcSrv := grpc.NewServer(
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    20 * time.Second, // send PING to client if idle for 20s
+			Timeout: 5 * time.Second,  // close connection if no PONG within 5s
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             10 * time.Second, // minimum PING interval accepted from clients
+			PermitWithoutStream: true,             // allow pings with no active streams
+		}),
 		grpc.ChainStreamInterceptor(streamRecovery(recoveryInterceptor)),
 		grpc.ChainUnaryInterceptor(unaryRecovery(recoveryInterceptor)),
 	)

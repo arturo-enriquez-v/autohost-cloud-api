@@ -36,3 +36,11 @@ func (s *Service) CountDistinctNodesWithRecentAlerts(userID string, since time.T
 func (s *Service) ListNodeAlertSummaryByUserID(userID string, since time.Time) ([]*NodeAlertSummary, error) {
 	return s.repo.ListNodeAlertSummaryByUserID(userID, since)
 }
+
+// ListFiltered returns alert events matching the filter and the total matching count.
+func (s *Service) ListFiltered(userID string, filter AlertFilter, limit, offset int) ([]*AlertEvent, int, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+	return s.repo.ListFiltered(userID, filter, limit, offset)
+}
