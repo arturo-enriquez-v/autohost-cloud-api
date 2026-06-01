@@ -86,6 +86,10 @@ func (h *NodeContainerHandler) streamContainers(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Remove the server-wide WriteTimeout for this long-lived SSE connection.
+	// Without this, net/http kills the stream after WriteTimeout (30 s).
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
 	// Subscribe — first subscriber causes StreamContainers to be sent to agent.
 	ch, cancel := h.grpc.SubscribeToContainers(nodeID)
 	defer cancel()

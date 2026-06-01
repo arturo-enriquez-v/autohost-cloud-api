@@ -65,6 +65,10 @@ func (h *NodeLogHandler) streamLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Remove the server-wide WriteTimeout for this long-lived SSE connection.
+	// Without this, net/http kills the stream after WriteTimeout (30 s).
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
 	// Subscribe — this also asks the agent to start streaming if needed.
 	ch, cancel := h.grpc.SubscribeToNodeLogs(nodeID, unit, lines)
 	defer cancel()
