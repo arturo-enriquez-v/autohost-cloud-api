@@ -251,6 +251,10 @@ func (h *NodeMetricHandler) StreamLiveMetrics(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Remove the server-wide WriteTimeout for this long-lived SSE connection.
+	// Without this, net/http kills the stream after WriteTimeout (30 s).
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
 	ch, cancel := h.grpc.SubscribeToNodeMetrics(nodeID)
 	defer cancel()
 
