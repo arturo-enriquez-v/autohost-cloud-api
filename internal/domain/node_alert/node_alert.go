@@ -6,6 +6,7 @@ import "time"
 type NodeAlert struct {
 	ID               string    `db:"id"                 json:"id"`
 	NodeID           string    `db:"node_id"            json:"node_id"`
+	TelegramBotID    *string   `db:"telegram_bot_id"    json:"telegram_bot_id"`
 	TelegramBotToken string    `db:"telegram_bot_token" json:"telegram_bot_token"`
 	TelegramChatID   string    `db:"telegram_chat_id"   json:"telegram_chat_id"`
 	CPUThreshold     *float32  `db:"cpu_threshold"      json:"cpu_threshold"`

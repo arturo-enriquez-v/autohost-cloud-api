@@ -31,6 +31,7 @@ func (h *AuthHandler) Routes() chi.Router {
 	r.Group(func(pr chi.Router) {
 		pr.Use(middleware.Auth)
 		pr.Get("/me", h.Me)
+		pr.Put("/profile", h.UpdateProfile)
 	})
 	return r
 }
@@ -124,10 +125,73 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	user, err := h.service.GetByID(claims.UserID)
+	if err != nil || user == nil {
+		response.RespondJSON(w, http.StatusOK, map[string]any{
+			"uid":        claims.UserID,
+			"email":      claims.Email,
+			"name":       claims.Name,
+			"avatar_url": "",
+		})
+		return
+	}
+
+	name := ""
+	if user.Name != nil {
+		name = *user.Name
+	}
+	avatarURL := ""
+	if user.AvatarURL != nil {
+		avatarURL = *user.AvatarURL
+	}
+
 	response.RespondJSON(w, http.StatusOK, map[string]any{
-		"uid":   claims.UserID,
-		"email": claims.Email,
-		"name":  claims.Name,
+		"uid":        user.ID,
+		"email":      user.Email,
+		"name":       name,
+		"avatar_url": avatarURL,
+	})
+}
+
+type updateProfileReq struct {
+	Name      *string `json:"name"`
+	AvatarURL *string `json:"avatar_url"`
+}
+
+func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req updateProfileReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.service.UpdateProfile(claims.UserID, req.Name, req.AvatarURL)
+	if err != nil || user == nil {
+		http.Error(w, "could not update profile", http.StatusInternalServerError)
+		return
+	}
+
+	name := ""
+	if user.Name != nil {
+		name = *user.Name
+	}
+	avatarURL := ""
+	if user.AvatarURL != nil {
+		avatarURL = *user.AvatarURL
+	}
+
+	response.RespondJSON(w, http.StatusOK, map[string]any{
+		"uid":        user.ID,
+		"email":      user.Email,
+		"name":       name,
+		"avatar_url": avatarURL,
 	})
 }
 

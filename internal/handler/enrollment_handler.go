@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/arturo/autohost-cloud-api/internal/domain/enrollment"
@@ -169,11 +171,42 @@ func (h *EnrollmentHandler) EnrollNode(w http.ResponseWriter, r *http.Request) {
 // ":<GRPC_PORT>" so local dev still works without extra configuration.
 func grpcAddress() string {
 	if addr := os.Getenv("GRPC_ADDRESS"); addr != "" {
-		return addr
+		return cleanGRPCAddress(addr)
 	}
 	port := os.Getenv("GRPC_PORT")
 	if port == "" {
 		port = "9090"
 	}
 	return ":" + port
+}
+
+func cleanGRPCAddress(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	hasHTTPS := strings.HasPrefix(raw, "https://")
+	hasHTTP := strings.HasPrefix(raw, "http://")
+	clean := strings.TrimPrefix(raw, "https://")
+	clean = strings.TrimPrefix(clean, "http://")
+	clean = strings.TrimRight(clean, "/")
+
+	if strings.HasPrefix(clean, ":") {
+		return clean
+	}
+
+	if _, _, err := net.SplitHostPort(clean); err == nil {
+		return clean
+	}
+
+	if hasHTTPS {
+		return clean + ":443"
+	}
+	if hasHTTP {
+		return clean + ":9090"
+	}
+	if strings.Contains(clean, ".") {
+		return clean + ":443"
+	}
+	return clean + ":9090"
 }

@@ -60,6 +60,7 @@ func (h *NodeAlertHandler) GetByNode(w http.ResponseWriter, r *http.Request) {
 }
 
 type upsertAlertRequest struct {
+	TelegramBotID    *string  `json:"telegram_bot_id"`
 	TelegramBotToken string   `json:"telegram_bot_token"`
 	TelegramChatID   string   `json:"telegram_chat_id"`
 	CPUThreshold     *float32 `json:"cpu_threshold"`
@@ -92,6 +93,7 @@ func (h *NodeAlertHandler) UpsertByNode(w http.ResponseWriter, r *http.Request) 
 
 	alert := &nodealert.NodeAlert{
 		NodeID:           nodeID,
+		TelegramBotID:    req.TelegramBotID,
 		TelegramBotToken: req.TelegramBotToken,
 		TelegramChatID:   req.TelegramChatID,
 		CPUThreshold:     req.CPUThreshold,

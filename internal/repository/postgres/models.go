@@ -36,6 +36,7 @@ type UserModel struct {
 	ID              string    `db:"id"`
 	Email           string    `db:"email"`
 	Name            *string   `db:"name"`
+	AvatarURL       *string   `db:"avatar_url"`
 	PasswordHash    *string   `db:"password_hash"`
 	OAuthProvider   *string   `db:"oauth_provider"`
 	OAuthProviderID *string   `db:"oauth_provider_id"`

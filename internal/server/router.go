@@ -30,11 +30,13 @@ type RouterParams struct {
 	ScheduledTaskHandler  *handler.ScheduledTaskHandler
 	AlertEventHandler     *handler.AlertEventHandler
 	ProjectHandler        *handler.ProjectHandler
+	PlanHandler          *handler.PlanHandler
 	ServiceMonitorHandler *handler.ServiceMonitorHandler
 	CaddyRouteHandler     *handler.CaddyRouteHandler
 	MarketplaceHandler    *handler.MarketplaceHandler
 	WebhookHandler        *handler.WebhookHandler
 	NodeReportHandler     *handler.NodeReportHandler
+	TelegramBotHandler    *handler.TelegramBotHandler
 	NodeTokenService      *nodetoken.Service
 }
 
@@ -73,11 +75,13 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/scheduled-tasks", p.ScheduledTaskHandler.Routes())
 		r.Mount("/alert-events", p.AlertEventHandler.Routes())
 		r.Mount("/projects", p.ProjectHandler.Routes())
+		r.Mount("/plans", p.PlanHandler.Routes())
 		r.Mount("/service-monitors", p.ServiceMonitorHandler.Routes())
 		r.Mount("/caddy-routes", p.CaddyRouteHandler.Routes())
 		r.Mount("/marketplace", p.MarketplaceHandler.Routes())
 		r.Mount("/webhooks", p.WebhookHandler.Routes())
 		r.Mount("/reports", p.NodeReportHandler.Routes())
+		r.Mount("/telegram-bots", p.TelegramBotHandler.Routes())
 	})
 
 	return r

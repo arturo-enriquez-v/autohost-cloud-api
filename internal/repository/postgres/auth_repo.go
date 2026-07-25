@@ -3,6 +3,8 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 
 	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
 	"github.com/jmoiron/sqlx"
@@ -18,21 +20,37 @@ func NewAuthRepository(db *sqlx.DB) *AuthRepository {
 	return &AuthRepository{db: db}
 }
 
-// CreateUser crea un nuevo usuario
+// CreateUser crea un nuevo usuario y le asigna el plan starter de forma atómica.
 func (r *AuthRepository) CreateUser(email, name, passwordHash string) (string, error) {
+	tx, err := r.db.BeginTxx(context.Background(), nil)
+	if err != nil {
+		return "", fmt.Errorf("auth_repo.CreateUser: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
 	var id string
-	err := r.db.QueryRowContext(context.Background(), `
+	err = tx.QueryRowContext(context.Background(), `
 		INSERT INTO users (email, name, password_hash)
 		VALUES ($1, $2, $3)
 		RETURNING id`, email, name, passwordHash).Scan(&id)
-	return id, err
+	if err != nil {
+		return "", fmt.Errorf("auth_repo.CreateUser: %w", err)
+	}
+
+	_, err = tx.ExecContext(context.Background(), `
+		INSERT INTO user_subscriptions (user_id, plan_id) VALUES ($1, 'starter')`, id)
+	if err != nil {
+		return "", fmt.Errorf("auth_repo.CreateUser: assign starter plan: %w", err)
+	}
+
+	return id, tx.Commit()
 }
 
 // FindUserByEmail busca un usuario por email
 func (r *AuthRepository) FindUserByEmail(email string) (*auth.User, error) {
 	var model UserModel
 	err := r.db.Get(&model, `
-		SELECT id, email, name, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at 
+		SELECT id, email, name, avatar_url, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at 
 		FROM users 
 		WHERE email = $1`, email)
 
@@ -72,7 +90,7 @@ func (r *AuthRepository) RevokeRefreshToken(userID, tokenHash string) error {
 func (r *AuthRepository) FindUserByID(id string) (*auth.User, error) {
 	var model UserModel
 	err := r.db.Get(&model, `
-		SELECT id, email, name, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at 
+		SELECT id, email, name, avatar_url, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at 
 		FROM users 
 		WHERE id = $1`, id)
 
@@ -86,12 +104,34 @@ func (r *AuthRepository) FindUserByID(id string) (*auth.User, error) {
 	return userModelToDomain(&model), nil
 }
 
+// UpdateUserProfile actualiza el nombre y avatar_url del usuario
+func (r *AuthRepository) UpdateUserProfile(userID string, name, avatarURL *string) (*auth.User, error) {
+	var model UserModel
+	err := r.db.Get(&model, `
+		UPDATE users
+		SET name = COALESCE($1, name),
+		    avatar_url = COALESCE($2, avatar_url),
+		    updated_at = NOW()
+		WHERE id = $3
+		RETURNING id, email, name, avatar_url, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at`,
+		name, avatarURL, userID)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return userModelToDomain(&model), nil
+}
+
 // FindOrCreateOAuthUser busca un usuario por proveedor OAuth o lo crea
 func (r *AuthRepository) FindOrCreateOAuthUser(email, name, provider, providerID string) (*auth.User, error) {
 	// 1. Buscar por provider + provider_id
 	var model UserModel
 	err := r.db.Get(&model, `
-		SELECT id, email, name, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at
+		SELECT id, email, name, avatar_url, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at
 		FROM users
 		WHERE oauth_provider = $1 AND oauth_provider_id = $2`, provider, providerID)
 
@@ -101,7 +141,7 @@ func (r *AuthRepository) FindOrCreateOAuthUser(email, name, provider, providerID
 
 	// 2. Buscar por email — vincular OAuth a cuenta existente
 	err = r.db.Get(&model, `
-		SELECT id, email, name, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at
+		SELECT id, email, name, avatar_url, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at
 		FROM users
 		WHERE email = $1`, email)
 
@@ -116,14 +156,30 @@ func (r *AuthRepository) FindOrCreateOAuthUser(email, name, provider, providerID
 		return userModelToDomain(&model), nil
 	}
 
-	// 3. Crear nuevo usuario (sin password)
+	// 3. Crear nuevo usuario (sin password) + asignar plan starter
+	tx, err := r.db.BeginTxx(context.Background(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("auth_repo.FindOrCreateOAuthUser: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
 	var id string
-	err = r.db.QueryRowContext(context.Background(), `
+	err = tx.QueryRowContext(context.Background(), `
 		INSERT INTO users (email, name, oauth_provider, oauth_provider_id)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id`, email, name, provider, providerID).Scan(&id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("auth_repo.FindOrCreateOAuthUser: %w", err)
+	}
+
+	_, err = tx.ExecContext(context.Background(), `
+		INSERT INTO user_subscriptions (user_id, plan_id) VALUES ($1, 'starter')`, id)
+	if err != nil {
+		return nil, fmt.Errorf("auth_repo.FindOrCreateOAuthUser: assign starter plan: %w", err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return nil, fmt.Errorf("auth_repo.FindOrCreateOAuthUser: commit: %w", err)
 	}
 
 	return &auth.User{
@@ -157,6 +213,7 @@ func userModelToDomain(m *UserModel) *auth.User {
 		ID:              m.ID,
 		Email:           m.Email,
 		Name:            m.Name,
+		AvatarURL:       m.AvatarURL,
 		PasswordHash:    m.PasswordHash,
 		OAuthProvider:   m.OAuthProvider,
 		OAuthProviderID: m.OAuthProviderID,

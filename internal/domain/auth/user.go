@@ -13,6 +13,7 @@ type User struct {
 	ID              string    `db:"id"`
 	Email           string    `db:"email"`
 	Name            *string   `db:"name"`
+	AvatarURL       *string   `db:"avatar_url"`
 	PasswordHash    *string   `db:"password_hash"`
 	OAuthProvider   *string   `db:"oauth_provider"`
 	OAuthProviderID *string   `db:"oauth_provider_id"`
@@ -26,6 +27,7 @@ type Repository interface {
 	FindUserByEmail(email string) (*User, error)
 	FindUserByID(id string) (*User, error)
 	FindOrCreateOAuthUser(email, name, provider, providerID string) (*User, error)
+	UpdateUserProfile(userID string, name, avatarURL *string) (*User, error)
 	StoreRefreshToken(userID, tokenHash, userAgent, ip string) error
 	RevokeRefreshToken(userID, tokenHash string) error
 	FindRefreshToken(tokenHash string) (userID string, err error)
