@@ -151,3 +151,8 @@ func (s *Service) OAuthLoginAndIssue(idToken, ua, ip string) (TokenPair, error) 
 func (s *Service) GetByID(id string) (*User, error) {
 	return s.repo.FindUserByID(id)
 }
+
+// UpdateProfile updates the user's name and/or avatar_url.
+func (s *Service) UpdateProfile(userID string, name, avatarURL *string) (*User, error) {
+	return s.repo.UpdateUserProfile(userID, name, avatarURL)
+}

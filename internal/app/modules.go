@@ -14,10 +14,12 @@ import (
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
+	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
 	projectdomain "github.com/arturo/autohost-cloud-api/internal/domain/project"
 	reportsettings "github.com/arturo/autohost-cloud-api/internal/domain/report_settings"
 	scheduledtask "github.com/arturo/autohost-cloud-api/internal/domain/scheduled_task"
 	servicemonitor "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
+	telegrambot "github.com/arturo/autohost-cloud-api/internal/domain/telegram_bot"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
@@ -38,10 +40,12 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewScheduledTaskRepository, fx.As(new(scheduledtask.Repository))),
 	fx.Annotate(postgres.NewMarketplaceRepository, fx.As(new(marketplace.Repository))),
 	fx.Annotate(postgres.NewAlertEventRepository, fx.As(new(alertevent.Repository))),
+	fx.Annotate(postgres.NewPlanRepository, fx.As(new(plan.Repository))),
 	fx.Annotate(postgres.NewProjectRepository, fx.As(new(projectdomain.Repository))),
 	fx.Annotate(postgres.NewServiceMonitorRepository, fx.As(new(servicemonitor.Repository))),
 	fx.Annotate(postgres.NewCaddyRouteRepository, fx.As(new(caddyroute.Repository))),
 	fx.Annotate(postgres.NewReportSettingsRepository, fx.As(new(reportsettings.Repository))),
+	fx.Annotate(postgres.NewTelegramBotRepository, fx.As(new(telegrambot.Repository))),
 )
 
 var ServiceModule = fx.Provide(
@@ -55,10 +59,12 @@ var ServiceModule = fx.Provide(
 	nodealert.NewService,
 	scheduledtask.NewService,
 	alertevent.NewService,
+	plan.NewService,
 	projectdomain.NewService,
 	servicemonitor.NewService,
 	caddyroute.NewService,
 	reportsettings.NewService,
+	telegrambot.NewService,
 )
 
 var HandlerModule = fx.Provide(
@@ -74,12 +80,14 @@ var HandlerModule = fx.Provide(
 	handler.NewNodeAlertHandler,
 	handler.NewScheduledTaskHandler,
 	handler.NewAlertEventHandler,
+	handler.NewPlanHandler,
 	handler.NewProjectHandler,
 	handler.NewServiceMonitorHandler,
 	handler.NewCaddyRouteHandler,
 	handler.NewMarketplaceHandler,
 	handler.NewWebhookHandler,
 	handler.NewNodeReportHandler,
+	handler.NewTelegramBotHandler,
 )
 
 var InfraModule = fx.Provide(
