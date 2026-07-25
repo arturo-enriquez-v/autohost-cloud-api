@@ -13,6 +13,7 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
+	"github.com/arturo/autohost-cloud-api/internal/domain/project"
 	reportsettings "github.com/arturo/autohost-cloud-api/internal/domain/report_settings"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/handler/response"
@@ -33,6 +34,7 @@ type NodeReportHandler struct {
 	alertEventService     *alertevent.Service
 	nodeAlertService      *nodealert.Service
 	reportSettingsService *reportsettings.Service
+	projectService        *project.Service
 	redis                 *redis.Client
 }
 
@@ -43,6 +45,7 @@ func NewNodeReportHandler(
 	alertEventService *alertevent.Service,
 	nodeAlertService *nodealert.Service,
 	reportSettingsService *reportsettings.Service,
+	projectService *project.Service,
 	redis *redis.Client,
 ) *NodeReportHandler {
 	return &NodeReportHandler{
@@ -52,6 +55,7 @@ func NewNodeReportHandler(
 		alertEventService:     alertEventService,
 		nodeAlertService:      nodeAlertService,
 		reportSettingsService: reportSettingsService,
+		projectService:        projectService,
 		redis:                 redis,
 	}
 }
@@ -76,9 +80,14 @@ func (h *NodeReportHandler) GetReportSettings(w http.ResponseWriter, r *http.Req
 		response.RespondError(w, http.StatusInternalServerError, "could not get report settings")
 		return
 	}
+	excluded := settings.ExcludedNodeIDs
+	if excluded == nil {
+		excluded = []string{}
+	}
 	response.RespondJSON(w, http.StatusOK, map[string]any{
-		"enabled":  settings.Enabled,
-		"hour_utc": settings.HourUTC,
+		"enabled":           settings.Enabled,
+		"hour_utc":          settings.HourUTC,
+		"excluded_node_ids": excluded,
 	})
 }
 
@@ -88,21 +97,26 @@ func (h *NodeReportHandler) UpdateReportSettings(w http.ResponseWriter, r *http.
 		return
 	}
 	var body struct {
-		Enabled bool `json:"enabled"`
-		HourUTC int  `json:"hour_utc"`
+		Enabled         bool     `json:"enabled"`
+		HourUTC         int      `json:"hour_utc"`
+		ExcludedNodeIDs []string `json:"excluded_node_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		response.RespondError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if err := h.reportSettingsService.Upsert(userID, body.Enabled, body.HourUTC); err != nil {
+	if body.ExcludedNodeIDs == nil {
+		body.ExcludedNodeIDs = []string{}
+	}
+	if err := h.reportSettingsService.Upsert(userID, body.Enabled, body.HourUTC, body.ExcludedNodeIDs); err != nil {
 		log.Printf("[ERROR] update report settings: %v", err)
 		response.RespondError(w, http.StatusInternalServerError, "could not update report settings")
 		return
 	}
 	response.RespondJSON(w, http.StatusOK, map[string]any{
-		"enabled":  body.Enabled,
-		"hour_utc": body.HourUTC,
+		"enabled":           body.Enabled,
+		"hour_utc":          body.HourUTC,
+		"excluded_node_ids": body.ExcludedNodeIDs,
 	})
 }
 
@@ -122,6 +136,7 @@ type nodeReportMetric struct {
 	Alertas24h               int                 `json:"alertas_24h"`
 	TiposAlerta              []string            `json:"tipos_alerta"`
 	Umbrales                 *nodeReportUmbrales `json:"umbrales,omitempty"`
+	Grupo                    string              `json:"grupo,omitempty"`
 }
 
 type nodeReportInfra struct {
@@ -164,6 +179,25 @@ func (h *NodeReportHandler) BuildAndPushForUser(ctx context.Context, userID stri
 		return nil, fmt.Errorf("could not resolve user")
 	}
 
+	// Fetch report settings to get excluded nodes
+	settings, err := h.reportSettingsService.Get(userID)
+	excludedSet := make(map[string]bool)
+	if err == nil && settings != nil {
+		for _, id := range settings.ExcludedNodeIDs {
+			excludedSet[id] = true
+		}
+	}
+
+	// Fetch user's projects/groups
+	projects, err := h.projectService.GetByUser(userID)
+	if err != nil {
+		log.Printf("[WARN] node report: fetch projects: %v", err)
+	}
+	projectNameByID := make(map[string]string)
+	for _, p := range projects {
+		projectNameByID[p.ID] = p.Name
+	}
+
 	nodes, err := h.nodeService.GetByOwnerWithMetrics(userID)
 	if err != nil {
 		return nil, fmt.Errorf("could not fetch nodes")
@@ -200,9 +234,15 @@ func (h *NodeReportHandler) BuildAndPushForUser(ctx context.Context, userID stri
 	}
 
 	var activeCount int
+	var nodesWithAlerts int
 	var metricas []nodeReportMetric
 
 	for _, n := range nodes {
+		// Skip nodes excluded from report
+		if excludedSet[n.ID] {
+			continue
+		}
+
 		isActive := n.LastSeenAt != nil && now.Sub(*n.LastSeenAt) < activeThreshold
 		if isActive {
 			activeCount++
@@ -228,6 +268,9 @@ func (h *NodeReportHandler) BuildAndPushForUser(ctx context.Context, userID stri
 		if tiposAlerta == nil {
 			tiposAlerta = []string{}
 		}
+		if alertCount24h > 0 {
+			nodesWithAlerts++
+		}
 
 		var umbrales *nodeReportUmbrales
 		if cfg := alertConfigByID[n.ID]; cfg != nil {
@@ -236,6 +279,13 @@ func (h *NodeReportHandler) BuildAndPushForUser(ctx context.Context, userID stri
 				RAM:     cfg.RAMThreshold,
 				Disk:    cfg.DiskThreshold,
 				Offline: cfg.AlertOnOffline,
+			}
+		}
+
+		grupoName := "Sin grupo"
+		if n.ProjectID != nil {
+			if name, exists := projectNameByID[*n.ProjectID]; exists && name != "" {
+				grupoName = name
 			}
 		}
 
@@ -248,17 +298,13 @@ func (h *NodeReportHandler) BuildAndPushForUser(ctx context.Context, userID stri
 			Alertas24h:               alertCount24h,
 			TiposAlerta:              tiposAlerta,
 			Umbrales:                 umbrales,
+			Grupo:                    grupoName,
 		})
 	}
 
 	uptimePct := 0.0
-	if len(nodes) > 0 {
-		uptimePct = float64(activeCount) / float64(len(nodes)) * 100
-	}
-
-	alertCount, err := h.alertEventService.CountDistinctNodesWithRecentAlerts(userID, since)
-	if err != nil {
-		log.Printf("[WARN] node report: alert count: %v", err)
+	if len(metricas) > 0 {
+		uptimePct = float64(activeCount) / float64(len(metricas)) * 100
 	}
 
 	payload := nodeStatusReport{
@@ -266,7 +312,7 @@ func (h *NodeReportHandler) BuildAndPushForUser(ctx context.Context, userID stri
 		AdminEmail:   user.Email,
 		Infraestructura: nodeReportInfra{
 			NodosActivos:      activeCount,
-			NodosAlertas:      alertCount,
+			NodosAlertas:      nodesWithAlerts,
 			UptimePromedioRed: uptimePct,
 		},
 		MetricasResumen: metricas,
@@ -282,13 +328,13 @@ func (h *NodeReportHandler) BuildAndPushForUser(ctx context.Context, userID stri
 	}
 
 	log.Printf("[INFO] node status report queued for user %s: active=%d alerts=%d nodes=%d",
-		userID, activeCount, alertCount, len(nodes))
+		userID, activeCount, nodesWithAlerts, len(metricas))
 
 	return map[string]any{
 		"status":        "queued",
-		"nodes_total":   len(nodes),
+		"nodes_total":   len(metricas),
 		"nodes_active":  activeCount,
-		"nodes_alerts":  alertCount,
+		"nodes_alerts":  nodesWithAlerts,
 		"fecha_reporte": payload.FechaReporte,
 	}, nil
 }
