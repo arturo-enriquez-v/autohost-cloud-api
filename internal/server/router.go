@@ -37,6 +37,8 @@ type RouterParams struct {
 	WebhookHandler        *handler.WebhookHandler
 	NodeReportHandler     *handler.NodeReportHandler
 	TelegramBotHandler    *handler.TelegramBotHandler
+	ExternalLogHandler    *handler.ExternalLogHandler
+	VPNHandler            *handler.VPNHandler
 	NodeTokenService      *nodetoken.Service
 }
 
@@ -82,6 +84,10 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/webhooks", p.WebhookHandler.Routes())
 		r.Mount("/reports", p.NodeReportHandler.Routes())
 		r.Mount("/telegram-bots", p.TelegramBotHandler.Routes())
+		r.Mount("/external-logs", p.ExternalLogHandler.UserLogRoutes())
+		r.Mount("/external-logs/ingest", p.ExternalLogHandler.IngestRoutes())
+		r.Mount("/external-log-tokens", p.ExternalLogHandler.UserTokenRoutes())
+		r.Mount("/vpn", p.VPNHandler.Routes(nodeAuthMiddleware))
 	})
 
 	return r

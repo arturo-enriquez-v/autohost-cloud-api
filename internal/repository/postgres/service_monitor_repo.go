@@ -28,13 +28,13 @@ func (r *ServiceMonitorRepository) Create(m *sm.ServiceMonitor) (*sm.ServiceMoni
 			http_url, http_expected_status,
 			tcp_host, tcp_port,
 			interval_seconds, failure_threshold, notify_telegram,
-			enabled, status
+			enabled, status, auto_heal_config, auto_heal_state
 		) VALUES (
 			:node_id, :user_id, :service_name, :check_type,
 			:http_url, :http_expected_status,
 			:tcp_host, :tcp_port,
 			:interval_seconds, :failure_threshold, :notify_telegram,
-			:enabled, :status
+			:enabled, :status, :auto_heal_config, :auto_heal_state
 		)
 		RETURNING *`
 
@@ -67,6 +67,8 @@ func (r *ServiceMonitorRepository) Update(m *sm.ServiceMonitor) (*sm.ServiceMoni
 			failure_threshold   = :failure_threshold,
 			notify_telegram     = :notify_telegram,
 			enabled             = :enabled,
+			auto_heal_config    = :auto_heal_config,
+			auto_heal_state     = :auto_heal_state,
 			updated_at          = NOW()
 		WHERE id = :id
 		RETURNING *`

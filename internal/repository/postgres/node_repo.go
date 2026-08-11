@@ -22,13 +22,14 @@ func NewNodeRepository(db *sqlx.DB) *NodeRepository {
 func (r *NodeRepository) Register(n *node.Node) (*node.Node, error) {
 	var model NodeModel
 	err := r.db.QueryRowContext(context.Background(), `
-		INSERT INTO nodes (hostname, ip_local, os, arch, version_agent, owner_id)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, hostname, ip_local, os, arch, version_agent, owner_id, project_id, last_seen_at, created_at, updated_at`,
-		n.Hostname, n.IPLocal, n.OS, n.Arch, n.VersionAgent, n.OwnerID).Scan(
+		INSERT INTO nodes (hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id, hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id, last_seen_at, created_at, updated_at`,
+		n.Hostname, n.IPLocal, n.IPVPN, n.OS, n.Arch, n.VersionAgent, n.OwnerID).Scan(
 		&model.ID,
 		&model.Hostname,
 		&model.IPLocal,
+		&model.IPVPN,
 		&model.OS,
 		&model.Arch,
 		&model.VersionAgent,
@@ -68,7 +69,7 @@ func (r *NodeRepository) FindByID(id string) (*node.Node, error) {
 	var model NodeModel
 
 	err := r.db.Get(&model, `
-        SELECT id, hostname, ip_local, os, arch, version_agent, owner_id, project_id,
+        SELECT id, hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id,
                last_seen_at, created_at, updated_at
         FROM nodes 
         WHERE id = $1`, id)
@@ -84,6 +85,7 @@ func (r *NodeRepository) FindByID(id string) (*node.Node, error) {
 		ID:           model.ID,
 		Hostname:     model.Hostname,
 		IPLocal:      model.IPLocal,
+		IPVPN:        model.IPVPN,
 		OS:           model.OS,
 		Arch:         model.Arch,
 		VersionAgent: model.VersionAgent,
@@ -99,7 +101,7 @@ func (r *NodeRepository) FindByID(id string) (*node.Node, error) {
 func (r *NodeRepository) FindByOwnerID(ownerID string) ([]*node.Node, error) {
 	var models []NodeModel
 	err := r.db.Select(&models, `
-		SELECT id, hostname, ip_local, os, arch, version_agent, owner_id, project_id,
+		SELECT id, hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id,
 		       last_seen_at, created_at, updated_at
 		FROM nodes 
 		WHERE owner_id = $1
@@ -115,6 +117,7 @@ func (r *NodeRepository) FindByOwnerID(ownerID string) ([]*node.Node, error) {
 			ID:           model.ID,
 			Hostname:     model.Hostname,
 			IPLocal:      model.IPLocal,
+			IPVPN:        model.IPVPN,
 			OS:           model.OS,
 			Arch:         model.Arch,
 			VersionAgent: model.VersionAgent,
@@ -137,6 +140,25 @@ func (r *NodeRepository) UpdateLastSeen(nodeID string) error {
 	return err
 }
 
+func (r *NodeRepository) UpdateLastSeenAndIPs(nodeID string, ipLocal string, ipVPN string) error {
+	_, err := r.db.ExecContext(context.Background(), `
+		UPDATE nodes 
+		SET last_seen_at = now(), 
+		    ip_local = COALESCE(NULLIF($1, ''), ip_local),
+		    ip_vpn = COALESCE(NULLIF($2, ''), ip_vpn),
+		    updated_at = now()
+		WHERE id = $3`, ipLocal, ipVPN, nodeID)
+	return err
+}
+
+func (r *NodeRepository) UpdateVPNIP(nodeID string, ipVPN string) error {
+	_, err := r.db.ExecContext(context.Background(), `
+		UPDATE nodes 
+		SET ip_vpn = NULLIF($1, ''), updated_at = now()
+		WHERE id = $2`, ipVPN, nodeID)
+	return err
+}
+
 func (r *NodeRepository) UpdateVersionAgent(nodeID, version string) error {
 	_, err := r.db.ExecContext(context.Background(), `
 		UPDATE nodes
@@ -151,7 +173,7 @@ func (r *NodeRepository) FindByOwnerIDWithMetrics(ownerID string) ([]*node.NodeW
 
 	query := `
 		SELECT 
-			n.id, n.hostname, n.ip_local, n.os, n.arch, n.version_agent, 
+			n.id, n.hostname, n.ip_local, n.ip_vpn, n.os, n.arch, n.version_agent, 
 			n.owner_id, n.project_id, n.last_seen_at, n.created_at, n.updated_at,
 			m.cpu_usage_percent, m.memory_usage_percent, m.disk_usage_percent, m.collected_at
 		FROM nodes n
@@ -178,7 +200,7 @@ func (r *NodeRepository) FindByOwnerIDWithMetrics(ownerID string) ([]*node.NodeW
 		var collectedAt sql.NullTime
 
 		err := rows.Scan(
-			&nwm.ID, &nwm.Hostname, &nwm.IPLocal, &nwm.OS, &nwm.Arch,
+			&nwm.ID, &nwm.Hostname, &nwm.IPLocal, &nwm.IPVPN, &nwm.OS, &nwm.Arch,
 			&nwm.VersionAgent, &nwm.OwnerID, &nwm.ProjectID, &nwm.LastSeenAt,
 			&nwm.CreatedAt, &nwm.UpdatedAt,
 			&cpuUsage, &memUsage, &diskUsage, &collectedAt,

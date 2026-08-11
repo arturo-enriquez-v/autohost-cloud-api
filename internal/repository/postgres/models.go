@@ -49,6 +49,7 @@ type NodeModel struct {
 	ID           string     `db:"id"`
 	Hostname     string     `db:"hostname"`
 	IPLocal      string     `db:"ip_local"`
+	IPVPN        *string    `db:"ip_vpn"`
 	OS           string     `db:"os"`
 	Arch         string     `db:"arch"`
 	VersionAgent string     `db:"version_agent"`
