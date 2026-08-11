@@ -8,6 +8,7 @@ type NodeWithMetrics struct {
 	ID           string     `json:"id"`
 	Hostname     string     `json:"hostname"`
 	IPLocal      string     `json:"ip_local"`
+	IPVPN        *string    `json:"ip_vpn"`
 	OS           string     `json:"os"`
 	Arch         string     `json:"arch"`
 	VersionAgent string     `json:"version_agent"`

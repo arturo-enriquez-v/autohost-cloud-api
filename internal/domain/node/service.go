@@ -30,6 +30,20 @@ func (s *Service) UpdateLastSeen(nodeID string) error {
 	return s.repo.UpdateLastSeen(nodeID)
 }
 
+func (s *Service) UpdateLastSeenAndIPs(nodeID string, ipLocal string, ipVPN string) error {
+	if nodeID == "" {
+		return ErrInvalidNodeData
+	}
+	return s.repo.UpdateLastSeenAndIPs(nodeID, ipLocal, ipVPN)
+}
+
+func (s *Service) UpdateVPNIP(nodeID string, ipVPN string) error {
+	if nodeID == "" {
+		return ErrInvalidNodeData
+	}
+	return s.repo.UpdateVPNIP(nodeID, ipVPN)
+}
+
 func (s *Service) UpdateVersionAgent(nodeID, version string) error {
 	if nodeID == "" || version == "" {
 		return ErrInvalidNodeData

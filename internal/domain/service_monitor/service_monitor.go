@@ -1,6 +1,7 @@
 package servicemonitor
 
 import (
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -41,8 +42,10 @@ type ServiceMonitor struct {
 	Status              string     `db:"status"               json:"status"`
 	ConsecutiveFailures int        `db:"consecutive_failures" json:"consecutive_failures"`
 	LastCheckedAt       *time.Time `db:"last_checked_at"      json:"last_checked_at"`
-	CreatedAt           time.Time  `db:"created_at"           json:"created_at"`
-	UpdatedAt           time.Time  `db:"updated_at"           json:"updated_at"`
+	CreatedAt           time.Time       `db:"created_at"           json:"created_at"`
+	UpdatedAt           time.Time       `db:"updated_at"           json:"updated_at"`
+	AutoHealConfig      json.RawMessage `db:"auto_heal_config"     json:"auto_heal_config,omitempty"`
+	AutoHealState       json.RawMessage `db:"auto_heal_state"      json:"auto_heal_state,omitempty"`
 }
 
 // ServiceHealthEvent records the outcome of a single health check execution.

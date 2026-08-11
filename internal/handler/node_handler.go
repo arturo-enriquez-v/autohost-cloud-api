@@ -100,6 +100,7 @@ func (h *NodeHandler) Get(w http.ResponseWriter, r *http.Request) {
 		ID:           n.ID,
 		Hostname:     n.Hostname,
 		IPLocal:      n.IPLocal,
+		IPVPN:        n.IPVPN,
 		OS:           n.OS,
 		Arch:         n.Arch,
 		VersionAgent: n.VersionAgent,

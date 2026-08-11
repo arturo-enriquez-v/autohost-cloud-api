@@ -137,6 +137,8 @@ type nodeReportMetric struct {
 	TiposAlerta              []string            `json:"tipos_alerta"`
 	Umbrales                 *nodeReportUmbrales `json:"umbrales,omitempty"`
 	Grupo                    string              `json:"grupo,omitempty"`
+	IsActive                 bool                `json:"is_active"`
+	Uptime                   float64             `json:"uptime"`
 }
 
 type nodeReportInfra struct {
@@ -289,6 +291,11 @@ func (h *NodeReportHandler) BuildAndPushForUser(ctx context.Context, userID stri
 			}
 		}
 
+		nodeUptime := 0.0
+		if isActive {
+			nodeUptime = 100.0
+		}
+
 		metricas = append(metricas, nodeReportMetric{
 			Nodo:                     n.Hostname,
 			CPUPromedio:              cpuAvg,
@@ -299,6 +306,8 @@ func (h *NodeReportHandler) BuildAndPushForUser(ctx context.Context, userID stri
 			TiposAlerta:              tiposAlerta,
 			Umbrales:                 umbrales,
 			Grupo:                    grupoName,
+			IsActive:                 isActive,
+			Uptime:                   nodeUptime,
 		})
 	}
 

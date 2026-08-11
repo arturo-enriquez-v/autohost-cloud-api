@@ -17,12 +17,15 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
 	projectdomain "github.com/arturo/autohost-cloud-api/internal/domain/project"
 	reportsettings "github.com/arturo/autohost-cloud-api/internal/domain/report_settings"
+	externallog "github.com/arturo/autohost-cloud-api/internal/domain/external_log"
 	scheduledtask "github.com/arturo/autohost-cloud-api/internal/domain/scheduled_task"
 	servicemonitor "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	telegrambot "github.com/arturo/autohost-cloud-api/internal/domain/telegram_bot"
+	"github.com/arturo/autohost-cloud-api/internal/domain/vpn"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
+	"github.com/arturo/autohost-cloud-api/internal/platform/headscale"
 	"github.com/arturo/autohost-cloud-api/internal/repository/postgres"
 	"github.com/arturo/autohost-cloud-api/internal/scheduler"
 	"go.uber.org/fx"
@@ -46,6 +49,7 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewCaddyRouteRepository, fx.As(new(caddyroute.Repository))),
 	fx.Annotate(postgres.NewReportSettingsRepository, fx.As(new(reportsettings.Repository))),
 	fx.Annotate(postgres.NewTelegramBotRepository, fx.As(new(telegrambot.Repository))),
+	fx.Annotate(postgres.NewExternalLogRepository, fx.As(new(externallog.Repository))),
 )
 
 var ServiceModule = fx.Provide(
@@ -65,6 +69,8 @@ var ServiceModule = fx.Provide(
 	caddyroute.NewService,
 	reportsettings.NewService,
 	telegrambot.NewService,
+	externallog.NewService,
+	vpn.NewService,
 )
 
 var HandlerModule = fx.Provide(
@@ -88,11 +94,14 @@ var HandlerModule = fx.Provide(
 	handler.NewWebhookHandler,
 	handler.NewNodeReportHandler,
 	handler.NewTelegramBotHandler,
+	handler.NewExternalLogHandler,
+	handler.NewVPNHandler,
 )
 
 var InfraModule = fx.Provide(
 	grpcserver.NewNodeAgentServer,
 	platform.NewRedisClient,
+	headscale.NewClient,
 	// NodeAgentServer also satisfies ParamDispatcher (used by CaddyRoute and Marketplace handlers).
 	fx.Annotate(
 		func(s *grpcserver.NodeAgentServer) handler.ParamDispatcher { return s },

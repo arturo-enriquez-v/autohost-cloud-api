@@ -7,6 +7,7 @@ type Node struct {
 	ID           string     `db:"id"`
 	Hostname     string     `db:"hostname"`
 	IPLocal      string     `db:"ip_local"`
+	IPVPN        *string    `db:"ip_vpn"`
 	OS           string     `db:"os"`
 	Arch         string     `db:"arch"`
 	VersionAgent string     `db:"version_agent"`
@@ -26,6 +27,8 @@ type Repository interface {
 	FindByOwnerID(ownerID string) ([]*Node, error)
 	FindByOwnerIDWithMetrics(ownerID string) ([]*NodeWithMetrics, error)
 	UpdateLastSeen(nodeID string) error
+	UpdateLastSeenAndIPs(nodeID string, ipLocal string, ipVPN string) error
+	UpdateVPNIP(nodeID string, ipVPN string) error
 	UpdateVersionAgent(nodeID, version string) error
 	AssignProject(nodeID string, projectID *string) error
 }
