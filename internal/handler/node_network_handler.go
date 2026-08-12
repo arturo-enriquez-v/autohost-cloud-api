@@ -44,7 +44,7 @@ func (h *NodeNetworkHandler) Routes(nodeAuthMiddleware func(http.Handler) http.H
 func (h *NodeNetworkHandler) NodeRoutes() chi.Router {
 	r := chi.NewRouter()
 	r.Use(middleware.Auth)
-	r.Get("/", h.GetLatest)
+	r.Get("/{nodeId}", h.GetLatest)
 	return r
 }
 
