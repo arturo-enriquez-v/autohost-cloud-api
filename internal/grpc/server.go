@@ -14,6 +14,7 @@ import (
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
+	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
 	sm "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
@@ -24,15 +25,16 @@ import (
 type NodeAgentServer struct {
 	pb.UnimplementedNodeAgentServiceServer
 
-	commandSvc        *nodecommand.Service
-	jobSvc            *job.Service
-	tokenSvc          *nodetoken.Service
-	alertSvc          *nodealert.Service
-	alertEventSvc     *alertevent.Service
-	nodeSvc           *node.Service
-	metricSvc         *nodemetric.Service
-	marketplaceRepo   marketplace.Repository
-	serviceMonitorSvc *sm.Service
+	commandSvc         *nodecommand.Service
+	jobSvc             *job.Service
+	tokenSvc           *nodetoken.Service
+	alertSvc           *nodealert.Service
+	alertEventSvc      *alertevent.Service
+	nodeSvc            *node.Service
+	metricSvc          *nodemetric.Service
+	containerMetricSvc *containermetric.Service
+	marketplaceRepo    marketplace.Repository
+	serviceMonitorSvc  *sm.Service
 
 	registry        *streamRegistry
 	logs            *logBroker
@@ -52,24 +54,26 @@ func NewNodeAgentServer(
 	alertSvc *nodealert.Service,
 	nodeSvc *node.Service,
 	metricSvc *nodemetric.Service,
+	containerMetricSvc *containermetric.Service,
 	marketplaceRepo marketplace.Repository,
 	alertEventSvc *alertevent.Service,
 	serviceMonitorSvc *sm.Service,
 ) *NodeAgentServer {
 	reg := newStreamRegistry()
 	s := &NodeAgentServer{
-		commandSvc:        commandSvc,
-		jobSvc:            jobSvc,
-		tokenSvc:          tokenSvc,
-		alertSvc:          alertSvc,
-		alertEventSvc:     alertEventSvc,
-		nodeSvc:           nodeSvc,
-		metricSvc:         metricSvc,
-		registry:          reg,
-		marketplaceRepo:   marketplaceRepo,
-		serviceMonitorSvc: serviceMonitorSvc,
-		metricBroker:      newMetricBroker(),
-		metricLastPersist: make(map[string]time.Time),
+		commandSvc:         commandSvc,
+		jobSvc:             jobSvc,
+		tokenSvc:           tokenSvc,
+		alertSvc:           alertSvc,
+		alertEventSvc:      alertEventSvc,
+		nodeSvc:            nodeSvc,
+		metricSvc:          metricSvc,
+		containerMetricSvc: containerMetricSvc,
+		registry:           reg,
+		marketplaceRepo:    marketplaceRepo,
+		serviceMonitorSvc:  serviceMonitorSvc,
+		metricBroker:       newMetricBroker(),
+		metricLastPersist:  make(map[string]time.Time),
 	}
 	s.logs = newLogBroker(reg.sendToNode)
 	s.containerBroker = newContainerBroker(reg.sendToNode)
@@ -283,6 +287,25 @@ func (s *NodeAgentServer) Connect(
 
 		case *pb.NodeMessage_ContainerList:
 			s.containerBroker.fanOut(nodeID, p.ContainerList)
+			if s.containerMetricSvc != nil && p.ContainerList != nil && len(p.ContainerList.Containers) > 0 {
+				var items []containermetric.ContainerSnapshotItem
+				for _, c := range p.ContainerList.Containers {
+					items = append(items, containermetric.ContainerSnapshotItem{
+						ID:      c.Id,
+						Name:    c.Name,
+						State:   c.State,
+						Status:  c.Status,
+						CPU:     c.Cpu,
+						Mem:     c.Mem,
+						MemPerc: c.MemPerc,
+					})
+				}
+				go func() {
+					if err := s.containerMetricSvc.ProcessSnapshot(nodeID, items); err != nil {
+						log.Printf("[gRPC] store container metrics for node %s: %v", nodeID, err)
+					}
+				}()
+			}
 
 		case *pb.NodeMessage_HealthResult:
 			go s.handleHealthCheckResult(nodeID, p.HealthResult)

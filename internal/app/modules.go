@@ -12,12 +12,14 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
 	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
 	projectdomain "github.com/arturo/autohost-cloud-api/internal/domain/project"
 	reportsettings "github.com/arturo/autohost-cloud-api/internal/domain/report_settings"
 	externallog "github.com/arturo/autohost-cloud-api/internal/domain/external_log"
+	networkstat "github.com/arturo/autohost-cloud-api/internal/domain/network_stat"
 	scheduledtask "github.com/arturo/autohost-cloud-api/internal/domain/scheduled_task"
 	servicemonitor "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	telegrambot "github.com/arturo/autohost-cloud-api/internal/domain/telegram_bot"
@@ -35,6 +37,7 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewAuthRepository, fx.As(new(auth.Repository))),
 	fx.Annotate(postgres.NewNodeRepository, fx.As(new(node.Repository))),
 	fx.Annotate(postgres.NewNodeMetricRepository, fx.As(new(nodemetric.Repository))),
+	fx.Annotate(postgres.NewContainerMetricRepository, fx.As(new(containermetric.Repository))),
 	fx.Annotate(postgres.NewEnrollmentRepository, fx.As(new(enrollment.Repository))),
 	fx.Annotate(postgres.NewNodeTokenRepository, fx.As(new(nodetoken.Repository))),
 	fx.Annotate(postgres.NewNodeCommandRepository, fx.As(new(nodecommand.Repository))),
@@ -49,6 +52,7 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewCaddyRouteRepository, fx.As(new(caddyroute.Repository))),
 	fx.Annotate(postgres.NewReportSettingsRepository, fx.As(new(reportsettings.Repository))),
 	fx.Annotate(postgres.NewTelegramBotRepository, fx.As(new(telegrambot.Repository))),
+	fx.Annotate(postgres.NewNetworkStatRepository, fx.As(new(networkstat.Repository))),
 	fx.Annotate(postgres.NewExternalLogRepository, fx.As(new(externallog.Repository))),
 )
 
@@ -56,6 +60,7 @@ var ServiceModule = fx.Provide(
 	auth.NewService,
 	node.NewService,
 	nodemetric.NewService,
+	containermetric.NewService,
 	enrollment.NewService,
 	nodetoken.NewService,
 	nodecommand.NewService,
@@ -70,6 +75,7 @@ var ServiceModule = fx.Provide(
 	reportsettings.NewService,
 	telegrambot.NewService,
 	externallog.NewService,
+	networkstat.NewService,
 	vpn.NewService,
 )
 
@@ -96,6 +102,7 @@ var HandlerModule = fx.Provide(
 	handler.NewTelegramBotHandler,
 	handler.NewExternalLogHandler,
 	handler.NewVPNHandler,
+	handler.NewNodeNetworkHandler,
 )
 
 var InfraModule = fx.Provide(
