@@ -19,8 +19,13 @@ CREATE TABLE IF NOT EXISTS node_network_stats (
     interfaces  JSONB NOT NULL DEFAULT '[]',
 
     -- JSON array of listening ports  [{port, protocol, bind_addr}]
-    ports       JSONB NOT NULL DEFAULT '[]'
+    ports       JSONB NOT NULL DEFAULT '[]',
+
+    -- JSON array of active VPN peers  [{ip, hostname, online, relay}]
+    peers       JSONB NOT NULL DEFAULT '[]'
 );
+
+ALTER TABLE node_network_stats ADD COLUMN IF NOT EXISTS peers JSONB NOT NULL DEFAULT '[]';
 
 CREATE INDEX IF NOT EXISTS idx_node_network_stats_node_collected
     ON node_network_stats (node_id, collected_at DESC);

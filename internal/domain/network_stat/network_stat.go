@@ -22,6 +22,15 @@ type ListeningPort struct {
 	BindAddr string `json:"bind_addr"`
 }
 
+// VPNPeer mirrors the agent's sysinfo.VPNPeer active tunnel status.
+type VPNPeer struct {
+	IP        string  `json:"ip"`
+	Hostname  string  `json:"hostname"`
+	Online    bool    `json:"online"`
+	LatencyMs float64 `json:"latency_ms"`
+	Relay     string  `json:"relay,omitempty"`
+}
+
 // NodeNetworkStats is the stored snapshot for a node.
 type NodeNetworkStats struct {
 	ID          string          `json:"id"           db:"id"`
@@ -35,10 +44,12 @@ type NodeNetworkStats struct {
 	TxErrors    int64           `json:"tx_errors"    db:"tx_errors"`
 	Interfaces  []InterfaceStat `json:"interfaces"`
 	Ports       []ListeningPort `json:"ports"`
+	Peers       []VPNPeer       `json:"peers"`
 }
 
 // IngestPayload is the JSON body the agent sends.
 type IngestPayload struct {
 	Interfaces []InterfaceStat `json:"interfaces"`
 	Ports      []ListeningPort `json:"ports"`
+	Peers      []VPNPeer       `json:"peers"`
 }

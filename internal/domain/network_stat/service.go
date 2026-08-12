@@ -39,6 +39,7 @@ func (s *Service) Ingest(ctx context.Context, nodeID string, payload *IngestPayl
 		TxErrors:   txErrors,
 		Interfaces: payload.Interfaces,
 		Ports:      payload.Ports,
+		Peers:      payload.Peers,
 	}
 	return s.repo.Upsert(ctx, snap)
 }
