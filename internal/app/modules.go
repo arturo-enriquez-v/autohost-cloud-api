@@ -12,6 +12,7 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
 	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
@@ -35,6 +36,7 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewAuthRepository, fx.As(new(auth.Repository))),
 	fx.Annotate(postgres.NewNodeRepository, fx.As(new(node.Repository))),
 	fx.Annotate(postgres.NewNodeMetricRepository, fx.As(new(nodemetric.Repository))),
+	fx.Annotate(postgres.NewContainerMetricRepository, fx.As(new(containermetric.Repository))),
 	fx.Annotate(postgres.NewEnrollmentRepository, fx.As(new(enrollment.Repository))),
 	fx.Annotate(postgres.NewNodeTokenRepository, fx.As(new(nodetoken.Repository))),
 	fx.Annotate(postgres.NewNodeCommandRepository, fx.As(new(nodecommand.Repository))),
@@ -56,6 +58,7 @@ var ServiceModule = fx.Provide(
 	auth.NewService,
 	node.NewService,
 	nodemetric.NewService,
+	containermetric.NewService,
 	enrollment.NewService,
 	nodetoken.NewService,
 	nodecommand.NewService,

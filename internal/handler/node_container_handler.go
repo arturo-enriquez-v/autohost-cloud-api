@@ -9,20 +9,30 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 )
 
 // NodeContainerHandler streams real-time Docker container list snapshots from a
-// node to the browser via Server-Sent Events (SSE).
+// node to the browser via Server-Sent Events (SSE) and serves metric history.
 type NodeContainerHandler struct {
-	grpc    *grpcserver.NodeAgentServer
-	nodeSvc *node.Service
+	grpc               *grpcserver.NodeAgentServer
+	nodeSvc            *node.Service
+	containerMetricSvc *containermetric.Service
 }
 
-func NewNodeContainerHandler(grpc *grpcserver.NodeAgentServer, nodeSvc *node.Service) *NodeContainerHandler {
-	return &NodeContainerHandler{grpc: grpc, nodeSvc: nodeSvc}
+func NewNodeContainerHandler(
+	grpc *grpcserver.NodeAgentServer,
+	nodeSvc *node.Service,
+	containerMetricSvc *containermetric.Service,
+) *NodeContainerHandler {
+	return &NodeContainerHandler{
+		grpc:               grpc,
+		nodeSvc:            nodeSvc,
+		containerMetricSvc: containerMetricSvc,
+	}
 }
 
 func (h *NodeContainerHandler) Routes() http.Handler {
@@ -30,6 +40,7 @@ func (h *NodeContainerHandler) Routes() http.Handler {
 	r.Group(func(protected chi.Router) {
 		protected.Use(middleware.Auth)
 		protected.Get("/{nodeId}/stream", h.streamContainers)
+		protected.Get("/{nodeId}/metrics", h.getContainerMetrics)
 	})
 	return r
 }
@@ -149,3 +160,74 @@ func (h *NodeContainerHandler) streamContainers(w http.ResponseWriter, r *http.R
 		}
 	}
 }
+
+// getContainerMetrics returns aggregated historical metrics for a specific container on a node.
+func (h *NodeContainerHandler) getContainerMetrics(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.UserID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	nodeID := chi.URLParam(r, "nodeId")
+	n, err := h.nodeSvc.GetByID(nodeID)
+	if err != nil || n == nil {
+		http.Error(w, "node not found", http.StatusNotFound)
+		return
+	}
+
+	containerName := r.URL.Query().Get("container_name")
+	if containerName == "" {
+		containerName = r.URL.Query().Get("name")
+	}
+	containerID := r.URL.Query().Get("container_id")
+	if containerID == "" {
+		containerID = r.URL.Query().Get("containerId")
+	}
+
+	if containerName == "" && containerID == "" {
+		http.Error(w, "container_name or container_id parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	fromTime := time.Now().Add(-7 * 24 * time.Hour)
+	toTime := time.Now()
+
+	if v := r.URL.Query().Get("from"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			fromTime = t
+		}
+	}
+	if v := r.URL.Query().Get("to"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			toTime = t
+		}
+	}
+
+	bucket := r.URL.Query().Get("bucket")
+	if bucket == "" {
+		bucket = "hour"
+	}
+
+	points, err := h.containerMetricSvc.GetHistory(containermetric.ContainerHistoryParams{
+		NodeID:        nodeID,
+		ContainerName: containerName,
+		ContainerID:   containerID,
+		From:          fromTime,
+		To:            toTime,
+		Bucket:        bucket,
+	})
+	if err != nil {
+		log.Printf("[ERROR] fetch container metrics history: %v", err)
+		http.Error(w, "could not fetch container metrics history", http.StatusInternalServerError)
+		return
+	}
+
+	if points == nil {
+		points = []*containermetric.ContainerMetricHistoryPoint{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(points)
+}
+
