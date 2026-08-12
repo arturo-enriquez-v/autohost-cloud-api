@@ -30,15 +30,19 @@ func (s *Service) Ingest(ctx context.Context, nodeID string, payload *IngestPayl
 	}
 
 	snap := &NodeNetworkStats{
-		NodeID:     nodeID,
-		RxBytes:    rxBytes,
-		TxBytes:    txBytes,
-		RxDropped:  rxDropped,
-		TxDropped:  txDropped,
-		RxErrors:   rxErrors,
-		TxErrors:   txErrors,
-		Interfaces: payload.Interfaces,
-		Ports:      payload.Ports,
+		NodeID:      nodeID,
+		RxBytes:     rxBytes,
+		TxBytes:     txBytes,
+		RxDropped:   rxDropped,
+		TxDropped:   txDropped,
+		RxErrors:    rxErrors,
+		TxErrors:    txErrors,
+		RPS:         payload.RPS,
+		Interfaces:  payload.Interfaces,
+		Ports:       payload.Ports,
+		Peers:       payload.Peers,
+		Connections: payload.Connections,
+		Requests:    payload.Requests,
 	}
 	return s.repo.Upsert(ctx, snap)
 }
