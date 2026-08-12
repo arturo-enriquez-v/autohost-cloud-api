@@ -19,6 +19,7 @@ import (
 	projectdomain "github.com/arturo/autohost-cloud-api/internal/domain/project"
 	reportsettings "github.com/arturo/autohost-cloud-api/internal/domain/report_settings"
 	externallog "github.com/arturo/autohost-cloud-api/internal/domain/external_log"
+	networkstat "github.com/arturo/autohost-cloud-api/internal/domain/network_stat"
 	scheduledtask "github.com/arturo/autohost-cloud-api/internal/domain/scheduled_task"
 	servicemonitor "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	telegrambot "github.com/arturo/autohost-cloud-api/internal/domain/telegram_bot"
@@ -51,6 +52,7 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewCaddyRouteRepository, fx.As(new(caddyroute.Repository))),
 	fx.Annotate(postgres.NewReportSettingsRepository, fx.As(new(reportsettings.Repository))),
 	fx.Annotate(postgres.NewTelegramBotRepository, fx.As(new(telegrambot.Repository))),
+	fx.Annotate(postgres.NewNetworkStatRepository, fx.As(new(networkstat.Repository))),
 	fx.Annotate(postgres.NewExternalLogRepository, fx.As(new(externallog.Repository))),
 )
 
@@ -73,6 +75,7 @@ var ServiceModule = fx.Provide(
 	reportsettings.NewService,
 	telegrambot.NewService,
 	externallog.NewService,
+	networkstat.NewService,
 	vpn.NewService,
 )
 
@@ -99,6 +102,7 @@ var HandlerModule = fx.Provide(
 	handler.NewTelegramBotHandler,
 	handler.NewExternalLogHandler,
 	handler.NewVPNHandler,
+	handler.NewNodeNetworkHandler,
 )
 
 var InfraModule = fx.Provide(
