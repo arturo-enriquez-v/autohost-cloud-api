@@ -92,9 +92,7 @@ func NewRouter(p RouterParams) *chi.Mux {
 		// Agent → POST /v1/agent/network-stats
 		r.Mount("/agent/network-stats", p.NodeNetworkHandler.Routes(nodeAuthMiddleware))
 		// Frontend → GET /v1/node-network/{nodeId}
-		r.Route("/node-network/{nodeId}", func(r chi.Router) {
-			r.Mount("/", p.NodeNetworkHandler.NodeRoutes())
-		})
+		r.Mount("/node-network", p.NodeNetworkHandler.NodeRoutes())
 	})
 
 	return r
