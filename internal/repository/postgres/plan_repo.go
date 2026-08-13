@@ -21,10 +21,10 @@ func (r *PlanRepository) FindAllActive() ([]*plan.Plan, error) {
 	var plans []*plan.Plan
 	err := r.db.Select(&plans, `
 		SELECT id, name, description, price_cents, max_nodes, max_projects, max_custom_commands,
-		       is_active, created_at, updated_at
+		       retention_days, polling_interval_sec, is_active, created_at, updated_at
 		FROM plans
 		WHERE is_active = true
-		ORDER BY price_cents ASC`)
+		ORDER BY price_cents ASC, id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("plan_repo.FindAllActive: %w", err)
 	}
@@ -35,7 +35,7 @@ func (r *PlanRepository) FindByID(id string) (*plan.Plan, error) {
 	var p plan.Plan
 	err := r.db.Get(&p, `
 		SELECT id, name, description, price_cents, max_nodes, max_projects, max_custom_commands,
-		       is_active, created_at, updated_at
+		       retention_days, polling_interval_sec, is_active, created_at, updated_at
 		FROM plans
 		WHERE id = $1`, id)
 	if err == sql.ErrNoRows {
@@ -80,15 +80,13 @@ func (r *PlanRepository) CreateSubscription(userID, planID string) (*plan.Subscr
 func (r *PlanRepository) UpdateSubscriptionPlan(userID, planID string) (*plan.Subscription, error) {
 	var sub plan.Subscription
 	err := r.db.Get(&sub, `
-		UPDATE user_subscriptions
-		SET plan_id = $2, period_start = now(), updated_at = now()
-		WHERE user_id = $1
+		INSERT INTO user_subscriptions (user_id, plan_id, status, period_start)
+		VALUES ($1, $2, 'active', now())
+		ON CONFLICT (user_id) DO UPDATE
+		SET plan_id = EXCLUDED.plan_id, period_start = now(), updated_at = now()
 		RETURNING id, user_id, plan_id, status, period_start, period_end,
 		          stripe_subscription_id, stripe_customer_id, created_at, updated_at`,
 		userID, planID)
-	if err == sql.ErrNoRows {
-		return nil, plan.ErrSubscriptionNotFound
-	}
 	if err != nil {
 		return nil, fmt.Errorf("plan_repo.UpdateSubscriptionPlan: %w", err)
 	}

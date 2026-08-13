@@ -12,7 +12,11 @@ var (
 )
 
 const (
-	PlanStarter  = "starter"
+	PlanFree       = "free"
+	PlanPayAsYouGo = "pay_as_you_go"
+	PlanPro        = "pro"
+	PlanStarter    = "free"
+
 	PlanIndie    = "indie"
 	PlanBusiness = "business"
 
@@ -30,6 +34,8 @@ type Plan struct {
 	MaxNodes           int       `db:"max_nodes"           json:"max_nodes"`
 	MaxProjects        int       `db:"max_projects"        json:"max_projects"`
 	MaxCustomCommands  int       `db:"max_custom_commands" json:"max_custom_commands"`
+	RetentionDays      int       `db:"retention_days"      json:"retention_days"`
+	PollingIntervalSec int       `db:"polling_interval_sec" json:"polling_interval_sec"`
 	IsActive           bool      `db:"is_active"           json:"is_active"`
 	CreatedAt          time.Time `db:"created_at"          json:"created_at"`
 	UpdatedAt          time.Time `db:"updated_at"          json:"updated_at"`
