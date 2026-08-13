@@ -8,6 +8,7 @@ import (
 
 	caddyroute "github.com/arturo/autohost-cloud-api/internal/domain/caddy_route"
 	"github.com/arturo/autohost-cloud-api/internal/domain/job"
+	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
@@ -18,17 +19,20 @@ type CaddyRouteHandler struct {
 	service    *caddyroute.Service
 	jobService *job.Service
 	dispatcher ParamDispatcher
+	nodeSvc    *node.Service
 }
 
 func NewCaddyRouteHandler(
 	service *caddyroute.Service,
 	jobService *job.Service,
 	dispatcher ParamDispatcher,
+	nodeSvc *node.Service,
 ) *CaddyRouteHandler {
 	return &CaddyRouteHandler{
 		service:    service,
 		jobService: jobService,
 		dispatcher: dispatcher,
+		nodeSvc:    nodeSvc,
 	}
 }
 
@@ -51,6 +55,18 @@ func (h *CaddyRouteHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	nodeID := chi.URLParam(r, "nodeId")
+	if h.nodeSvc != nil {
+		n, err := h.nodeSvc.GetByID(nodeID)
+		if err != nil || n == nil {
+			http.Error(w, "node not found", http.StatusNotFound)
+			return
+		}
+		if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
+
 	routes, err := h.service.ListByNode(nodeID)
 	if err != nil {
 		log.Printf("[ERROR] list caddy routes for node %s: %v", nodeID, err)
@@ -80,6 +96,17 @@ func (h *CaddyRouteHandler) Upsert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	nodeID := chi.URLParam(r, "nodeId")
+	if h.nodeSvc != nil {
+		n, err := h.nodeSvc.GetByID(nodeID)
+		if err != nil || n == nil {
+			http.Error(w, "node not found", http.StatusNotFound)
+			return
+		}
+		if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
 
 	var req upsertCaddyRouteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -131,6 +158,18 @@ func (h *CaddyRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	nodeID := chi.URLParam(r, "nodeId")
 	domain := chi.URLParam(r, "domain")
+
+	if h.nodeSvc != nil {
+		n, err := h.nodeSvc.GetByID(nodeID)
+		if err != nil || n == nil {
+			http.Error(w, "node not found", http.StatusNotFound)
+			return
+		}
+		if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
 
 	if err := h.service.Delete(nodeID, domain); err != nil {
 		if errors.Is(err, caddyroute.ErrNotFound) {

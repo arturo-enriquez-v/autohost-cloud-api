@@ -73,10 +73,28 @@ func (h *NodeNetworkHandler) IngestStats(w http.ResponseWriter, r *http.Request)
 
 // GetLatest returns the latest network snapshot for a node (user-facing).
 func (h *NodeNetworkHandler) GetLatest(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.UserID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	nodeID := chi.URLParam(r, "nodeId")
 	if nodeID == "" {
 		http.Error(w, "missing nodeId", http.StatusBadRequest)
 		return
+	}
+
+	if h.nodeSvc != nil {
+		n, err := h.nodeSvc.GetByID(nodeID)
+		if err != nil || n == nil {
+			http.Error(w, "node not found", http.StatusNotFound)
+			return
+		}
+		if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 	}
 
 	snap, err := h.svc.GetLatest(r.Context(), nodeID)
