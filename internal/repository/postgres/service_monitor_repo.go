@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -132,6 +133,16 @@ func (r *ServiceMonitorRepository) UpdateStatus(id, status string, consecutiveFa
 		SET status = $1, consecutive_failures = $2, last_checked_at = $3, updated_at = NOW()
 		WHERE id = $4`,
 		status, consecutiveFailures, now, id,
+	)
+	return err
+}
+
+func (r *ServiceMonitorRepository) UpdateAutoHealState(id string, state json.RawMessage) error {
+	_, err := r.db.Exec(`
+		UPDATE service_monitors
+		SET auto_heal_state = $1, updated_at = NOW()
+		WHERE id = $2`,
+		state, id,
 	)
 	return err
 }

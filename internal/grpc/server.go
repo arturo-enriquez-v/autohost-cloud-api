@@ -2,6 +2,7 @@ package grpcserver
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log"
 	"sync"
@@ -18,6 +19,8 @@ import (
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
 	sm "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
+	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
+	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 )
 
@@ -25,16 +28,28 @@ import (
 type NodeAgentServer struct {
 	pb.UnimplementedNodeAgentServiceServer
 
-	commandSvc         *nodecommand.Service
-	jobSvc             *job.Service
-	tokenSvc           *nodetoken.Service
+	authSvc            *auth.Service
+	notificationSvc    *notification.Service
+	sm                 *sm.Service
+	nodealert          *nodealert.Service
+	alertevent         *alertevent.Service
+	marketplace        marketplace.Repository
+	nodetoken          *nodetoken.Service
+	nodecommand        *nodecommand.Service
+	job                *job.Service
+	node               *node.Service
+	nodemetric         *nodemetric.Service
+	containermetric    *containermetric.Service
+	serviceMonitorSvc  *sm.Service
 	alertSvc           *nodealert.Service
 	alertEventSvc      *alertevent.Service
+	marketplaceRepo    marketplace.Repository
+	tokenSvc           *nodetoken.Service
+	commandSvc         *nodecommand.Service
+	jobSvc             *job.Service
 	nodeSvc            *node.Service
 	metricSvc          *nodemetric.Service
 	containerMetricSvc *containermetric.Service
-	marketplaceRepo    marketplace.Repository
-	serviceMonitorSvc  *sm.Service
 
 	registry        *streamRegistry
 	logs            *logBroker
@@ -58,6 +73,8 @@ func NewNodeAgentServer(
 	marketplaceRepo marketplace.Repository,
 	alertEventSvc *alertevent.Service,
 	serviceMonitorSvc *sm.Service,
+	authSvc *auth.Service,
+	notificationSvc *notification.Service,
 ) *NodeAgentServer {
 	reg := newStreamRegistry()
 	s := &NodeAgentServer{
@@ -72,6 +89,8 @@ func NewNodeAgentServer(
 		registry:           reg,
 		marketplaceRepo:    marketplaceRepo,
 		serviceMonitorSvc:  serviceMonitorSvc,
+		authSvc:            authSvc,
+		notificationSvc:    notificationSvc,
 		metricBroker:       newMetricBroker(),
 		metricLastPersist:  make(map[string]time.Time),
 	}
@@ -361,6 +380,9 @@ func (s *NodeAgentServer) SubscribeToNodeMetrics(nodeID string) (<-chan *pb.Metr
 
 // SendHealthCheckConfig pushes a monitor configuration to a connected agent.
 func (s *NodeAgentServer) SendHealthCheckConfig(nodeID string, m *sm.ServiceMonitor) {
+	if s == nil || s.registry == nil {
+		return
+	}
 	msg := &pb.ServerMessage{
 		Payload: &pb.ServerMessage_ConfigureHealthCheck{
 			ConfigureHealthCheck: &pb.ConfigureHealthCheckPayload{
@@ -374,6 +396,8 @@ func (s *NodeAgentServer) SendHealthCheckConfig(nodeID string, m *sm.ServiceMoni
 				IntervalSeconds:    int32(m.IntervalSeconds),
 				FailureThreshold:   int32(m.FailureThreshold),
 				Enabled:            m.Enabled,
+				AutoHealConfig:     string(m.AutoHealConfig),
+				AutoHealState:      string(m.AutoHealState),
 			},
 		},
 	}
@@ -384,6 +408,9 @@ func (s *NodeAgentServer) SendHealthCheckConfig(nodeID string, m *sm.ServiceMoni
 
 // StopHealthCheck tells a connected agent to remove the given monitor.
 func (s *NodeAgentServer) StopHealthCheck(nodeID, monitorID string) {
+	if s == nil || s.registry == nil {
+		return
+	}
 	msg := &pb.ServerMessage{
 		Payload: &pb.ServerMessage_StopHealthCheck{
 			StopHealthCheck: &pb.StopHealthCheckPayload{
@@ -420,6 +447,63 @@ func (s *NodeAgentServer) handleHealthCheckResult(nodeID string, r *pb.HealthChe
 
 	if err := s.serviceMonitorSvc.UpdateStatus(monitor.ID, newStatus, int(r.GetConsecutiveFailures())); err != nil {
 		log.Printf("[gRPC] update service monitor status %s: %v", monitor.ID, err)
+	}
+
+	if autoHealStateStr := r.GetAutoHealState(); autoHealStateStr != "" && autoHealStateStr != "{}" {
+		// Parse old and new state
+		var oldState notification.AutoHealState
+		if len(monitor.AutoHealState) > 0 && string(monitor.AutoHealState) != "{}" && string(monitor.AutoHealState) != "null" {
+			_ = json.Unmarshal(monitor.AutoHealState, &oldState)
+		}
+
+		var newState notification.AutoHealState
+		if err := json.Unmarshal([]byte(autoHealStateStr), &newState); err == nil {
+			var cfg notification.AutoHealConfig
+			if len(monitor.AutoHealConfig) > 0 && string(monitor.AutoHealConfig) != "{}" && string(monitor.AutoHealConfig) != "null" {
+				_ = json.Unmarshal(monitor.AutoHealConfig, &cfg)
+			}
+
+			if cfg.Enabled && s.notificationSvc != nil {
+				go func() {
+					recipient := ""
+					if s.authSvc != nil {
+						if u, err := s.authSvc.GetByID(monitor.UserID); err == nil && u != nil {
+							recipient = u.Email
+						}
+					}
+					nodeHostname := ""
+					nodeIP := ""
+					if s.nodeSvc != nil {
+						if n, err := s.nodeSvc.GetByID(nodeID); err == nil && n != nil {
+							nodeHostname = n.Hostname
+							nodeIP = n.IPLocal
+							if n.IPVPN != nil && *n.IPVPN != "" {
+								nodeIP = *n.IPVPN
+							}
+						}
+					}
+
+					s.notificationSvc.SendAutoHealTransitionAlert(context.Background(), notification.AutoHealAlertContext{
+						Recipient:    recipient,
+						NodeID:       nodeID,
+						NodeHostname: nodeHostname,
+						NodeIP:       nodeIP,
+						MonitorID:    monitor.ID,
+						ServiceName:  monitor.ServiceName,
+						CheckType:    monitor.CheckType,
+						Config:       cfg,
+						OldState:     oldState,
+						NewState:     newState,
+						LastMessage:  r.GetMessage(),
+						LatencyMs:    int(r.GetLatencyMs()),
+					})
+				}()
+			}
+		}
+
+		if err := s.serviceMonitorSvc.UpdateAutoHealState(monitor.ID, json.RawMessage(autoHealStateStr)); err != nil {
+			log.Printf("[gRPC] update auto heal state %s: %v", monitor.ID, err)
+		}
 	}
 
 	event := &sm.ServiceHealthEvent{

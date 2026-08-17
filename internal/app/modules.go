@@ -23,6 +23,7 @@ import (
 	scheduledtask "github.com/arturo/autohost-cloud-api/internal/domain/scheduled_task"
 	servicemonitor "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	telegrambot "github.com/arturo/autohost-cloud-api/internal/domain/telegram_bot"
+	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
 	"github.com/arturo/autohost-cloud-api/internal/domain/vpn"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
@@ -77,6 +78,7 @@ var ServiceModule = fx.Provide(
 	externallog.NewService,
 	networkstat.NewService,
 	vpn.NewService,
+	notification.NewService,
 )
 
 var HandlerModule = fx.Provide(
