@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,6 +15,9 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -49,9 +53,10 @@ func (h *BackupHandler) Routes() chi.Router {
 	// Records
 	r.Get("/records/{nodeId}/{containerName}", h.ListRecords)
 
-	// Run / Restore Actions
+	// Run / Restore / Download Actions
 	r.Post("/run/{nodeId}/{containerName}", h.RunManualBackup)
 	r.Post("/restore/{recordId}", h.RestoreBackup)
+	r.Get("/download/{recordId}", h.DownloadBackup)
 
 	return r
 }
@@ -347,6 +352,73 @@ func (h *BackupHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 		"status":    "restoring",
 		"job_id":    j.ID,
 		"record_id": restoreRec.ID,
+	})
+}
+
+func (h *BackupHandler) DownloadBackup(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil {
+		writeJSONError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	recordID := chi.URLParam(r, "recordId")
+	rec, err := h.backupSvc.GetRecordByID(recordID)
+	if err != nil || rec == nil {
+		writeJSONError(w, "backup record not found", http.StatusNotFound)
+		return
+	}
+
+	if rec.UserID != claims.UserID {
+		writeJSONError(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	cred := getSystemR2Credential()
+	if cred == nil {
+		writeJSONError(w, "Cloudflare R2 system storage not configured", http.StatusBadRequest)
+		return
+	}
+
+	s3Client := s3.New(s3.Options{
+		Region:       cred.Region,
+		Credentials:  credentials.NewStaticCredentialsProvider(cred.AccessKeyID, cred.SecretAccessKey, ""),
+		BaseEndpoint: aws.String(cred.Endpoint),
+		UsePathStyle: true,
+	})
+
+	presignClient := s3.NewPresignClient(s3Client)
+	filename := filepath.Base(rec.S3Key)
+	disposition := fmt.Sprintf("attachment; filename=\"%s\"", filename)
+
+	presignedReq, err := presignClient.PresignGetObject(r.Context(), &s3.GetObjectInput{
+		Bucket:                     aws.String(cred.Bucket),
+		Key:                        aws.String(rec.S3Key),
+		ResponseContentDisposition: aws.String(disposition),
+	}, s3.WithPresignExpires(15*time.Minute))
+
+	if err != nil {
+		log.Printf("[ERROR] presign download URL failed: %v", err)
+		writeJSONError(w, "failed to generate download URL", http.StatusInternalServerError)
+		return
+	}
+
+	// Log the download event in backup_records for audit trail
+	_, _ = h.backupSvc.CreateRecord(&backup.BackupRecord{
+		BackupConfigID: rec.BackupConfigID,
+		NodeID:         rec.NodeID,
+		UserID:         claims.UserID,
+		ContainerName:  rec.ContainerName,
+		S3Key:          rec.S3Key,
+		FileSizeBytes:  rec.FileSizeBytes,
+		TriggerType:    "download",
+		Status:         "completed",
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"download_url": presignedReq.URL,
+		"filename":     filename,
 	})
 }
 

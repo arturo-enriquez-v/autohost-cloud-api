@@ -53,6 +53,7 @@ type BackupRecord struct {
 	TriggerType    string     `db:"trigger_type"     json:"trigger_type"`
 	Status         string     `db:"status"           json:"status"`
 	ErrorMessage   *string    `db:"error_message"    json:"error_message,omitempty"`
+	UserEmail      *string    `db:"user_email"       json:"user_email,omitempty"`
 	StartedAt      time.Time  `db:"started_at"       json:"started_at"`
 	CompletedAt    *time.Time `db:"completed_at"     json:"completed_at,omitempty"`
 }

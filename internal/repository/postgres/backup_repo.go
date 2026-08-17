@@ -182,10 +182,12 @@ func (r *BackupRepository) UpdateRecordJobID(id string, jobID string) error {
 func (r *BackupRepository) ListRecordsByContainer(nodeID, containerName string) ([]*backup.BackupRecord, error) {
 	var recs []*backup.BackupRecord
 	err := r.db.SelectContext(context.Background(), &recs, `
-		SELECT id, backup_config_id, node_id, user_id, job_id, container_name, s3_key, file_size_bytes, trigger_type, status, error_message, started_at, completed_at
-		FROM backup_records
-		WHERE node_id = $1 AND container_name = $2
-		ORDER BY started_at DESC LIMIT 50`, nodeID, containerName)
+		SELECT br.id, br.backup_config_id, br.node_id, br.user_id, br.job_id, br.container_name, br.s3_key, br.file_size_bytes, br.trigger_type, br.status, br.error_message, br.started_at, br.completed_at,
+		       u.email AS user_email
+		FROM backup_records br
+		LEFT JOIN users u ON br.user_id = u.id
+		WHERE br.node_id = $1 AND br.container_name = $2
+		ORDER BY br.started_at DESC LIMIT 50`, nodeID, containerName)
 	if err != nil {
 		return nil, err
 	}
@@ -195,9 +197,11 @@ func (r *BackupRepository) ListRecordsByContainer(nodeID, containerName string) 
 func (r *BackupRepository) GetRecordByID(id string) (*backup.BackupRecord, error) {
 	var rec backup.BackupRecord
 	err := r.db.GetContext(context.Background(), &rec, `
-		SELECT id, backup_config_id, node_id, user_id, job_id, container_name, s3_key, file_size_bytes, trigger_type, status, error_message, started_at, completed_at
-		FROM backup_records
-		WHERE id = $1`, id)
+		SELECT br.id, br.backup_config_id, br.node_id, br.user_id, br.job_id, br.container_name, br.s3_key, br.file_size_bytes, br.trigger_type, br.status, br.error_message, br.started_at, br.completed_at,
+		       u.email AS user_email
+		FROM backup_records br
+		LEFT JOIN users u ON br.user_id = u.id
+		WHERE br.id = $1`, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, backup.ErrNotFound
