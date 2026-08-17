@@ -69,6 +69,7 @@ type Repository interface {
 	FindByID(id string) (*ServiceMonitor, error)
 	ListByNodeID(nodeID string) ([]*ServiceMonitor, error)
 	UpdateStatus(id, status string, consecutiveFailures int) error
+	UpdateAutoHealState(id string, state json.RawMessage) error
 
 	// Health events
 	InsertEvent(e *ServiceHealthEvent) error
@@ -106,10 +107,22 @@ func (s *Service) Create(m *ServiceMonitor) (*ServiceMonitor, error) {
 	if m.Status == "" {
 		m.Status = StatusUnknown
 	}
+	if len(m.AutoHealConfig) == 0 || string(m.AutoHealConfig) == "null" {
+		m.AutoHealConfig = json.RawMessage("{}")
+	}
+	if len(m.AutoHealState) == 0 || string(m.AutoHealState) == "null" {
+		m.AutoHealState = json.RawMessage("{}")
+	}
 	return s.repo.Create(m)
 }
 
 func (s *Service) Update(m *ServiceMonitor) (*ServiceMonitor, error) {
+	if len(m.AutoHealConfig) == 0 || string(m.AutoHealConfig) == "null" {
+		m.AutoHealConfig = json.RawMessage("{}")
+	}
+	if len(m.AutoHealState) == 0 || string(m.AutoHealState) == "null" {
+		m.AutoHealState = json.RawMessage("{}")
+	}
 	return s.repo.Update(m)
 }
 
@@ -127,6 +140,10 @@ func (s *Service) ListByNodeID(nodeID string) ([]*ServiceMonitor, error) {
 
 func (s *Service) UpdateStatus(id, status string, consecutiveFailures int) error {
 	return s.repo.UpdateStatus(id, status, consecutiveFailures)
+}
+
+func (s *Service) UpdateAutoHealState(id string, state json.RawMessage) error {
+	return s.repo.UpdateAutoHealState(id, state)
 }
 
 func (s *Service) RecordEvent(e *ServiceHealthEvent) error {

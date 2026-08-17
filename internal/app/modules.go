@@ -23,7 +23,9 @@ import (
 	scheduledtask "github.com/arturo/autohost-cloud-api/internal/domain/scheduled_task"
 	servicemonitor "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	telegrambot "github.com/arturo/autohost-cloud-api/internal/domain/telegram_bot"
+	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
 	"github.com/arturo/autohost-cloud-api/internal/domain/vpn"
+	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
@@ -54,6 +56,7 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewTelegramBotRepository, fx.As(new(telegrambot.Repository))),
 	fx.Annotate(postgres.NewNetworkStatRepository, fx.As(new(networkstat.Repository))),
 	fx.Annotate(postgres.NewExternalLogRepository, fx.As(new(externallog.Repository))),
+	fx.Annotate(postgres.NewBackupRepository, fx.As(new(backup.Repository))),
 )
 
 var ServiceModule = fx.Provide(
@@ -77,6 +80,8 @@ var ServiceModule = fx.Provide(
 	externallog.NewService,
 	networkstat.NewService,
 	vpn.NewService,
+	notification.NewService,
+	backup.NewService,
 )
 
 var HandlerModule = fx.Provide(
@@ -103,6 +108,7 @@ var HandlerModule = fx.Provide(
 	handler.NewExternalLogHandler,
 	handler.NewVPNHandler,
 	handler.NewNodeNetworkHandler,
+	handler.NewBackupHandler,
 )
 
 var InfraModule = fx.Provide(

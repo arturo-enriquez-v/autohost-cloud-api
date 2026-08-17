@@ -8,17 +8,22 @@ import (
 	"net/http"
 
 	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
+	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/handler/response"
 	"github.com/go-chi/chi/v5"
 )
 
 type AuthHandler struct {
-	service *auth.Service
+	service         *auth.Service
+	notificationSvc *notification.Service
 }
 
-func NewAuthHandler(service *auth.Service) *AuthHandler {
-	return &AuthHandler{service: service}
+func NewAuthHandler(service *auth.Service, notificationSvc *notification.Service) *AuthHandler {
+	return &AuthHandler{
+		service:         service,
+		notificationSvc: notificationSvc,
+	}
 }
 
 func (h *AuthHandler) Routes() chi.Router {
@@ -62,6 +67,10 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+
+	if h.notificationSvc != nil {
+		h.notificationSvc.PublishUserRegistered(in.Email, in.Name, "")
 	}
 
 	response.RespondJSON(w, http.StatusCreated, pair)

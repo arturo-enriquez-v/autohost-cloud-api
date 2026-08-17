@@ -61,17 +61,19 @@ func (h *ServiceMonitorHandler) List(w http.ResponseWriter, r *http.Request) {
 // ─── Create ───────────────────────────────────────────────────────────────────
 
 type upsertMonitorRequest struct {
-	NodeID             string `json:"node_id"`
-	ServiceName        string `json:"service_name"`
-	CheckType          string `json:"check_type"`
-	HTTPURL            string `json:"http_url"`
-	HTTPExpectedStatus int    `json:"http_expected_status"`
-	TCPHost            string `json:"tcp_host"`
-	TCPPort            int    `json:"tcp_port"`
-	IntervalSeconds    int    `json:"interval_seconds"`
-	FailureThreshold   int    `json:"failure_threshold"`
-	NotifyTelegram     bool   `json:"notify_telegram"`
-	Enabled            bool   `json:"enabled"`
+	NodeID             string          `json:"node_id"`
+	ServiceName        string          `json:"service_name"`
+	CheckType          string          `json:"check_type"`
+	HTTPURL            string          `json:"http_url"`
+	HTTPExpectedStatus int             `json:"http_expected_status"`
+	TCPHost            string          `json:"tcp_host"`
+	TCPPort            int             `json:"tcp_port"`
+	IntervalSeconds    int             `json:"interval_seconds"`
+	FailureThreshold   int             `json:"failure_threshold"`
+	NotifyTelegram     bool            `json:"notify_telegram"`
+	Enabled            bool            `json:"enabled"`
+	AutoHealConfig     json.RawMessage `json:"auto_heal_config"`
+	AutoHealState      json.RawMessage `json:"auto_heal_state"`
 }
 
 func (h *ServiceMonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -104,6 +106,8 @@ func (h *ServiceMonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		FailureThreshold:   req.FailureThreshold,
 		NotifyTelegram:     req.NotifyTelegram,
 		Enabled:            req.Enabled,
+		AutoHealConfig:     req.AutoHealConfig,
+		AutoHealState:      req.AutoHealState,
 	}
 
 	created, err := h.service.Create(monitor)
@@ -113,7 +117,9 @@ func (h *ServiceMonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Push config to connected agent
-	h.grpc.SendHealthCheckConfig(req.NodeID, created)
+	if h.grpc != nil {
+		h.grpc.SendHealthCheckConfig(req.NodeID, created)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -160,6 +166,12 @@ func (h *ServiceMonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	existing.FailureThreshold = req.FailureThreshold
 	existing.NotifyTelegram = req.NotifyTelegram
 	existing.Enabled = req.Enabled
+	if len(req.AutoHealConfig) > 0 {
+		existing.AutoHealConfig = req.AutoHealConfig
+	}
+	if len(req.AutoHealState) > 0 {
+		existing.AutoHealState = req.AutoHealState
+	}
 
 	updated, err := h.service.Update(existing)
 	if err != nil {
@@ -168,7 +180,9 @@ func (h *ServiceMonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Push updated config to connected agent
-	h.grpc.SendHealthCheckConfig(existing.NodeID, updated)
+	if h.grpc != nil {
+		h.grpc.SendHealthCheckConfig(existing.NodeID, updated)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(updated)

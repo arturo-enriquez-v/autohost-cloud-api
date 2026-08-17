@@ -38,7 +38,7 @@ func (r *AuthRepository) CreateUser(email, name, passwordHash string) (string, e
 	}
 
 	_, err = tx.ExecContext(context.Background(), `
-		INSERT INTO user_subscriptions (user_id, plan_id) VALUES ($1, 'starter')`, id)
+		INSERT INTO user_subscriptions (user_id, plan_id) VALUES ($1, 'free')`, id)
 	if err != nil {
 		return "", fmt.Errorf("auth_repo.CreateUser: assign starter plan: %w", err)
 	}
@@ -173,7 +173,7 @@ func (r *AuthRepository) FindOrCreateOAuthUser(email, name, provider, providerID
 	}
 
 	_, err = tx.ExecContext(context.Background(), `
-		INSERT INTO user_subscriptions (user_id, plan_id) VALUES ($1, 'starter')`, id)
+		INSERT INTO user_subscriptions (user_id, plan_id) VALUES ($1, 'free')`, id)
 	if err != nil {
 		return nil, fmt.Errorf("auth_repo.FindOrCreateOAuthUser: assign starter plan: %w", err)
 	}

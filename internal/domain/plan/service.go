@@ -1,5 +1,7 @@
 package plan
 
+import "errors"
+
 // Service handles business logic for plans and subscriptions.
 type Service struct {
 	repo Repository
@@ -18,7 +20,14 @@ func (s *Service) ListPlans() ([]*Plan, error) {
 func (s *Service) GetUserPlan(userID string) (*UserPlan, error) {
 	sub, err := s.repo.FindSubscriptionByUserID(userID)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, ErrSubscriptionNotFound) {
+			sub, err = s.repo.CreateSubscription(userID, PlanFree)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
 	}
 	p, err := s.repo.FindByID(sub.PlanID)
 	if err != nil {
@@ -27,9 +36,9 @@ func (s *Service) GetUserPlan(userID string) (*UserPlan, error) {
 	return &UserPlan{Subscription: sub, Plan: p}, nil
 }
 
-// AssignStarterPlan assigns the default starter plan to a newly created user.
+// AssignStarterPlan assigns the default free plan to a newly created user.
 func (s *Service) AssignStarterPlan(userID string) error {
-	_, err := s.repo.CreateSubscription(userID, PlanStarter)
+	_, err := s.repo.CreateSubscription(userID, PlanFree)
 	return err
 }
 

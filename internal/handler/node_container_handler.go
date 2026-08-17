@@ -175,6 +175,10 @@ func (h *NodeContainerHandler) getContainerMetrics(w http.ResponseWriter, r *htt
 		http.Error(w, "node not found", http.StatusNotFound)
 		return
 	}
+	if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 
 	containerName := r.URL.Query().Get("container_name")
 	if containerName == "" {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
@@ -18,11 +19,12 @@ import (
 // NodeLogHandler streams real-time system logs from a node to the browser via
 // Server-Sent Events (SSE).  The client must supply a valid user JWT.
 type NodeLogHandler struct {
-	grpc *grpcserver.NodeAgentServer
+	grpc    *grpcserver.NodeAgentServer
+	nodeSvc *node.Service
 }
 
-func NewNodeLogHandler(grpc *grpcserver.NodeAgentServer) *NodeLogHandler {
-	return &NodeLogHandler{grpc: grpc}
+func NewNodeLogHandler(grpc *grpcserver.NodeAgentServer, nodeSvc *node.Service) *NodeLogHandler {
+	return &NodeLogHandler{grpc: grpc, nodeSvc: nodeSvc}
 }
 
 func (h *NodeLogHandler) Routes() http.Handler {
@@ -42,7 +44,25 @@ type sseLogEntry struct {
 }
 
 func (h *NodeLogHandler) streamLogs(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.UserID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	nodeID := chi.URLParam(r, "nodeId")
+
+	if h.nodeSvc != nil {
+		n, err := h.nodeSvc.GetByID(nodeID)
+		if err != nil || n == nil {
+			http.Error(w, "node not found", http.StatusNotFound)
+			return
+		}
+		if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
 
 	// Optional query params.
 	unit := r.URL.Query().Get("unit") // e.g. "autohost-agent" or "" = all

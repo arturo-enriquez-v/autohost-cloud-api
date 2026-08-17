@@ -25,10 +25,7 @@ func (s *NodeAgentServer) nodeIDFromCtx(ctx context.Context) (string, error) {
 		return "", status.Error(codes.Unauthenticated, "missing authorization header")
 	}
 
-	raw := values[0]
-	if strings.HasPrefix(raw, "Bearer ") {
-		raw = raw[7:]
-	}
+	raw := strings.TrimPrefix(values[0], "Bearer ")
 
 	if !strings.HasPrefix(raw, platform.TokenApiPrefix) {
 		log.Printf("[gRPC] auth: invalid token format (prefix mismatch)")
