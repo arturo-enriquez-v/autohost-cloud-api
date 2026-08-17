@@ -20,6 +20,7 @@ import (
 	sm "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
 	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
+	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
 	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 )
@@ -50,6 +51,7 @@ type NodeAgentServer struct {
 	nodeSvc            *node.Service
 	metricSvc          *nodemetric.Service
 	containerMetricSvc *containermetric.Service
+	backupSvc          *backup.Service
 
 	registry        *streamRegistry
 	logs            *logBroker
@@ -75,6 +77,7 @@ func NewNodeAgentServer(
 	serviceMonitorSvc *sm.Service,
 	authSvc *auth.Service,
 	notificationSvc *notification.Service,
+	backupSvc *backup.Service,
 ) *NodeAgentServer {
 	reg := newStreamRegistry()
 	s := &NodeAgentServer{
@@ -91,12 +94,17 @@ func NewNodeAgentServer(
 		serviceMonitorSvc:  serviceMonitorSvc,
 		authSvc:            authSvc,
 		notificationSvc:    notificationSvc,
+		backupSvc:          backupSvc,
 		metricBroker:       newMetricBroker(),
 		metricLastPersist:  make(map[string]time.Time),
 	}
 	s.logs = newLogBroker(reg.sendToNode)
 	s.containerBroker = newContainerBroker(reg.sendToNode)
 	return s
+}
+
+func (s *NodeAgentServer) SetBackupService(svc *backup.Service) {
+	s.backupSvc = svc
 }
 
 // ---- RegisterCommands (client-side stream) ----------------------------------
@@ -247,6 +255,30 @@ func (s *NodeAgentServer) Connect(
 				log.Printf("[gRPC] update job %s: %v", r.GetJobId(), err)
 			} else {
 				log.Printf("[gRPC] job %s -> %s (node %s)", r.GetJobId(), r.GetStatus(), nodeID)
+			}
+
+			// Update backup_records if this job belongs to a backup/restore operation
+			if s.backupSvc != nil {
+				var outputData struct {
+					S3Key         string `json:"s3_key"`
+					FileSizeBytes int64  `json:"file_size_bytes"`
+				}
+				_ = json.Unmarshal([]byte(r.GetOutput()), &outputData)
+
+				var errMsg *string
+				if r.GetError() != "" {
+					e := r.GetError()
+					errMsg = &e
+				}
+				statusStr := "completed"
+				if jobStatus != job.StatusCompleted {
+					statusStr = "failed"
+				}
+				if err := s.backupSvc.UpdateRecordByJobID(r.GetJobId(), statusStr, outputData.S3Key, outputData.FileSizeBytes, errMsg); err != nil {
+					log.Printf("[gRPC] update backup record for job %s: %v", r.GetJobId(), err)
+				} else {
+					log.Printf("[gRPC] backup record updated for job %s -> %s", r.GetJobId(), statusStr)
+				}
 			}
 
 			// Sync marketplace_apps status when an install job finishes.

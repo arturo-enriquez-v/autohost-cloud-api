@@ -1,0 +1,355 @@
+package handler
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
+	"github.com/arturo/autohost-cloud-api/internal/domain/job"
+	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
+	"github.com/go-chi/chi/v5"
+)
+
+type BackupHandler struct {
+	backupSvc  *backup.Service
+	jobSvc     *job.Service
+	dispatcher ParamDispatcher
+	nodeSvc    *node.Service
+}
+
+func NewBackupHandler(
+	backupSvc *backup.Service,
+	jobSvc *job.Service,
+	dispatcher ParamDispatcher,
+	nodeSvc *node.Service,
+) *BackupHandler {
+	return &BackupHandler{
+		backupSvc:  backupSvc,
+		jobSvc:     jobSvc,
+		dispatcher: dispatcher,
+		nodeSvc:    nodeSvc,
+	}
+}
+
+func (h *BackupHandler) Routes() chi.Router {
+	r := chi.NewRouter()
+	r.Use(middleware.Auth)
+
+	// Configs
+	r.Get("/config/{nodeId}/{containerName}", h.GetConfig)
+	r.Put("/config/{nodeId}/{containerName}", h.UpsertConfig)
+
+	// Records
+	r.Get("/records/{nodeId}/{containerName}", h.ListRecords)
+
+	// Run / Restore Actions
+	r.Post("/run/{nodeId}/{containerName}", h.RunManualBackup)
+	r.Post("/restore/{recordId}", h.RestoreBackup)
+
+	return r
+}
+
+func getSystemR2Credential() *backup.StorageCredential {
+	accountID := os.Getenv("R2_ACCOUNT_ID")
+	accessKey := os.Getenv("R2_ACCESS_KEY_ID")
+	secretKey := os.Getenv("R2_SECRET_ACCESS_KEY")
+	bucketRaw := os.Getenv("R2_BUCKET_NAME")
+
+	if accountID == "" || accessKey == "" || secretKey == "" || bucketRaw == "" {
+		return nil
+	}
+
+	// Extract the actual root bucket name (before any slashes)
+	bucketName := strings.Split(strings.TrimSpace(bucketRaw), "/")[0]
+
+	return &backup.StorageCredential{
+		ID:              "system-managed-r2",
+		Name:            "Autohost Cloud Storage (Incluido)",
+		Provider:        "r2",
+		Endpoint:        fmt.Sprintf("https://%s.r2.cloudflarestorage.com", accountID),
+		Bucket:          bucketName,
+		Region:          "auto",
+		AccessKeyID:     accessKey,
+		SecretAccessKey: secretKey,
+		IsDefault:       true,
+	}
+}
+
+// ─── Config Handlers ────────────────────────────────────────────────────────
+
+func (h *BackupHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
+	nodeID := chi.URLParam(r, "nodeId")
+	containerName := chi.URLParam(r, "containerName")
+
+	cfg, err := h.backupSvc.GetConfigByContainer(nodeID, containerName)
+	if err != nil {
+		if err == backup.ErrNotFound {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]any{
+				"enabled":        false,
+				"container_name": containerName,
+			})
+			return
+		}
+		http.Error(w, "failed to fetch backup config", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cfg)
+}
+
+type upsertConfigRequest struct {
+	Volumes        []string `json:"volumes"`
+	CronExpression string   `json:"cron_expression"`
+	RetentionCount int      `json:"retention_count"`
+	PauseContainer bool     `json:"pause_container"`
+	Enabled        bool     `json:"enabled"`
+}
+
+func (h *BackupHandler) UpsertConfig(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	nodeID := chi.URLParam(r, "nodeId")
+	containerName := chi.URLParam(r, "containerName")
+
+	var req upsertConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	volsRaw, _ := json.Marshal(req.Volumes)
+	cronExpr := req.CronExpression
+	if cronExpr == "" {
+		cronExpr = "0 3 * * *"
+	}
+	retention := req.RetentionCount
+	if retention <= 0 {
+		retention = 7
+	}
+
+	cfg, err := h.backupSvc.UpsertConfig(&backup.BackupConfig{
+		UserID:         claims.UserID,
+		NodeID:         nodeID,
+		ContainerName:  containerName,
+		Volumes:        volsRaw,
+		CronExpression: cronExpr,
+		RetentionCount: retention,
+		PauseContainer: req.PauseContainer,
+		Enabled:        req.Enabled,
+	})
+	if err != nil {
+		log.Printf("[ERROR] upsert backup config: %v", err)
+		http.Error(w, "failed to save backup config", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cfg)
+}
+
+// ─── Records Handlers ────────────────────────────────────────────────────────
+
+func (h *BackupHandler) ListRecords(w http.ResponseWriter, r *http.Request) {
+	nodeID := chi.URLParam(r, "nodeId")
+	containerName := chi.URLParam(r, "containerName")
+
+	recs, err := h.backupSvc.ListRecordsByContainer(nodeID, containerName)
+	if err != nil {
+		http.Error(w, "failed to fetch backup records", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(recs)
+}
+
+func writeJSONError(w http.ResponseWriter, msg string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// ─── Run & Restore Actions ───────────────────────────────────────────────────
+
+func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil {
+		writeJSONError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	nodeID := chi.URLParam(r, "nodeId")
+	containerName := chi.URLParam(r, "containerName")
+
+	cred := getSystemR2Credential()
+	if cred == nil {
+		writeJSONError(w, "Cloudflare R2 system storage not configured in server environment variables", http.StatusBadRequest)
+		return
+	}
+
+	cfg, err := h.backupSvc.GetConfigByContainer(nodeID, containerName)
+	if err != nil || cfg == nil {
+		volsRaw, _ := json.Marshal([]string{})
+		cfg, err = h.backupSvc.UpsertConfig(&backup.BackupConfig{
+			UserID:         claims.UserID,
+			NodeID:         nodeID,
+			ContainerName:  containerName,
+			Volumes:        volsRaw,
+			CronExpression: "0 3 * * *",
+			RetentionCount: 7,
+			PauseContainer: true,
+			Enabled:        true,
+		})
+		if err != nil {
+			log.Printf("[ERROR] auto-initialize backup config failed: %v", err)
+			writeJSONError(w, fmt.Sprintf("could not initialize backup config: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	var vols []string
+	_ = json.Unmarshal(cfg.Volumes, &vols)
+
+	nowStr := time.Now().Format("2006-01-02_150405")
+	s3Key := fmt.Sprintf("backups/users/%s/nodes/%s/apps/%s/%s/%s.tar.gz", claims.UserID, nodeID, containerName, nowStr, containerName)
+
+	rec, err := h.backupSvc.CreateRecord(&backup.BackupRecord{
+		BackupConfigID: cfg.ID,
+		NodeID:         nodeID,
+		UserID:         claims.UserID,
+		ContainerName:  containerName,
+		S3Key:          s3Key,
+		TriggerType:    "manual",
+		Status:         "running",
+	})
+	if err != nil {
+		log.Printf("[ERROR] create backup record failed: %v", err)
+		writeJSONError(w, fmt.Sprintf("could not initiate backup record: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	params, _ := json.Marshal(map[string]any{
+		"container_name":  containerName,
+		"volumes":         vols,
+		"pause_container": cfg.PauseContainer,
+		"s3": map[string]any{
+			"endpoint":          cred.Endpoint,
+			"bucket":            cred.Bucket,
+			"region":            cred.Region,
+			"access_key_id":     cred.AccessKeyID,
+			"secret_access_key": cred.SecretAccessKey,
+			"s3_key":            s3Key,
+		},
+	})
+
+	j, err := h.jobSvc.Dispatch(nodeID, "docker.volume.backup", nodecommand.CommandTypeDefault)
+	if err != nil {
+		_ = h.backupSvc.UpdateRecordStatus(rec.ID, "failed", "", 0, strPtr(err.Error()))
+		log.Printf("[ERROR] dispatch backup job failed: %v", err)
+		writeJSONError(w, fmt.Sprintf("failed to dispatch backup job: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	_ = h.backupSvc.UpdateRecordJobID(rec.ID, j.ID)
+	rec.JobID = &j.ID
+
+	_ = h.dispatcher.DispatchJobWithParams(nodeID, j.ID, "docker.volume.backup", nodecommand.CommandTypeDefault, string(params))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(rec)
+}
+
+func (h *BackupHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	recordID := chi.URLParam(r, "recordId")
+	rec, err := h.backupSvc.GetRecordByID(recordID)
+	if err != nil || rec == nil {
+		http.Error(w, "backup record not found", http.StatusNotFound)
+		return
+	}
+
+	cred := getSystemR2Credential()
+	if cred == nil {
+		http.Error(w, "Cloudflare R2 system storage not configured in server environment variables", http.StatusBadRequest)
+		return
+	}
+
+	cfg, err := h.backupSvc.GetConfigByID(rec.BackupConfigID)
+	if err != nil || cfg == nil {
+		http.Error(w, "backup configuration missing", http.StatusBadRequest)
+		return
+	}
+
+	var vols []string
+	_ = json.Unmarshal(cfg.Volumes, &vols)
+
+	params, _ := json.Marshal(map[string]any{
+		"container_name": rec.ContainerName,
+		"volumes":        vols,
+		"s3": map[string]any{
+			"endpoint":          cred.Endpoint,
+			"bucket":            cred.Bucket,
+			"region":            cred.Region,
+			"access_key_id":     cred.AccessKeyID,
+			"secret_access_key": cred.SecretAccessKey,
+			"s3_key":            rec.S3Key,
+		},
+	})
+
+	restoreRec, err := h.backupSvc.CreateRecord(&backup.BackupRecord{
+		BackupConfigID: cfg.ID,
+		NodeID:         rec.NodeID,
+		UserID:         claims.UserID,
+		ContainerName:  rec.ContainerName,
+		S3Key:          rec.S3Key,
+		FileSizeBytes:  rec.FileSizeBytes,
+		TriggerType:    "restore",
+		Status:         "running",
+	})
+	if err != nil {
+		log.Printf("[ERROR] create restore record failed: %v", err)
+		writeJSONError(w, fmt.Sprintf("could not initiate restore record: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	j, err := h.jobSvc.Dispatch(rec.NodeID, "docker.volume.restore", nodecommand.CommandTypeDefault)
+	if err != nil {
+		_ = h.backupSvc.UpdateRecordStatus(restoreRec.ID, "failed", "", 0, strPtr(err.Error()))
+		writeJSONError(w, "failed to dispatch restore job", http.StatusInternalServerError)
+		return
+	}
+
+	_ = h.backupSvc.UpdateRecordJobID(restoreRec.ID, j.ID)
+
+	_ = h.dispatcher.DispatchJobWithParams(rec.NodeID, j.ID, "docker.volume.restore", nodecommand.CommandTypeDefault, string(params))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"status":    "restoring",
+		"job_id":    j.ID,
+		"record_id": restoreRec.ID,
+	})
+}
+
+func strPtr(s string) *string {
+	return &s
+}
