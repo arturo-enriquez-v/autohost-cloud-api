@@ -13,6 +13,7 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/domain/enrollment"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
+	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 	"github.com/go-chi/chi/v5"
@@ -22,10 +23,11 @@ type EnrollmentHandler struct {
 	service          *enrollment.Service
 	nodeService      *node.Service
 	nodeTokenService *nodetoken.Service
+	planService      *plan.Service
 }
 
-func NewEnrollmentHandler(service *enrollment.Service, nodeService *node.Service, nodeTokenService *nodetoken.Service) *EnrollmentHandler {
-	return &EnrollmentHandler{service: service, nodeService: nodeService, nodeTokenService: nodeTokenService}
+func NewEnrollmentHandler(service *enrollment.Service, nodeService *node.Service, nodeTokenService *nodetoken.Service, planService *plan.Service) *EnrollmentHandler {
+	return &EnrollmentHandler{service: service, nodeService: nodeService, nodeTokenService: nodeTokenService, planService: planService}
 }
 
 func (h *EnrollmentHandler) Routes() chi.Router {
@@ -51,6 +53,16 @@ func (h *EnrollmentHandler) CreateEnrollToken(w http.ResponseWriter, r *http.Req
 	if claims == nil || claims.UserID == "" {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
+	}
+
+	if h.planService != nil {
+		nodes, err := h.nodeService.GetByOwner(claims.UserID)
+		if err == nil {
+			if err := h.planService.CheckNodeLimit(claims.UserID, len(nodes)); err != nil {
+				http.Error(w, err.Error(), http.StatusForbidden)
+				return
+			}
+		}
 	}
 
 	// Generar token de enrrolamiento
@@ -123,6 +135,16 @@ func (h *EnrollmentHandler) EnrollNode(w http.ResponseWriter, r *http.Request) {
 	if time.Now().After(enroll.ExpiresAt) {
 		http.Error(w, "token expired", http.StatusUnauthorized)
 		return
+	}
+
+	if h.planService != nil {
+		nodes, err := h.nodeService.GetByOwner(enroll.UserID)
+		if err == nil {
+			if err := h.planService.CheckNodeLimit(enroll.UserID, len(nodes)); err != nil {
+				http.Error(w, err.Error(), http.StatusForbidden)
+				return
+			}
+		}
 	}
 
 	if err := h.service.MarkTokenAsUsed(enroll.Token, time.Now()); err != nil {

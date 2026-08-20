@@ -18,6 +18,7 @@ import (
 	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
 	sm "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
+	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
 	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
 	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
@@ -52,6 +53,7 @@ type NodeAgentServer struct {
 	metricSvc          *nodemetric.Service
 	containerMetricSvc *containermetric.Service
 	backupSvc          *backup.Service
+	logDiagnosticSvc   *logdiagnostic.Service
 
 	registry        *streamRegistry
 	logs            *logBroker
@@ -78,6 +80,7 @@ func NewNodeAgentServer(
 	authSvc *auth.Service,
 	notificationSvc *notification.Service,
 	backupSvc *backup.Service,
+	logDiagnosticSvc *logdiagnostic.Service,
 ) *NodeAgentServer {
 	reg := newStreamRegistry()
 	s := &NodeAgentServer{
@@ -95,6 +98,7 @@ func NewNodeAgentServer(
 		authSvc:            authSvc,
 		notificationSvc:    notificationSvc,
 		backupSvc:          backupSvc,
+		logDiagnosticSvc:   logDiagnosticSvc,
 		metricBroker:       newMetricBroker(),
 		metricLastPersist:  make(map[string]time.Time),
 	}
@@ -360,6 +364,9 @@ func (s *NodeAgentServer) Connect(
 
 		case *pb.NodeMessage_HealthResult:
 			go s.handleHealthCheckResult(nodeID, p.HealthResult)
+
+		case *pb.NodeMessage_LogDiagnostic:
+			go s.handleLogDiagnosticResult(nodeID, p.LogDiagnostic)
 
 		default:
 			log.Printf("[gRPC] unknown payload from node %s", nodeID)

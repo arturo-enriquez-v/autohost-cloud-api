@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
 	"github.com/arturo/autohost-cloud-api/internal/domain/project"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
@@ -15,10 +16,11 @@ import (
 type ProjectHandler struct {
 	projectService *project.Service
 	nodeService    *node.Service
+	planService    *plan.Service
 }
 
-func NewProjectHandler(projectService *project.Service, nodeService *node.Service) *ProjectHandler {
-	return &ProjectHandler{projectService: projectService, nodeService: nodeService}
+func NewProjectHandler(projectService *project.Service, nodeService *node.Service, planService *plan.Service) *ProjectHandler {
+	return &ProjectHandler{projectService: projectService, nodeService: nodeService, planService: planService}
 }
 
 func (h *ProjectHandler) Routes() chi.Router {
@@ -60,6 +62,17 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	if h.planService != nil {
+		projects, err := h.projectService.GetByUser(claims.UserID)
+		if err == nil {
+			if err := h.planService.CheckProjectLimit(claims.UserID, len(projects)); err != nil {
+				http.Error(w, err.Error(), http.StatusForbidden)
+				return
+			}
+		}
+	}
+
 	var req struct {
 		Name string `json:"name"`
 	}
