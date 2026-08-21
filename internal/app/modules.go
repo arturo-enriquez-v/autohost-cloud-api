@@ -26,6 +26,7 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
 	"github.com/arturo/autohost-cloud-api/internal/domain/vpn"
 	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
+	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
@@ -57,6 +58,7 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewNetworkStatRepository, fx.As(new(networkstat.Repository))),
 	fx.Annotate(postgres.NewExternalLogRepository, fx.As(new(externallog.Repository))),
 	fx.Annotate(postgres.NewBackupRepository, fx.As(new(backup.Repository))),
+	fx.Annotate(postgres.NewLogDiagnosticRepository, fx.As(new(logdiagnostic.Repository))),
 )
 
 var ServiceModule = fx.Provide(
@@ -82,6 +84,7 @@ var ServiceModule = fx.Provide(
 	vpn.NewService,
 	notification.NewService,
 	backup.NewService,
+	logdiagnostic.NewService,
 )
 
 var HandlerModule = fx.Provide(
@@ -109,11 +112,13 @@ var HandlerModule = fx.Provide(
 	handler.NewVPNHandler,
 	handler.NewNodeNetworkHandler,
 	handler.NewBackupHandler,
+	handler.NewLogDiagnosticHandler,
 )
 
 var InfraModule = fx.Provide(
 	grpcserver.NewNodeAgentServer,
 	platform.NewRedisClient,
+	platform.NewGeminiClient,
 	headscale.NewClient,
 	// NodeAgentServer also satisfies ParamDispatcher (used by CaddyRoute and Marketplace handlers).
 	fx.Annotate(
@@ -131,6 +136,7 @@ var InfraModule = fx.Provide(
 	handler.NewJobHandler,
 	scheduler.NewScheduler,
 	scheduler.NewReportScheduler,
+	scheduler.NewDiagnosticCleanupScheduler,
 	// Wire NodeReportHandler as ReportTrigger for the ReportScheduler.
 	fx.Annotate(
 		func(h *handler.NodeReportHandler) scheduler.ReportTrigger { return h },

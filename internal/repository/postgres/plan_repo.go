@@ -21,7 +21,8 @@ func (r *PlanRepository) FindAllActive() ([]*plan.Plan, error) {
 	var plans []*plan.Plan
 	err := r.db.Select(&plans, `
 		SELECT id, name, description, price_cents, max_nodes, max_projects, max_custom_commands,
-		       retention_days, polling_interval_sec, is_active, created_at, updated_at
+		       retention_days, polling_interval_sec, max_backup_storage_bytes, max_backup_retention_days,
+		       max_ai_diagnostics_per_month, is_active, created_at, updated_at
 		FROM plans
 		WHERE is_active = true
 		ORDER BY price_cents ASC, id ASC`)
@@ -35,7 +36,8 @@ func (r *PlanRepository) FindByID(id string) (*plan.Plan, error) {
 	var p plan.Plan
 	err := r.db.Get(&p, `
 		SELECT id, name, description, price_cents, max_nodes, max_projects, max_custom_commands,
-		       retention_days, polling_interval_sec, is_active, created_at, updated_at
+		       retention_days, polling_interval_sec, max_backup_storage_bytes, max_backup_retention_days,
+		       max_ai_diagnostics_per_month, is_active, created_at, updated_at
 		FROM plans
 		WHERE id = $1`, id)
 	if err == sql.ErrNoRows {
@@ -91,4 +93,13 @@ func (r *PlanRepository) UpdateSubscriptionPlan(userID, planID string) (*plan.Su
 		return nil, fmt.Errorf("plan_repo.UpdateSubscriptionPlan: %w", err)
 	}
 	return &sub, nil
+}
+
+func (r *PlanRepository) GetUserUsageCounts(userID string) (nodesCount, projectsCount, commandsCount int, backupStorageBytes int64, aiDiagnosticsThisMonth int, err error) {
+	_ = r.db.Get(&nodesCount, `SELECT COUNT(*) FROM nodes WHERE owner_id = $1`, userID)
+	_ = r.db.Get(&projectsCount, `SELECT COUNT(*) FROM projects WHERE user_id = $1`, userID)
+	_ = r.db.Get(&commandsCount, `SELECT COUNT(*) FROM node_commands WHERE user_id = $1`, userID)
+	_ = r.db.Get(&backupStorageBytes, `SELECT COALESCE(SUM(file_size_bytes), 0) FROM backup_records WHERE user_id = $1 AND status = 'completed'`, userID)
+	_ = r.db.Get(&aiDiagnosticsThisMonth, `SELECT COUNT(*) FROM log_diagnostics WHERE user_id = $1 AND created_at >= date_trunc('month', now())`, userID)
+	return nodesCount, projectsCount, commandsCount, backupStorageBytes, aiDiagnosticsThisMonth, nil
 }

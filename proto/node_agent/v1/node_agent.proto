@@ -48,13 +48,14 @@ message RegisterCommandsResponse {
 
 message NodeMessage {
   oneof payload {
-    JobResultPayload         job_result      = 1;
-    HeartbeatPayload         heartbeat       = 2;
-    LogEntryPayload          log_entry       = 3;
-    MetricPayload            metric          = 4;
-    HealthCheckResultPayload health_result   = 5;
-    ProfileDataPayload       profile_data    = 6;
-    ContainerListPayload     container_list  = 7;
+    JobResultPayload         job_result       = 1;
+    HeartbeatPayload         heartbeat        = 2;
+    LogEntryPayload          log_entry        = 3;
+    MetricPayload            metric           = 4;
+    HealthCheckResultPayload health_result    = 5;
+    ProfileDataPayload       profile_data     = 6;
+    ContainerListPayload     container_list   = 7;
+    LogDiagnosticPayload     log_diagnostic   = 8;
   }
 }
 
@@ -76,14 +77,15 @@ message MetricPayload {
 
 message ServerMessage {
   oneof payload {
-    ExecuteJobPayload         execute_job           = 1;
-    StreamLogsPayload         stream_logs           = 2;
-    StopLogsPayload           stop_logs             = 3;
+    ExecuteJobPayload           execute_job            = 1;
+    StreamLogsPayload           stream_logs            = 2;
+    StopLogsPayload             stop_logs              = 3;
     ConfigureHealthCheckPayload configure_health_check = 4;
-    StopHealthCheckPayload    stop_health_check     = 5;
-    RequestProfilePayload     request_profile       = 6;
-    StreamContainersPayload   stream_containers     = 7;
-    StopContainersPayload     stop_containers       = 8;
+    StopHealthCheckPayload      stop_health_check      = 5;
+    RequestProfilePayload       request_profile        = 6;
+    StreamContainersPayload     stream_containers      = 7;
+    StopContainersPayload       stop_containers        = 8;
+    CollectLogsPayload          collect_logs           = 9;
   }
 }
 
@@ -218,6 +220,31 @@ message MetricRequest {
 
 message MetricResponse {
   bool success = 1;
+}
+
+// ─── Log Diagnostics (server → agent, then agent → server) ──────────────────
+
+// Server asks agent to collect, sanitize and prepare a diagnostic log bundle.
+message CollectLogsPayload {
+  string   request_id          = 1;  // correlation UUID
+  repeated string sources      = 2;  // e.g. ["autohost-agent", "docker:nginx"]
+  int32    lines_per_source    = 3;  // max lines per source (default 200, max 500)
+  bool     include_containers  = 4;  // also collect all running container logs
+}
+
+// Agent returns sanitized logs + local pattern analysis to the server.
+message LogDiagnosticPayload {
+  string                   request_id       = 1;  // correlation UUID
+  string                   diagnostic_json  = 2;  // full JSON diagnostic report
+  repeated LogSourceBundle sources          = 3;  // raw sanitized log bundles
+  string                   error            = 4;  // non-empty if collection failed
+}
+
+// One log source within a diagnostic bundle.
+message LogSourceBundle {
+  string source     = 1;  // e.g. "journalctl:autohost-agent" or "docker:nginx"
+  string raw_logs   = 2;  // sanitized log text
+  int32  line_count = 3;
 }
 
 // ─── Service ─────────────────────────────────────────────────────────────────

@@ -144,7 +144,7 @@ func setupTestRouter() (*chi.Mux, *MockNodeRepo, *MockProjectRepo) {
 	containerMetricSvc := containermetric.NewService(&MockContainerMetricRepo{})
 
 	nodeHandler := handler.NewNodeHandler(nodeSvc, nodeTokenSvc)
-	projHandler := handler.NewProjectHandler(projSvc, nodeSvc)
+	projHandler := handler.NewProjectHandler(projSvc, nodeSvc, nil)
 	caddyHandler := handler.NewCaddyRouteHandler(caddySvc, nil, nil, nodeSvc)
 	containerHandler := handler.NewNodeContainerHandler(nil, nodeSvc, containerMetricSvc)
 	logHandler := handler.NewNodeLogHandler(nil, nodeSvc)

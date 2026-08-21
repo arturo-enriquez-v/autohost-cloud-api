@@ -14,6 +14,7 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/domain/job"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -26,6 +27,7 @@ type BackupHandler struct {
 	jobSvc     *job.Service
 	dispatcher ParamDispatcher
 	nodeSvc    *node.Service
+	planSvc    *plan.Service
 }
 
 func NewBackupHandler(
@@ -33,12 +35,14 @@ func NewBackupHandler(
 	jobSvc *job.Service,
 	dispatcher ParamDispatcher,
 	nodeSvc *node.Service,
+	planSvc *plan.Service,
 ) *BackupHandler {
 	return &BackupHandler{
 		backupSvc:  backupSvc,
 		jobSvc:     jobSvc,
 		dispatcher: dispatcher,
 		nodeSvc:    nodeSvc,
+		planSvc:    planSvc,
 	}
 }
 
@@ -117,6 +121,8 @@ type upsertConfigRequest struct {
 	CronExpression string   `json:"cron_expression"`
 	RetentionCount int      `json:"retention_count"`
 	PauseContainer bool     `json:"pause_container"`
+	BackupMethod   string   `json:"backup_method"`
+	PgUser         string   `json:"pg_user"`
 	Enabled        bool     `json:"enabled"`
 }
 
@@ -146,6 +152,22 @@ func (h *BackupHandler) UpsertConfig(w http.ResponseWriter, r *http.Request) {
 		retention = 7
 	}
 
+	if h.planSvc != nil && req.Enabled {
+		if err := h.planSvc.CheckBackupRetentionLimit(claims.UserID, retention); err != nil {
+			writeJSONError(w, err.Error(), http.StatusForbidden)
+			return
+		}
+	}
+
+	backupMethod := req.BackupMethod
+	if backupMethod != "pg_dump" {
+		backupMethod = "volume"
+	}
+	pgUser := req.PgUser
+	if pgUser == "" {
+		pgUser = "postgres"
+	}
+
 	cfg, err := h.backupSvc.UpsertConfig(&backup.BackupConfig{
 		UserID:         claims.UserID,
 		NodeID:         nodeID,
@@ -154,6 +176,8 @@ func (h *BackupHandler) UpsertConfig(w http.ResponseWriter, r *http.Request) {
 		CronExpression: cronExpr,
 		RetentionCount: retention,
 		PauseContainer: req.PauseContainer,
+		BackupMethod:   backupMethod,
+		PgUser:         pgUser,
 		Enabled:        req.Enabled,
 	})
 	if err != nil {
@@ -197,6 +221,16 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if h.planSvc != nil {
+		usage, err := h.planSvc.GetPlanUsage(claims.UserID)
+		if err == nil {
+			if err := h.planSvc.CheckBackupStorageLimit(claims.UserID, usage.BackupStorageBytes, 0); err != nil {
+				writeJSONError(w, err.Error(), http.StatusForbidden)
+				return
+			}
+		}
+	}
+
 	nodeID := chi.URLParam(r, "nodeId")
 	containerName := chi.URLParam(r, "containerName")
 
@@ -217,6 +251,8 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 			CronExpression: "0 3 * * *",
 			RetentionCount: 7,
 			PauseContainer: true,
+			BackupMethod:   "volume",
+			PgUser:         "postgres",
 			Enabled:        true,
 		})
 		if err != nil {
@@ -230,7 +266,18 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 	_ = json.Unmarshal(cfg.Volumes, &vols)
 
 	nowStr := time.Now().Format("2006-01-02_150405")
-	s3Key := fmt.Sprintf("backups/users/%s/nodes/%s/apps/%s/%s/%s.tar.gz", claims.UserID, nodeID, containerName, nowStr, containerName)
+
+	backupMethod := cfg.BackupMethod
+	if backupMethod == "" {
+		backupMethod = "volume"
+	}
+
+	var s3Key string
+	if backupMethod == "pg_dump" {
+		s3Key = fmt.Sprintf("backups/users/%s/nodes/%s/apps/%s/%s/%s.sql.gz", claims.UserID, nodeID, containerName, nowStr, containerName)
+	} else {
+		s3Key = fmt.Sprintf("backups/users/%s/nodes/%s/apps/%s/%s/%s.tar.gz", claims.UserID, nodeID, containerName, nowStr, containerName)
+	}
 
 	rec, err := h.backupSvc.CreateRecord(&backup.BackupRecord{
 		BackupConfigID: cfg.ID,
@@ -238,6 +285,7 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 		UserID:         claims.UserID,
 		ContainerName:  containerName,
 		S3Key:          s3Key,
+		BackupMethod:   backupMethod,
 		TriggerType:    "manual",
 		Status:         "running",
 	})
@@ -247,21 +295,45 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	params, _ := json.Marshal(map[string]any{
-		"container_name":  containerName,
-		"volumes":         vols,
-		"pause_container": cfg.PauseContainer,
-		"s3": map[string]any{
-			"endpoint":          cred.Endpoint,
-			"bucket":            cred.Bucket,
-			"region":            cred.Region,
-			"access_key_id":     cred.AccessKeyID,
-			"secret_access_key": cred.SecretAccessKey,
-			"s3_key":            s3Key,
-		},
-	})
+	var commandName string
+	var params []byte
 
-	j, err := h.jobSvc.Dispatch(nodeID, "docker.volume.backup", nodecommand.CommandTypeDefault)
+	if backupMethod == "pg_dump" {
+		commandName = "docker.pg.backup"
+		pgUser := cfg.PgUser
+		if pgUser == "" {
+			pgUser = "postgres"
+		}
+		params, _ = json.Marshal(map[string]any{
+			"container_name": containerName,
+			"pg_user":        pgUser,
+			"s3": map[string]any{
+				"endpoint":          cred.Endpoint,
+				"bucket":            cred.Bucket,
+				"region":            cred.Region,
+				"access_key_id":     cred.AccessKeyID,
+				"secret_access_key": cred.SecretAccessKey,
+				"s3_key":            s3Key,
+			},
+		})
+	} else {
+		commandName = "docker.volume.backup"
+		params, _ = json.Marshal(map[string]any{
+			"container_name":  containerName,
+			"volumes":         vols,
+			"pause_container": cfg.PauseContainer,
+			"s3": map[string]any{
+				"endpoint":          cred.Endpoint,
+				"bucket":            cred.Bucket,
+				"region":            cred.Region,
+				"access_key_id":     cred.AccessKeyID,
+				"secret_access_key": cred.SecretAccessKey,
+				"s3_key":            s3Key,
+			},
+		})
+	}
+
+	j, err := h.jobSvc.Dispatch(nodeID, commandName, nodecommand.CommandTypeDefault)
 	if err != nil {
 		_ = h.backupSvc.UpdateRecordStatus(rec.ID, "failed", "", 0, strPtr(err.Error()))
 		log.Printf("[ERROR] dispatch backup job failed: %v", err)
@@ -272,7 +344,7 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 	_ = h.backupSvc.UpdateRecordJobID(rec.ID, j.ID)
 	rec.JobID = &j.ID
 
-	_ = h.dispatcher.DispatchJobWithParams(nodeID, j.ID, "docker.volume.backup", nodecommand.CommandTypeDefault, string(params))
+	_ = h.dispatcher.DispatchJobWithParams(nodeID, j.ID, commandName, nodecommand.CommandTypeDefault, string(params))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(rec)
@@ -307,18 +379,48 @@ func (h *BackupHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 	var vols []string
 	_ = json.Unmarshal(cfg.Volumes, &vols)
 
-	params, _ := json.Marshal(map[string]any{
-		"container_name": rec.ContainerName,
-		"volumes":        vols,
-		"s3": map[string]any{
-			"endpoint":          cred.Endpoint,
-			"bucket":            cred.Bucket,
-			"region":            cred.Region,
-			"access_key_id":     cred.AccessKeyID,
-			"secret_access_key": cred.SecretAccessKey,
-			"s3_key":            rec.S3Key,
-		},
-	})
+	// Determine the restore method from the original backup record
+	restoreMethod := rec.BackupMethod
+	if restoreMethod == "" {
+		restoreMethod = "volume"
+	}
+
+	var restoreCommandName string
+	var params []byte
+
+	if restoreMethod == "pg_dump" {
+		restoreCommandName = "docker.pg.restore"
+		pgUser := cfg.PgUser
+		if pgUser == "" {
+			pgUser = "postgres"
+		}
+		params, _ = json.Marshal(map[string]any{
+			"container_name": rec.ContainerName,
+			"pg_user":        pgUser,
+			"s3": map[string]any{
+				"endpoint":          cred.Endpoint,
+				"bucket":            cred.Bucket,
+				"region":            cred.Region,
+				"access_key_id":     cred.AccessKeyID,
+				"secret_access_key": cred.SecretAccessKey,
+				"s3_key":            rec.S3Key,
+			},
+		})
+	} else {
+		restoreCommandName = "docker.volume.restore"
+		params, _ = json.Marshal(map[string]any{
+			"container_name": rec.ContainerName,
+			"volumes":        vols,
+			"s3": map[string]any{
+				"endpoint":          cred.Endpoint,
+				"bucket":            cred.Bucket,
+				"region":            cred.Region,
+				"access_key_id":     cred.AccessKeyID,
+				"secret_access_key": cred.SecretAccessKey,
+				"s3_key":            rec.S3Key,
+			},
+		})
+	}
 
 	restoreRec, err := h.backupSvc.CreateRecord(&backup.BackupRecord{
 		BackupConfigID: cfg.ID,
@@ -327,6 +429,7 @@ func (h *BackupHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 		ContainerName:  rec.ContainerName,
 		S3Key:          rec.S3Key,
 		FileSizeBytes:  rec.FileSizeBytes,
+		BackupMethod:   restoreMethod,
 		TriggerType:    "restore",
 		Status:         "running",
 	})
@@ -336,7 +439,7 @@ func (h *BackupHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	j, err := h.jobSvc.Dispatch(rec.NodeID, "docker.volume.restore", nodecommand.CommandTypeDefault)
+	j, err := h.jobSvc.Dispatch(rec.NodeID, restoreCommandName, nodecommand.CommandTypeDefault)
 	if err != nil {
 		_ = h.backupSvc.UpdateRecordStatus(restoreRec.ID, "failed", "", 0, strPtr(err.Error()))
 		writeJSONError(w, "failed to dispatch restore job", http.StatusInternalServerError)
@@ -345,7 +448,7 @@ func (h *BackupHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 
 	_ = h.backupSvc.UpdateRecordJobID(restoreRec.ID, j.ID)
 
-	_ = h.dispatcher.DispatchJobWithParams(rec.NodeID, j.ID, "docker.volume.restore", nodecommand.CommandTypeDefault, string(params))
+	_ = h.dispatcher.DispatchJobWithParams(rec.NodeID, j.ID, restoreCommandName, nodecommand.CommandTypeDefault, string(params))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
@@ -411,6 +514,7 @@ func (h *BackupHandler) DownloadBackup(w http.ResponseWriter, r *http.Request) {
 		ContainerName:  rec.ContainerName,
 		S3Key:          rec.S3Key,
 		FileSizeBytes:  rec.FileSizeBytes,
+		BackupMethod:   rec.BackupMethod,
 		TriggerType:    "download",
 		Status:         "completed",
 	})

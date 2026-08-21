@@ -41,6 +41,7 @@ type RouterParams struct {
 	VPNHandler            *handler.VPNHandler
 	NodeNetworkHandler    *handler.NodeNetworkHandler
 	BackupHandler         *handler.BackupHandler
+	LogDiagnosticHandler  *handler.LogDiagnosticHandler
 	NodeTokenService      *nodetoken.Service
 }
 
@@ -91,6 +92,8 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/external-log-tokens", p.ExternalLogHandler.UserTokenRoutes())
 		r.Mount("/vpn", p.VPNHandler.Routes(nodeAuthMiddleware))
 		r.Mount("/backups", p.BackupHandler.Routes())
+		r.Mount("/log-diagnostics", p.LogDiagnosticHandler.Routes())
+		r.Mount("/diagnostics", p.LogDiagnosticHandler.Routes())
 		// Agent → POST /v1/agent/network-stats
 		r.Mount("/agent/network-stats", p.NodeNetworkHandler.Routes(nodeAuthMiddleware))
 		// Frontend → GET /v1/node-network/{nodeId}

@@ -84,19 +84,21 @@ func (r *BackupRepository) DeleteCredential(id, userID string) error {
 func (r *BackupRepository) UpsertConfig(cfg *backup.BackupConfig) (*backup.BackupConfig, error) {
 	var res backup.BackupConfig
 	err := r.db.QueryRowContext(context.Background(), `
-		INSERT INTO backup_configs (user_id, node_id, project_id, container_name, volumes, cron_expression, retention_count, pause_container, storage_credential_id, enabled)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO backup_configs (user_id, node_id, project_id, container_name, volumes, cron_expression, retention_count, pause_container, backup_method, pg_user, storage_credential_id, enabled)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (node_id, container_name) DO UPDATE
 			SET volumes               = EXCLUDED.volumes,
 				cron_expression       = EXCLUDED.cron_expression,
 				retention_count       = EXCLUDED.retention_count,
 				pause_container       = EXCLUDED.pause_container,
+				backup_method         = EXCLUDED.backup_method,
+				pg_user               = EXCLUDED.pg_user,
 				storage_credential_id = EXCLUDED.storage_credential_id,
 				enabled               = EXCLUDED.enabled,
 				updated_at            = NOW()
-		RETURNING id, user_id, node_id, project_id, container_name, volumes, cron_expression, retention_count, pause_container, storage_credential_id, enabled, created_at, updated_at`,
-		cfg.UserID, cfg.NodeID, cfg.ProjectID, cfg.ContainerName, cfg.Volumes, cfg.CronExpression, cfg.RetentionCount, cfg.PauseContainer, cfg.StorageCredentialID, cfg.Enabled,
-	).Scan(&res.ID, &res.UserID, &res.NodeID, &res.ProjectID, &res.ContainerName, &res.Volumes, &res.CronExpression, &res.RetentionCount, &res.PauseContainer, &res.StorageCredentialID, &res.Enabled, &res.CreatedAt, &res.UpdatedAt)
+		RETURNING id, user_id, node_id, project_id, container_name, volumes, cron_expression, retention_count, pause_container, backup_method, pg_user, storage_credential_id, enabled, created_at, updated_at`,
+		cfg.UserID, cfg.NodeID, cfg.ProjectID, cfg.ContainerName, cfg.Volumes, cfg.CronExpression, cfg.RetentionCount, cfg.PauseContainer, cfg.BackupMethod, cfg.PgUser, cfg.StorageCredentialID, cfg.Enabled,
+	).Scan(&res.ID, &res.UserID, &res.NodeID, &res.ProjectID, &res.ContainerName, &res.Volumes, &res.CronExpression, &res.RetentionCount, &res.PauseContainer, &res.BackupMethod, &res.PgUser, &res.StorageCredentialID, &res.Enabled, &res.CreatedAt, &res.UpdatedAt)
 
 	if err != nil {
 		return nil, err
@@ -107,7 +109,7 @@ func (r *BackupRepository) UpsertConfig(cfg *backup.BackupConfig) (*backup.Backu
 func (r *BackupRepository) GetConfigByContainer(nodeID, containerName string) (*backup.BackupConfig, error) {
 	var cfg backup.BackupConfig
 	err := r.db.GetContext(context.Background(), &cfg, `
-		SELECT id, user_id, node_id, project_id, container_name, volumes, cron_expression, retention_count, pause_container, storage_credential_id, enabled, created_at, updated_at
+		SELECT id, user_id, node_id, project_id, container_name, volumes, cron_expression, retention_count, pause_container, backup_method, pg_user, storage_credential_id, enabled, created_at, updated_at
 		FROM backup_configs
 		WHERE node_id = $1 AND container_name = $2`, nodeID, containerName)
 	if err != nil {
@@ -122,7 +124,7 @@ func (r *BackupRepository) GetConfigByContainer(nodeID, containerName string) (*
 func (r *BackupRepository) GetConfigByID(id string) (*backup.BackupConfig, error) {
 	var cfg backup.BackupConfig
 	err := r.db.GetContext(context.Background(), &cfg, `
-		SELECT id, user_id, node_id, project_id, container_name, volumes, cron_expression, retention_count, pause_container, storage_credential_id, enabled, created_at, updated_at
+		SELECT id, user_id, node_id, project_id, container_name, volumes, cron_expression, retention_count, pause_container, backup_method, pg_user, storage_credential_id, enabled, created_at, updated_at
 		FROM backup_configs
 		WHERE id = $1`, id)
 	if err != nil {
@@ -138,12 +140,16 @@ func (r *BackupRepository) GetConfigByID(id string) (*backup.BackupConfig, error
 
 func (r *BackupRepository) CreateRecord(rec *backup.BackupRecord) (*backup.BackupRecord, error) {
 	var res backup.BackupRecord
+	method := rec.BackupMethod
+	if method == "" {
+		method = "volume"
+	}
 	err := r.db.QueryRowContext(context.Background(), `
-		INSERT INTO backup_records (backup_config_id, node_id, user_id, container_name, s3_key, file_size_bytes, trigger_type, status, error_message, started_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-		RETURNING id, backup_config_id, node_id, user_id, container_name, s3_key, file_size_bytes, trigger_type, status, error_message, started_at, completed_at`,
-		rec.BackupConfigID, rec.NodeID, rec.UserID, rec.ContainerName, rec.S3Key, rec.FileSizeBytes, rec.TriggerType, rec.Status, rec.ErrorMessage,
-	).Scan(&res.ID, &res.BackupConfigID, &res.NodeID, &res.UserID, &res.ContainerName, &res.S3Key, &res.FileSizeBytes, &res.TriggerType, &res.Status, &res.ErrorMessage, &res.StartedAt, &res.CompletedAt)
+		INSERT INTO backup_records (backup_config_id, node_id, user_id, container_name, s3_key, file_size_bytes, backup_method, trigger_type, status, error_message, started_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+		RETURNING id, backup_config_id, node_id, user_id, container_name, s3_key, file_size_bytes, backup_method, trigger_type, status, error_message, started_at, completed_at`,
+		rec.BackupConfigID, rec.NodeID, rec.UserID, rec.ContainerName, rec.S3Key, rec.FileSizeBytes, method, rec.TriggerType, rec.Status, rec.ErrorMessage,
+	).Scan(&res.ID, &res.BackupConfigID, &res.NodeID, &res.UserID, &res.ContainerName, &res.S3Key, &res.FileSizeBytes, &res.BackupMethod, &res.TriggerType, &res.Status, &res.ErrorMessage, &res.StartedAt, &res.CompletedAt)
 
 	if err != nil {
 		return nil, err
@@ -182,7 +188,7 @@ func (r *BackupRepository) UpdateRecordJobID(id string, jobID string) error {
 func (r *BackupRepository) ListRecordsByContainer(nodeID, containerName string) ([]*backup.BackupRecord, error) {
 	var recs []*backup.BackupRecord
 	err := r.db.SelectContext(context.Background(), &recs, `
-		SELECT br.id, br.backup_config_id, br.node_id, br.user_id, br.job_id, br.container_name, br.s3_key, br.file_size_bytes, br.trigger_type, br.status, br.error_message, br.started_at, br.completed_at,
+		SELECT br.id, br.backup_config_id, br.node_id, br.user_id, br.job_id, br.container_name, br.s3_key, br.file_size_bytes, br.backup_method, br.trigger_type, br.status, br.error_message, br.started_at, br.completed_at,
 		       u.email AS user_email
 		FROM backup_records br
 		LEFT JOIN users u ON br.user_id = u.id
@@ -197,7 +203,7 @@ func (r *BackupRepository) ListRecordsByContainer(nodeID, containerName string) 
 func (r *BackupRepository) GetRecordByID(id string) (*backup.BackupRecord, error) {
 	var rec backup.BackupRecord
 	err := r.db.GetContext(context.Background(), &rec, `
-		SELECT br.id, br.backup_config_id, br.node_id, br.user_id, br.job_id, br.container_name, br.s3_key, br.file_size_bytes, br.trigger_type, br.status, br.error_message, br.started_at, br.completed_at,
+		SELECT br.id, br.backup_config_id, br.node_id, br.user_id, br.job_id, br.container_name, br.s3_key, br.file_size_bytes, br.backup_method, br.trigger_type, br.status, br.error_message, br.started_at, br.completed_at,
 		       u.email AS user_email
 		FROM backup_records br
 		LEFT JOIN users u ON br.user_id = u.id

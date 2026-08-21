@@ -35,6 +35,8 @@ type BackupConfig struct {
 	CronExpression      string          `db:"cron_expression"       json:"cron_expression"`
 	RetentionCount      int             `db:"retention_count"       json:"retention_count"`
 	PauseContainer      bool            `db:"pause_container"       json:"pause_container"`
+	BackupMethod        string          `db:"backup_method"         json:"backup_method"`
+	PgUser              string          `db:"pg_user"               json:"pg_user"`
 	StorageCredentialID *string         `db:"storage_credential_id" json:"storage_credential_id,omitempty"`
 	Enabled             bool            `db:"enabled"               json:"enabled"`
 	CreatedAt           time.Time       `db:"created_at"            json:"created_at"`
@@ -50,6 +52,7 @@ type BackupRecord struct {
 	ContainerName  string     `db:"container_name"   json:"container_name"`
 	S3Key          string     `db:"s3_key"           json:"s3_key"`
 	FileSizeBytes  int64      `db:"file_size_bytes"  json:"file_size_bytes"`
+	BackupMethod   string     `db:"backup_method"    json:"backup_method"`
 	TriggerType    string     `db:"trigger_type"     json:"trigger_type"`
 	Status         string     `db:"status"           json:"status"`
 	ErrorMessage   *string    `db:"error_message"    json:"error_message,omitempty"`

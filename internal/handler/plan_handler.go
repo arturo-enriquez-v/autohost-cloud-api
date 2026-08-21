@@ -31,6 +31,7 @@ func (h *PlanHandler) Routes() chi.Router {
 		r.Use(middleware.Auth)
 		r.Get("/my-plan", h.GetMyPlan)
 		r.Put("/my-plan", h.ChangePlan)
+		r.Get("/usage", h.GetUsage)
 	})
 
 	return r
@@ -97,3 +98,20 @@ func (h *PlanHandler) ChangePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	response.RespondJSON(w, http.StatusOK, up)
 }
+
+// GetUsage godoc
+// GET /v1/plans/usage
+// Returns the authenticated user's active plan limits and current utilization figures.
+func (h *PlanHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.RequireUserID(w, r)
+	if !ok {
+		return
+	}
+	usage, err := h.service.GetPlanUsage(userID)
+	if err != nil {
+		response.RespondError(w, http.StatusInternalServerError, "failed to retrieve plan usage")
+		return
+	}
+	response.RespondJSON(w, http.StatusOK, usage)
+}
+

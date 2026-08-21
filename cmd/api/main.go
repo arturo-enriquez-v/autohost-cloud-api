@@ -38,6 +38,7 @@ func main() {
 			server.StartGRPCServer,
 			server.StartScheduler,
 			server.StartReportScheduler,
+			server.StartDiagnosticCleanupScheduler,
 		),
 	).Run()
 }
