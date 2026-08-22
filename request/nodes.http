@@ -1,8 +1,0 @@
-@baseUrl = http://localhost:8080/v1
-@access_token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiIyYTM5NmZkNS0wZmQyLTRkYmQtYTg3NC1mYTY1YTRmZDc1ZDciLCJlbWFpbCI6ImRldmVsb3BAZ21haWwuY29tIiwiZXhwIjoxNzY1NDIwNjcyLCJpYXQiOjE3NjU0MTE2NzJ9.JsF-05XtAiR4sggqUkyA1Id_gYTylK9da5zhKV_Dz6M
-GET {{baseUrl}}/nodes
-Authorization: Bearer {{access_token}}
-
-### List Nodes with Metrics
-GET {{baseUrl}}/nodes/with-metrics
-Authorization: Bearer {{access_token}}

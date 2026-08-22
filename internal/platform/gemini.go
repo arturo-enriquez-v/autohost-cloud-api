@@ -11,10 +11,6 @@ import (
 	"google.golang.org/genai"
 )
 
-const (
-	defaultGeminiModel = "gemini-2.5-flash"
-)
-
 const systemPrompt = `You are the central Diagnostics, Observability, and Security engine of AutoHost.
 Your goal is to analyze pre-filtered log streams from servers, Docker containers, microservices, databases, and network traffic to generate accurate, actionable, and structured technical diagnostics in English.
 
@@ -78,14 +74,8 @@ func NewGeminiClient() *GeminiClient {
 	}
 
 	apiKey := strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
-	if apiKey == "" {
-		apiKey = strings.TrimSpace(os.Getenv("GOOGLE_API_KEY"))
-	}
 
 	model := strings.TrimSpace(os.Getenv("GEMINI_MODEL"))
-	if model == "" {
-		model = defaultGeminiModel
-	}
 
 	var clientConfig *genai.ClientConfig
 	if projectID != "" || os.Getenv("GOOGLE_GENAI_USE_VERTEXAI") == "true" || os.Getenv("GOOGLE_GENAI_USE_VERTEXAI") == "1" {
@@ -162,4 +152,3 @@ func (g *GeminiClient) AnalyzeLogs(ctx context.Context, logsText string) (string
 
 	return text, nil
 }
-
