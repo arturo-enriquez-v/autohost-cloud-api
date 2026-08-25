@@ -20,15 +20,10 @@ type Client struct {
 
 func NewClient() *Client {
 	baseURL := os.Getenv("HEADSCALE_URL")
-	if baseURL == "" {
-		baseURL = "https://hs.autohst.dev"
-	}
+
 	baseURL = strings.TrimRight(baseURL, "/")
 
 	apiKey := os.Getenv("HEADSCALE_API_KEY")
-	if apiKey == "" {
-		apiKey = "hskey-api-DRgk2KIjXYtP-iJnY6kWkhLLbPk7DGOUI_vuxSS0vYIFTX3tY2DLwGq0Axiag_h-ZxZAGZwijzVKT"
-	}
 
 	return &Client{
 		baseURL: baseURL,
