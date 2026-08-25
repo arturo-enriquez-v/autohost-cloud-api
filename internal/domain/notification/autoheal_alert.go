@@ -280,25 +280,41 @@ func (s *Service) SendAutoHealTransitionAlert(ctx context.Context, ac AutoHealAl
 	}
 
 	// 4. Recovered to HEALTHY after having experienced issues / AutoHeal actions
-	if ac.NewState.Status == "HEALTHY" &&
+	if ac.NewState.Status == "HEALTHY" && ac.OldState.Status != "HEALTHY" &&
 		(ac.OldState.Status == "COOLING_DOWN" ||
 			ac.OldState.Status == "DEGRADED" ||
 			ac.OldState.Status == "CRITICAL_FAILED" ||
+			ac.OldState.Status == "RESTARTING" ||
+			ac.OldState.Status == "RECREATING" ||
 			len(ac.OldState.RestartTimestamps) > 0 ||
-			ac.OldState.RecreateAttempts > 0) {
+			ac.OldState.RecreateAttempts > 0 ||
+			ac.OldState.FailureStartedAt != nil) {
 
-		outageStarted := formatTimestamp(ac.OldState.FailureStartedAt, now.Add(-time.Minute))
-		recoveredAt := formatTimestamp(ac.NewState.RecoveredAt, now)
+		failureStartedTs := ac.NewState.FailureStartedAt
+		if failureStartedTs == nil {
+			failureStartedTs = ac.OldState.FailureStartedAt
+		}
+		recoveredTs := ac.NewState.RecoveredAt
+		if recoveredTs == nil {
+			recoveredTs = ac.OldState.RecoveredAt
+		}
+
+		outageStarted := formatTimestamp(failureStartedTs, now.Add(-time.Minute))
+		recoveredAt := formatTimestamp(recoveredTs, now)
 
 		var totalDowntime string
-		if ac.OldState.FailureStartedAt != nil {
+		if failureStartedTs != nil {
 			var endTime int64
-			if ac.NewState.RecoveredAt != nil {
-				endTime = *ac.NewState.RecoveredAt
+			if recoveredTs != nil {
+				endTime = *recoveredTs
 			} else {
 				endTime = now.Unix()
 			}
-			totalDowntime = formatDuration(endTime - *ac.OldState.FailureStartedAt)
+			diff := endTime - *failureStartedTs
+			if diff < 0 {
+				diff = 0
+			}
+			totalDowntime = formatDuration(diff)
 		} else {
 			totalDowntime = "< 1 minute"
 		}
