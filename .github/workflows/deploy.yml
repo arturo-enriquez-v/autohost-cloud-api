@@ -30,7 +30,7 @@ jobs:
           context: .
           file: Dockerfile
           push: true
-          tags: ghcr.io/mazapanuwu13/autohost-cloud-api:latest
+          tags: ghcr.io/arturo-enriquez-v/autohost-cloud-api:latest
 
   deploy:
     name: 🚀 Deploy API (Runner)
@@ -42,7 +42,7 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Pull imagen API
-        run: docker pull ghcr.io/mazapanuwu13/autohost-cloud-api:latest
+        run: docker pull ghcr.io/arturo-enriquez-v/autohost-cloud-api:latest
 
       - name: Reiniciar servicio API
         run: docker compose -f ~/prod/autohost-cloud-api/compose.yml up -d
