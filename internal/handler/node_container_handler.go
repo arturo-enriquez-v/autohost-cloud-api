@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
+	containersetting "github.com/arturo/autohost-cloud-api/internal/domain/container_setting"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
@@ -21,17 +22,20 @@ type NodeContainerHandler struct {
 	grpc               *grpcserver.NodeAgentServer
 	nodeSvc            *node.Service
 	containerMetricSvc *containermetric.Service
+	settingSvc         *containersetting.Service
 }
 
 func NewNodeContainerHandler(
 	grpc *grpcserver.NodeAgentServer,
 	nodeSvc *node.Service,
 	containerMetricSvc *containermetric.Service,
+	settingSvc *containersetting.Service,
 ) *NodeContainerHandler {
 	return &NodeContainerHandler{
 		grpc:               grpc,
 		nodeSvc:            nodeSvc,
 		containerMetricSvc: containerMetricSvc,
+		settingSvc:         settingSvc,
 	}
 }
 
@@ -41,6 +45,8 @@ func (h *NodeContainerHandler) Routes() http.Handler {
 		protected.Use(middleware.Auth)
 		protected.Get("/{nodeId}/stream", h.streamContainers)
 		protected.Get("/{nodeId}/metrics", h.getContainerMetrics)
+		protected.Get("/{nodeId}/settings", h.getContainerSettings)
+		protected.Put("/{nodeId}/settings", h.updateContainerSettings)
 	})
 	return r
 }
@@ -233,5 +239,88 @@ func (h *NodeContainerHandler) getContainerMetrics(w http.ResponseWriter, r *htt
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(points)
+}
+
+type updateContainerSettingsRequest struct {
+	SortOrder        []string        `json:"sort_order"`
+	LockedContainers map[string]bool `json:"locked_containers"`
+}
+
+func (h *NodeContainerHandler) getContainerSettings(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.UserID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	nodeID := chi.URLParam(r, "nodeId")
+	if h.nodeSvc != nil {
+		n, err := h.nodeSvc.GetByID(nodeID)
+		if err != nil || n == nil {
+			http.Error(w, "node not found", http.StatusNotFound)
+			return
+		}
+		if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
+
+	if h.settingSvc == nil {
+		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	settings, err := h.settingSvc.GetByNodeID(r.Context(), nodeID)
+	if err != nil {
+		log.Printf("[ERROR] get container settings for node %s: %v", nodeID, err)
+		http.Error(w, "could not fetch container settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(settings)
+}
+
+func (h *NodeContainerHandler) updateContainerSettings(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.UserID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	nodeID := chi.URLParam(r, "nodeId")
+	if h.nodeSvc != nil {
+		n, err := h.nodeSvc.GetByID(nodeID)
+		if err != nil || n == nil {
+			http.Error(w, "node not found", http.StatusNotFound)
+			return
+		}
+		if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
+
+	if h.settingSvc == nil {
+		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req updateContainerSettingsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	saved, err := h.settingSvc.Save(r.Context(), nodeID, req.SortOrder, req.LockedContainers)
+	if err != nil {
+		log.Printf("[ERROR] update container settings for node %s: %v", nodeID, err)
+		http.Error(w, "could not save container settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(saved)
 }
 

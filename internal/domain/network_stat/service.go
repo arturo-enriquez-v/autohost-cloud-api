@@ -19,6 +19,12 @@ func NewService(repo Repository) *Service {
 
 // Ingest stores a new snapshot from the agent.
 func (s *Service) Ingest(ctx context.Context, nodeID string, payload *IngestPayload) error {
+	_, err := s.IngestAndBuild(ctx, nodeID, payload)
+	return err
+}
+
+// IngestAndBuild stores a new snapshot from the agent and returns the constructed NodeNetworkStats.
+func (s *Service) IngestAndBuild(ctx context.Context, nodeID string, payload *IngestPayload) (*NodeNetworkStats, error) {
 	var rxBytes, txBytes, rxDropped, txDropped, rxErrors, txErrors int64
 	for _, iface := range payload.Interfaces {
 		rxBytes += iface.RxBytes
@@ -44,7 +50,10 @@ func (s *Service) Ingest(ctx context.Context, nodeID string, payload *IngestPayl
 		Connections: payload.Connections,
 		Requests:    payload.Requests,
 	}
-	return s.repo.Upsert(ctx, snap)
+	if err := s.repo.Upsert(ctx, snap); err != nil {
+		return nil, err
+	}
+	return snap, nil
 }
 
 // GetLatest returns the most recent snapshot for a node.

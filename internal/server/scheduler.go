@@ -73,3 +73,26 @@ func StartDiagnosticCleanupScheduler(lc fx.Lifecycle, sched *scheduler.Diagnosti
 		},
 	})
 }
+
+func StartAutoscalerScheduler(lc fx.Lifecycle, sched *scheduler.AutoscalerScheduler) {
+	var cancel context.CancelFunc
+
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			var schedCtx context.Context
+			schedCtx, cancel = context.WithCancel(context.Background())
+
+			log.Println("Iniciando AutoscalerScheduler en segundo plano...")
+			go sched.Start(schedCtx)
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			log.Println("Deteniendo AutoscalerScheduler...")
+			if cancel != nil {
+				cancel()
+			}
+			return nil
+		},
+	})
+}
+

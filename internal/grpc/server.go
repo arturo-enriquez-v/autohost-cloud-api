@@ -19,6 +19,7 @@ import (
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
 	sm "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
+	networkstat "github.com/arturo/autohost-cloud-api/internal/domain/network_stat"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
 	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
 	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
@@ -54,11 +55,15 @@ type NodeAgentServer struct {
 	containerMetricSvc *containermetric.Service
 	backupSvc          *backup.Service
 	logDiagnosticSvc   *logdiagnostic.Service
+	networkStatSvc     *networkstat.Service
 
 	registry        *streamRegistry
 	logs            *logBroker
 	metricBroker    *metricBroker
 	containerBroker *containerBroker
+
+	networkStatsMu      sync.Mutex
+	networkStatsPending map[string]chan *networkStatsResponse
 
 	// metricPersistMu guards metricLastPersist to throttle DB writes.
 	metricPersistMu   sync.Mutex
@@ -81,26 +86,29 @@ func NewNodeAgentServer(
 	notificationSvc *notification.Service,
 	backupSvc *backup.Service,
 	logDiagnosticSvc *logdiagnostic.Service,
+	networkStatSvc *networkstat.Service,
 ) *NodeAgentServer {
 	reg := newStreamRegistry()
 	s := &NodeAgentServer{
-		commandSvc:         commandSvc,
-		jobSvc:             jobSvc,
-		tokenSvc:           tokenSvc,
-		alertSvc:           alertSvc,
-		alertEventSvc:      alertEventSvc,
-		nodeSvc:            nodeSvc,
-		metricSvc:          metricSvc,
-		containerMetricSvc: containerMetricSvc,
-		registry:           reg,
-		marketplaceRepo:    marketplaceRepo,
-		serviceMonitorSvc:  serviceMonitorSvc,
-		authSvc:            authSvc,
-		notificationSvc:    notificationSvc,
-		backupSvc:          backupSvc,
-		logDiagnosticSvc:   logDiagnosticSvc,
-		metricBroker:       newMetricBroker(),
-		metricLastPersist:  make(map[string]time.Time),
+		commandSvc:          commandSvc,
+		jobSvc:              jobSvc,
+		tokenSvc:            tokenSvc,
+		alertSvc:            alertSvc,
+		alertEventSvc:       alertEventSvc,
+		nodeSvc:             nodeSvc,
+		metricSvc:           metricSvc,
+		containerMetricSvc:  containerMetricSvc,
+		registry:            reg,
+		marketplaceRepo:     marketplaceRepo,
+		serviceMonitorSvc:   serviceMonitorSvc,
+		authSvc:             authSvc,
+		notificationSvc:     notificationSvc,
+		backupSvc:           backupSvc,
+		logDiagnosticSvc:    logDiagnosticSvc,
+		networkStatSvc:      networkStatSvc,
+		networkStatsPending: make(map[string]chan *networkStatsResponse),
+		metricBroker:        newMetricBroker(),
+		metricLastPersist:   make(map[string]time.Time),
 	}
 	s.logs = newLogBroker(reg.sendToNode)
 	s.containerBroker = newContainerBroker(reg.sendToNode)
@@ -367,6 +375,9 @@ func (s *NodeAgentServer) Connect(
 
 		case *pb.NodeMessage_LogDiagnostic:
 			go s.handleLogDiagnosticResult(nodeID, p.LogDiagnostic)
+
+		case *pb.NodeMessage_NetworkStats:
+			go s.handleNetworkStatsResult(nodeID, p.NetworkStats)
 
 		default:
 			log.Printf("[gRPC] unknown payload from node %s", nodeID)

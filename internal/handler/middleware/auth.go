@@ -99,6 +99,10 @@ func GetClaims(ctx context.Context) *Claims {
 	return nil
 }
 
+func ContextWithClaims(ctx context.Context, claims *Claims) context.Context {
+	return context.WithValue(ctx, claimsKey, claims)
+}
+
 func mustJWTSecret() []byte {
 	s := strings.TrimSpace(os.Getenv("JWT_SECRET"))
 	if s == "" {
