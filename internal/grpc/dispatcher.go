@@ -38,6 +38,8 @@ func (s *NodeAgentServer) DispatchJobWithParams(
 		ct = pb.CommandType_COMMAND_TYPE_CUSTOM
 	case nodecommand.CommandTypeInstallApp:
 		ct = pb.CommandType_COMMAND_TYPE_INSTALL_APP
+	case nodecommand.CommandTypeSwarm:
+		ct = pb.CommandType_COMMAND_TYPE_SWARM
 	}
 	msg := &pb.ServerMessage{
 		Payload: &pb.ServerMessage_ExecuteJob{

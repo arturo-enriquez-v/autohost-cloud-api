@@ -12,6 +12,7 @@ const (
 	CommandTypeDefault    CommandType = "default"
 	CommandTypeCustom     CommandType = "custom"
 	CommandTypeInstallApp CommandType = "install_app"
+	CommandTypeSwarm      CommandType = "swarm"
 )
 
 var (

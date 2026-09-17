@@ -1,16 +1,19 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	networkstat "github.com/arturo/autohost-cloud-api/internal/domain/network_stat"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 )
 
@@ -19,10 +22,11 @@ import (
 type NodeNetworkHandler struct {
 	svc     *networkstat.Service
 	nodeSvc *node.Service
+	grpc    *grpcserver.NodeAgentServer
 }
 
-func NewNodeNetworkHandler(svc *networkstat.Service, nodeSvc *node.Service) *NodeNetworkHandler {
-	return &NodeNetworkHandler{svc: svc, nodeSvc: nodeSvc}
+func NewNodeNetworkHandler(svc *networkstat.Service, nodeSvc *node.Service, grpc *grpcserver.NodeAgentServer) *NodeNetworkHandler {
+	return &NodeNetworkHandler{svc: svc, nodeSvc: nodeSvc, grpc: grpc}
 }
 
 func (h *NodeNetworkHandler) Routes(nodeAuthMiddleware func(http.Handler) http.Handler) chi.Router {
@@ -95,6 +99,19 @@ func (h *NodeNetworkHandler) GetLatest(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
+	}
+
+	// Try on-demand retrieval from connected agent via gRPC
+	if h.grpc != nil && h.grpc.IsNodeConnected(nodeID) {
+		ctxReq, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		snap, err := h.grpc.RequestNetworkStats(ctxReq, nodeID)
+		if err == nil && snap != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(snap)
+			return
+		}
+		log.Printf("[WARN] on-demand network stats for node %s failed (%v), falling back to DB", nodeID, err)
 	}
 
 	snap, err := h.svc.GetLatest(r.Context(), nodeID)

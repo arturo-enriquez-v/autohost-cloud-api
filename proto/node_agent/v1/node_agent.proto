@@ -10,6 +10,7 @@ enum CommandType {
   COMMAND_TYPE_DEFAULT     = 0;
   COMMAND_TYPE_CUSTOM      = 1;
   COMMAND_TYPE_INSTALL_APP = 2;
+  COMMAND_TYPE_SWARM       = 3;
 }
 
 // ProfileType selects what the agent should sample.
@@ -56,6 +57,7 @@ message NodeMessage {
     ProfileDataPayload       profile_data     = 6;
     ContainerListPayload     container_list   = 7;
     LogDiagnosticPayload     log_diagnostic   = 8;
+    NetworkStatsPayload      network_stats    = 9;
   }
 }
 
@@ -86,6 +88,7 @@ message ServerMessage {
     StreamContainersPayload     stream_containers      = 7;
     StopContainersPayload       stop_containers        = 8;
     CollectLogsPayload          collect_logs           = 9;
+    RequestNetworkStatsPayload  request_network_stats  = 10;
   }
 }
 
@@ -245,6 +248,18 @@ message LogSourceBundle {
   string source     = 1;  // e.g. "journalctl:autohost-agent" or "docker:nginx"
   string raw_logs   = 2;  // sanitized log text
   int32  line_count = 3;
+}
+
+// ─── Network Stats (server → agent, then agent → server, on-demand) ─────────
+
+message RequestNetworkStatsPayload {
+  string request_id = 1;
+}
+
+message NetworkStatsPayload {
+  string request_id = 1;
+  string stats_json = 2;  // JSON-encoded IngestPayload
+  string error      = 3;
 }
 
 // ─── Service ─────────────────────────────────────────────────────────────────

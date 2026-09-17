@@ -2,9 +2,12 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
+	containersetting "github.com/arturo/autohost-cloud-api/internal/domain/container_setting"
 	"github.com/arturo/autohost-cloud-api/internal/domain/job"
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
@@ -19,14 +22,20 @@ type NodeDispatcher interface {
 
 // JobHandler handles job dispatch and status queries.
 type JobHandler struct {
-	jobService *job.Service
-	dispatcher NodeDispatcher
+	jobService          *job.Service
+	dispatcher          NodeDispatcher
+	containerSettingSvc *containersetting.Service
 }
 
-func NewJobHandler(jobService *job.Service, dispatcher NodeDispatcher) *JobHandler {
+func NewJobHandler(
+	jobService *job.Service,
+	dispatcher NodeDispatcher,
+	containerSettingSvc *containersetting.Service,
+) *JobHandler {
 	return &JobHandler{
-		jobService: jobService,
-		dispatcher: dispatcher,
+		jobService:          jobService,
+		dispatcher:          dispatcher,
+		containerSettingSvc: containerSettingSvc,
 	}
 }
 
@@ -59,6 +68,18 @@ func (h *JobHandler) Dispatch(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.NodeID == "" || req.CommandName == "" {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
+	}
+
+	// Validate whether container action is locked
+	if strings.HasPrefix(req.CommandName, "container.") {
+		parts := strings.Split(req.CommandName, ".")
+		if len(parts) >= 3 && (parts[1] == "start" || parts[1] == "stop" || parts[1] == "restart") {
+			containerName := strings.Join(parts[2:], ".")
+			if h.containerSettingSvc != nil && h.containerSettingSvc.IsContainerLocked(r.Context(), req.NodeID, containerName) {
+				http.Error(w, fmt.Sprintf("action blocked: container '%s' is locked", containerName), http.StatusForbidden)
+				return
+			}
+		}
 	}
 
 	j, err := h.jobService.Dispatch(req.NodeID, req.CommandName, req.CommandType)

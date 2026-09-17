@@ -5,28 +5,30 @@ import (
 
 	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
 	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
+	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
 	caddyroute "github.com/arturo/autohost-cloud-api/internal/domain/caddy_route"
+	clusterdomain "github.com/arturo/autohost-cloud-api/internal/domain/cluster"
+	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
+	containersetting "github.com/arturo/autohost-cloud-api/internal/domain/container_setting"
 	"github.com/arturo/autohost-cloud-api/internal/domain/enrollment"
+	externallog "github.com/arturo/autohost-cloud-api/internal/domain/external_log"
 	"github.com/arturo/autohost-cloud-api/internal/domain/job"
+	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
 	"github.com/arturo/autohost-cloud-api/internal/domain/marketplace"
+	networkstat "github.com/arturo/autohost-cloud-api/internal/domain/network_stat"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
-	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
+	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
 	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
 	projectdomain "github.com/arturo/autohost-cloud-api/internal/domain/project"
 	reportsettings "github.com/arturo/autohost-cloud-api/internal/domain/report_settings"
-	externallog "github.com/arturo/autohost-cloud-api/internal/domain/external_log"
-	networkstat "github.com/arturo/autohost-cloud-api/internal/domain/network_stat"
 	scheduledtask "github.com/arturo/autohost-cloud-api/internal/domain/scheduled_task"
 	servicemonitor "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	telegrambot "github.com/arturo/autohost-cloud-api/internal/domain/telegram_bot"
-	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
 	"github.com/arturo/autohost-cloud-api/internal/domain/vpn"
-	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
-	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
@@ -59,6 +61,9 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewExternalLogRepository, fx.As(new(externallog.Repository))),
 	fx.Annotate(postgres.NewBackupRepository, fx.As(new(backup.Repository))),
 	fx.Annotate(postgres.NewLogDiagnosticRepository, fx.As(new(logdiagnostic.Repository))),
+	fx.Annotate(postgres.NewClusterRepository, fx.As(new(clusterdomain.Repository))),
+	fx.Annotate(postgres.NewContainerSettingRepository, fx.As(new(containersetting.Repository))),
+	fx.Annotate(postgres.NewNotificationMarkerRepository, fx.As(new(notification.MarkerRepository))),
 )
 
 var ServiceModule = fx.Provide(
@@ -66,6 +71,7 @@ var ServiceModule = fx.Provide(
 	node.NewService,
 	nodemetric.NewService,
 	containermetric.NewService,
+	containersetting.NewService,
 	enrollment.NewService,
 	nodetoken.NewService,
 	nodecommand.NewService,
@@ -85,6 +91,11 @@ var ServiceModule = fx.Provide(
 	notification.NewService,
 	backup.NewService,
 	logdiagnostic.NewService,
+	fx.Annotate(
+		func(repo clusterdomain.Repository, nodeRepo node.Repository, jobService *job.Service, grpc *grpcserver.NodeAgentServer) *clusterdomain.Service {
+			return clusterdomain.NewService(repo, nodeRepo, jobService, grpc)
+		},
+	),
 )
 
 var HandlerModule = fx.Provide(
@@ -113,6 +124,8 @@ var HandlerModule = fx.Provide(
 	handler.NewNodeNetworkHandler,
 	handler.NewBackupHandler,
 	handler.NewLogDiagnosticHandler,
+	handler.NewClusterHandler,
+	handler.NewNotificationHandler,
 )
 
 var InfraModule = fx.Provide(
@@ -137,6 +150,11 @@ var InfraModule = fx.Provide(
 	scheduler.NewScheduler,
 	scheduler.NewReportScheduler,
 	scheduler.NewDiagnosticCleanupScheduler,
+	fx.Annotate(
+		func(repo clusterdomain.Repository, jobSvc *job.Service, grpc *grpcserver.NodeAgentServer) *scheduler.AutoscalerScheduler {
+			return scheduler.NewAutoscalerScheduler(repo, jobSvc, grpc)
+		},
+	),
 	// Wire NodeReportHandler as ReportTrigger for the ReportScheduler.
 	fx.Annotate(
 		func(h *handler.NodeReportHandler) scheduler.ReportTrigger { return h },

@@ -7,10 +7,16 @@ import (
 )
 
 func pbCommandType(t pb.CommandType) nodecommand.CommandType {
-	if t == pb.CommandType_COMMAND_TYPE_CUSTOM {
+	switch t {
+	case pb.CommandType_COMMAND_TYPE_CUSTOM:
 		return nodecommand.CommandTypeCustom
+	case pb.CommandType_COMMAND_TYPE_INSTALL_APP:
+		return nodecommand.CommandTypeInstallApp
+	case pb.CommandType_COMMAND_TYPE_SWARM:
+		return nodecommand.CommandTypeSwarm
+	default:
+		return nodecommand.CommandTypeDefault
 	}
-	return nodecommand.CommandTypeDefault
 }
 
 func pbJobStatus(s pb.JobStatus) string {

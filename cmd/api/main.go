@@ -39,6 +39,7 @@ func main() {
 			server.StartScheduler,
 			server.StartReportScheduler,
 			server.StartDiagnosticCleanupScheduler,
+			server.StartAutoscalerScheduler,
 		),
 	).Run()
 }
