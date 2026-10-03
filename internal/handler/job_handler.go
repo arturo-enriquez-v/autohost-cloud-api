@@ -14,12 +14,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// NodeDispatcher abstracts sending an execute_job request to a connected node,
-// regardless of the underlying transport (WebSocket or gRPC).
-type NodeDispatcher interface {
-	DispatchJob(nodeID, jobID, commandName string, commandType nodecommand.CommandType) error
-}
-
 // JobHandler handles job dispatch and status queries.
 type JobHandler struct {
 	jobService          *job.Service
@@ -53,6 +47,7 @@ type dispatchJobRequest struct {
 	NodeID      string                  `json:"node_id"`
 	CommandName string                  `json:"command_name"`
 	CommandType nodecommand.CommandType `json:"command_type"` // "default" | "custom"
+	Params      string                  `json:"params,omitempty"`
 }
 
 // Dispatch creates a pending job and sends an execute_job message to the node.
@@ -82,15 +77,28 @@ func (h *JobHandler) Dispatch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	j, err := h.jobService.Dispatch(req.NodeID, req.CommandName, req.CommandType)
+	var j *job.Job
+	var err error
+	if req.Params != "" {
+		j, err = h.jobService.DispatchWithParams(req.NodeID, req.CommandName, req.CommandType, req.Params)
+	} else {
+		j, err = h.jobService.Dispatch(req.NodeID, req.CommandName, req.CommandType)
+	}
 	if err != nil {
 		log.Printf("[ERROR] dispatch job: %v", err)
 		http.Error(w, "could not create job", http.StatusInternalServerError)
 		return
 	}
 
-	if err := h.dispatcher.DispatchJob(req.NodeID, j.ID, j.CommandName, j.CommandType); err != nil {
-		log.Printf("[WARN] node %s not connected, job %s stays pending: %v", req.NodeID, j.ID, err)
+	var dispatchErr error
+	if pd, ok := h.dispatcher.(ParamDispatcher); ok && req.Params != "" {
+		dispatchErr = pd.DispatchJobWithParams(req.NodeID, j.ID, j.CommandName, j.CommandType, req.Params)
+	} else {
+		dispatchErr = h.dispatcher.DispatchJob(req.NodeID, j.ID, j.CommandName, j.CommandType)
+	}
+
+	if dispatchErr != nil {
+		log.Printf("[WARN] node %s not connected, job %s stays pending: %v", req.NodeID, j.ID, dispatchErr)
 		// Job stays pending – future: queue and push on reconnect.
 	}
 

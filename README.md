@@ -80,17 +80,26 @@ make migrate-up
 
 ### 6. Ejecutar la aplicación
 
-**Modo desarrollo (live reload, incluye levantar docker compose):**
+**Modo monolítico (REST + gRPC juntos en un proceso):**
 ```bash
-make run-air
+make dev
 ```
 
-**Modo producción:**
-```bash
-make run
-```
+**Modo desacoplado (idéntico a producción):**
+- **Terminal 1 — REST API / Cloud Run (:8080):**
+  ```bash
+  make dev-rest
+  ```
+- **Terminal 2 — gRPC Server / Compute Engine (:9090):**
+  ```bash
+  make dev-grpc
+  ```
+- **O ambos en paralelo en una sola terminal:**
+  ```bash
+  make dev-split
+  ```
 
-La API estará disponible en `http://localhost:8080`.
+La API REST estará en `http://localhost:8080` y el servidor gRPC en `localhost:9090`.
 
 ---
 

@@ -3,10 +3,14 @@ package grpcserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
 	"github.com/arturo/autohost-cloud-api/internal/domain/job"
@@ -68,6 +72,8 @@ type NodeAgentServer struct {
 	// metricPersistMu guards metricLastPersist to throttle DB writes.
 	metricPersistMu   sync.Mutex
 	metricLastPersist map[string]time.Time // nodeID -> last DB write time
+
+	redis *redis.Client
 }
 
 // NewNodeAgentServer creates a ready-to-register gRPC server.
@@ -87,6 +93,7 @@ func NewNodeAgentServer(
 	backupSvc *backup.Service,
 	logDiagnosticSvc *logdiagnostic.Service,
 	networkStatSvc *networkstat.Service,
+	redis *redis.Client,
 ) *NodeAgentServer {
 	reg := newStreamRegistry()
 	s := &NodeAgentServer{
@@ -106,12 +113,16 @@ func NewNodeAgentServer(
 		backupSvc:           backupSvc,
 		logDiagnosticSvc:    logDiagnosticSvc,
 		networkStatSvc:      networkStatSvc,
+		redis:               redis,
 		networkStatsPending: make(map[string]chan *networkStatsResponse),
 		metricBroker:        newMetricBroker(),
 		metricLastPersist:   make(map[string]time.Time),
 	}
 	s.logs = newLogBroker(reg.sendToNode)
 	s.containerBroker = newContainerBroker(reg.sendToNode)
+	if s.redis != nil {
+		go s.listenContainerCommands()
+	}
 	return s
 }
 
@@ -168,9 +179,15 @@ func (s *NodeAgentServer) Connect(
 
 	ns := &nodeStream{send: make(chan *pb.ServerMessage, 64)}
 	s.registry.register(nodeID, ns)
+	if s.redis != nil {
+		_ = s.redis.Set(context.Background(), fmt.Sprintf("nodes:%s:online", nodeID), "1", 2*time.Minute).Err()
+	}
 	defer func() {
 		s.registry.unregister(nodeID)
 		close(ns.send)
+		if s.redis != nil {
+			_ = s.redis.Del(context.Background(), fmt.Sprintf("nodes:%s:online", nodeID)).Err()
+		}
 		log.Printf("[gRPC] node %s disconnected", nodeID)
 		go s.sendOfflineAlert(nodeID)
 	}()
@@ -269,6 +286,19 @@ func (s *NodeAgentServer) Connect(
 				log.Printf("[gRPC] job %s -> %s (node %s)", r.GetJobId(), r.GetStatus(), nodeID)
 			}
 
+			// Broadcast job completion to Redis for decoupled consumers
+			if s.redis != nil {
+				resData, _ := json.Marshal(map[string]any{
+					"job_id":  r.GetJobId(),
+					"node_id": nodeID,
+					"status":  string(jobStatus),
+					"output":  r.GetOutput(),
+					"error":   r.GetError(),
+				})
+				_ = s.redis.Publish(context.Background(), fmt.Sprintf("nodes:%s:jobs:result", nodeID), resData).Err()
+				_ = s.redis.Publish(context.Background(), fmt.Sprintf("jobs:%s:result", r.GetJobId()), resData).Err()
+			}
+
 			// Update backup_records if this job belongs to a backup/restore operation
 			if s.backupSvc != nil {
 				var outputData struct {
@@ -309,6 +339,9 @@ func (s *NodeAgentServer) Connect(
 			}
 
 		case *pb.NodeMessage_Heartbeat:
+			if s.redis != nil {
+				_ = s.redis.Set(context.Background(), fmt.Sprintf("nodes:%s:online", nodeID), "1", 2*time.Minute).Err()
+			}
 			if err := s.nodeSvc.UpdateLastSeen(nodeID); err != nil {
 				log.Printf("[gRPC] update last_seen for node %s: %v", nodeID, err)
 			} else {
@@ -317,8 +350,32 @@ func (s *NodeAgentServer) Connect(
 
 		case *pb.NodeMessage_Metric:
 			m := p.Metric
+			if s.redis != nil {
+				_ = s.redis.Set(context.Background(), fmt.Sprintf("nodes:%s:online", nodeID), "1", 2*time.Minute).Err()
+			}
 			// Fan-out to live SSE subscribers immediately — zero DB cost.
 			s.metricBroker.fanOut(nodeID, m)
+
+			// Publish to Redis for distributed subscribers (e.g. Cloud Run REST API).
+			if s.redis != nil {
+				payload := map[string]any{
+					"cpu_usage_percent":    m.GetCpuUsagePercent(),
+					"ram_total_bytes":      m.GetRamTotalBytes(),
+					"ram_used_bytes":       m.GetRamUsedBytes(),
+					"ram_available_bytes":  m.GetRamAvailableBytes(),
+					"ram_usage_percent":    m.GetRamUsagePercent(),
+					"disk_total_bytes":     m.GetDiskTotalBytes(),
+					"disk_used_bytes":      m.GetDiskUsedBytes(),
+					"disk_available_bytes": m.GetDiskAvailableBytes(),
+					"disk_usage_percent":   m.GetDiskUsagePercent(),
+					"uptime_seconds":       m.GetUptimeSeconds(),
+					"collected_at":         time.Now().UTC().Format(time.RFC3339),
+				}
+				if data, err := json.Marshal(payload); err == nil {
+					_ = s.redis.Publish(context.Background(), fmt.Sprintf("nodes:%s:metrics", nodeID), data).Err()
+				}
+			}
+
 			// Persist to DB at most once per minute to keep write volume low.
 			if s.shouldPersistMetric(nodeID) {
 				req := &nodemetric.CreateNodeMetricRequest{
@@ -350,6 +407,42 @@ func (s *NodeAgentServer) Connect(
 
 		case *pb.NodeMessage_ContainerList:
 			s.containerBroker.fanOut(nodeID, p.ContainerList)
+			if s.redis != nil && p.ContainerList != nil {
+				type sseContainerInfo struct {
+					ID      string `json:"id"`
+					Name    string `json:"name"`
+					Image   string `json:"image"`
+					State   string `json:"state"`
+					Status  string `json:"status"`
+					CPU     string `json:"cpu,omitempty"`
+					Mem     string `json:"mem,omitempty"`
+					MemPerc string `json:"memPerc,omitempty"`
+				}
+				type sseContainerList struct {
+					Containers []sseContainerInfo `json:"containers"`
+					Error      string             `json:"error,omitempty"`
+				}
+				list := sseContainerList{
+					Error:      p.ContainerList.GetError(),
+					Containers: make([]sseContainerInfo, 0, len(p.ContainerList.GetContainers())),
+				}
+				for _, c := range p.ContainerList.GetContainers() {
+					list.Containers = append(list.Containers, sseContainerInfo{
+						ID:      c.GetId(),
+						Name:    c.GetName(),
+						Image:   c.GetImage(),
+						State:   c.GetState(),
+						Status:  c.GetStatus(),
+						CPU:     c.GetCpu(),
+						Mem:     c.GetMem(),
+						MemPerc: c.GetMemPerc(),
+					})
+				}
+				if data, err := json.Marshal(list); err == nil {
+					_ = s.redis.Set(context.Background(), fmt.Sprintf("nodes:%s:containers:latest", nodeID), data, 10*time.Minute).Err()
+					_ = s.redis.Publish(context.Background(), fmt.Sprintf("nodes:%s:containers", nodeID), data).Err()
+				}
+			}
 			if s.containerMetricSvc != nil && p.ContainerList != nil && len(p.ContainerList.Containers) > 0 {
 				var items []containermetric.ContainerSnapshotItem
 				for _, c := range p.ContainerList.Containers {
@@ -586,4 +679,73 @@ func (s *NodeAgentServer) sendServiceDownAlert(nodeID string, monitor *sm.Servic
 	}
 	message := "🔴 Service DOWN: " + monitor.ServiceName + " on node " + nodeID
 	platform.SendTelegramMessage(alert.TelegramBotToken, alert.TelegramChatID, message) //nolint:errcheck
+}
+
+// listenContainerCommands listens for container stream commands and remote jobs published via Redis.
+func (s *NodeAgentServer) listenContainerCommands() {
+	pubsub := s.redis.PSubscribe(context.Background(), "nodes:*:containers:cmd", "nodes:*:jobs:cmd")
+	defer pubsub.Close()
+
+	ch := pubsub.Channel()
+	for msg := range ch {
+		// msg.Channel format: "nodes:<nodeID>:<scope>:cmd"
+		parts := strings.Split(msg.Channel, ":")
+		if len(parts) >= 4 && parts[0] == "nodes" && parts[3] == "cmd" {
+			targetNodeID := parts[1]
+			scope := parts[2]
+
+			// Only process messages for nodes connected to THIS gRPC instance.
+			// This prevents infinite Redis publish loops on REST servers and inactive gRPC replicas.
+			if s.registry == nil || !s.registry.isConnected(targetNodeID) {
+				continue
+			}
+
+			if scope == "containers" {
+				switch msg.Payload {
+				case "start":
+					log.Printf("[gRPC] received container stream start for node %s via Redis", targetNodeID)
+					if err := s.containerBroker.startStream(targetNodeID); err != nil {
+						log.Printf("[gRPC] start container stream for node %s error: %v", targetNodeID, err)
+					}
+				case "stop":
+					log.Printf("[gRPC] received container stream stop for node %s via Redis", targetNodeID)
+					if err := s.containerBroker.stopStream(targetNodeID); err != nil {
+						log.Printf("[gRPC] stop container stream for node %s error: %v", targetNodeID, err)
+					}
+				}
+			} else if scope == "jobs" {
+				var req struct {
+					JobID       string `json:"job_id"`
+					CommandName string `json:"command_name"`
+					CommandType string `json:"command_type"`
+					Params      string `json:"params"`
+				}
+				if err := json.Unmarshal([]byte(msg.Payload), &req); err == nil {
+					log.Printf("[gRPC] received remote job dispatch for node %s (%s) via Redis -> delivering to node", targetNodeID, req.CommandName)
+					ct := pb.CommandType_COMMAND_TYPE_DEFAULT
+					switch nodecommand.CommandType(req.CommandType) {
+					case nodecommand.CommandTypeCustom:
+						ct = pb.CommandType_COMMAND_TYPE_CUSTOM
+					case nodecommand.CommandTypeInstallApp:
+						ct = pb.CommandType_COMMAND_TYPE_INSTALL_APP
+					case nodecommand.CommandTypeSwarm:
+						ct = pb.CommandType_COMMAND_TYPE_SWARM
+					}
+					serverMsg := &pb.ServerMessage{
+						Payload: &pb.ServerMessage_ExecuteJob{
+							ExecuteJob: &pb.ExecuteJobPayload{
+								JobId:       req.JobID,
+								CommandName: req.CommandName,
+								CommandType: ct,
+								Params:      req.Params,
+							},
+						},
+					}
+					if err := s.SendToNode(targetNodeID, serverMsg); err != nil {
+						log.Printf("[gRPC] send job %s to node %s error: %v", req.JobID, targetNodeID, err)
+					}
+				}
+			}
+		}
+	}
 }
