@@ -35,6 +35,7 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/platform/headscale"
 	"github.com/arturo/autohost-cloud-api/internal/repository/postgres"
 	"github.com/arturo/autohost-cloud-api/internal/scheduler"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/fx"
 )
 
@@ -130,7 +131,7 @@ var HandlerModule = fx.Provide(
 
 var InfraModule = fx.Provide(
 	grpcserver.NewNodeAgentServer,
-	platform.NewRedisClient,
+	provideOptionalRedisClient,
 	platform.NewGeminiClient,
 	headscale.NewClient,
 	// NodeAgentServer also satisfies ParamDispatcher (used by CaddyRoute and Marketplace handlers).
@@ -161,6 +162,18 @@ var InfraModule = fx.Provide(
 	),
 	provideOptionalR2Client,
 )
+
+// provideOptionalRedisClient returns a nil *redis.Client (without error) when
+// Redis connection fails or is unavailable, so fx does not fail on startup.
+// Handlers and services will fall back to in-memory/direct dispatching.
+func provideOptionalRedisClient() *redis.Client {
+	client, err := platform.NewRedisClient()
+	if err != nil {
+		log.Printf("[WARN] redis: no disponible (%v) — funcionando en modo fallback local", err)
+		return nil
+	}
+	return client
+}
 
 // provideOptionalR2Client returns a nil *platform.R2Client (without error) when
 // the R2 environment variables are absent, so fx does not fail on startup.

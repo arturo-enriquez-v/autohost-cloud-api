@@ -332,12 +332,16 @@ func (h *NodeReportHandler) BuildAndPushForUser(ctx context.Context, userID stri
 		return nil, fmt.Errorf("could not build report")
 	}
 
-	if err := h.redis.LPush(ctx, nodeStatusReportKey, data).Err(); err != nil {
-		return nil, fmt.Errorf("could not queue report")
+	if h.redis != nil {
+		if err := h.redis.LPush(ctx, nodeStatusReportKey, data).Err(); err != nil {
+			return nil, fmt.Errorf("could not queue report")
+		}
+		log.Printf("[INFO] node status report queued for user %s: active=%d alerts=%d nodes=%d",
+			userID, activeCount, nodesWithAlerts, len(metricas))
+	} else {
+		log.Printf("[WARN] node status report not queued (redis unavailable) for user %s: active=%d alerts=%d nodes=%d",
+			userID, activeCount, nodesWithAlerts, len(metricas))
 	}
-
-	log.Printf("[INFO] node status report queued for user %s: active=%d alerts=%d nodes=%d",
-		userID, activeCount, nodesWithAlerts, len(metricas))
 
 	return map[string]any{
 		"status":        "queued",
