@@ -1,6 +1,11 @@
 package grpcserver
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
 )
@@ -11,9 +16,17 @@ func (s *NodeAgentServer) SendToNode(nodeID string, msg *pb.ServerMessage) error
 	return s.registry.sendToNode(nodeID, msg)
 }
 
-// IsNodeConnected reports whether the node has an active gRPC Connect stream.
+// IsNodeConnected reports whether the node has an active gRPC Connect stream
+// either locally in this process or tracked via Redis across the cluster.
 func (s *NodeAgentServer) IsNodeConnected(nodeID string) bool {
-	return s.registry.isConnected(nodeID)
+	if s.registry != nil && s.registry.isConnected(nodeID) {
+		return true
+	}
+	if s.redis != nil {
+		val, err := s.redis.Exists(context.Background(), fmt.Sprintf("nodes:%s:online", nodeID)).Result()
+		return err == nil && val > 0
+	}
+	return false
 }
 
 // DispatchJob builds a gRPC ServerMessage and pushes it to the connected node.
@@ -51,6 +64,24 @@ func (s *NodeAgentServer) DispatchJobWithParams(
 			},
 		},
 	}
+	if s.registry != nil && s.registry.isConnected(nodeID) {
+		return s.SendToNode(nodeID, msg)
+	}
+
+	// If running in decoupled mode (REST API), dispatch job through Redis to the gRPC instance holding the node connection
+	if s.redis != nil && s.IsNodeConnected(nodeID) {
+		data, err := json.Marshal(map[string]any{
+			"job_id":       jobID,
+			"command_name": commandName,
+			"command_type": string(commandType),
+			"params":       params,
+		})
+		if err == nil {
+			log.Printf("[gRPC Dispatcher] publishing job %s (%s) for node %s to Redis", jobID, commandName, nodeID)
+			return s.redis.Publish(context.Background(), fmt.Sprintf("nodes:%s:jobs:cmd", nodeID), data).Err()
+		}
+	}
+
 	return s.SendToNode(nodeID, msg)
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"os"
 	"time"
 
 	"github.com/arturo/autohost-cloud-api/internal/domain/cluster"
@@ -35,7 +36,13 @@ func NewAutoscalerScheduler(
 }
 
 // Start runs the periodic evaluation loop for active autoscaling policies.
+// It is disabled by default; set AUTOSCALER_ENABLED=true to enable it.
 func (s *AutoscalerScheduler) Start(ctx context.Context) {
+	if os.Getenv("AUTOSCALER_ENABLED") != "true" {
+		log.Println("[autoscaler] disabled (set AUTOSCALER_ENABLED=true to enable)")
+		return
+	}
+
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 

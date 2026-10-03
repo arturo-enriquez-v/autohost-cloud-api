@@ -14,12 +14,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// ParamDispatcher extends NodeDispatcher with a parameterized dispatch method
-// used by marketplace installs.
-type ParamDispatcher interface {
-	NodeDispatcher
-	DispatchJobWithParams(nodeID, jobID, commandName string, commandType nodecommand.CommandType, params string) error
-}
 
 // InstallAppParams is the JSON payload the agent receives for marketplace installs.
 type InstallAppParams struct {

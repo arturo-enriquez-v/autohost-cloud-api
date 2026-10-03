@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"go.uber.org/fx"
@@ -22,7 +23,12 @@ import (
 func StartGRPCServer(lc fx.Lifecycle, agentServer *grpcserver.NodeAgentServer) {
 	grpcPort := os.Getenv("GRPC_PORT")
 	if grpcPort == "" {
-		grpcPort = "9090"
+		mode := strings.ToLower(strings.TrimSpace(os.Getenv("SERVICE_MODE")))
+		if (mode == "grpc" || mode == "agent") && os.Getenv("PORT") != "" {
+			grpcPort = os.Getenv("PORT")
+		} else {
+			grpcPort = "9090"
+		}
 	}
 
 	recoveryInterceptor := func(p any) error {

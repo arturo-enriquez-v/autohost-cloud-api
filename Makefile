@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: proto build test docker dev run-air migrate-up migrate-down migrate-version migrate-force create-server delete-server list-servers shell-server shell-incus enroll-server link-server restart-incus
+.PHONY: proto build test docker dev dev-rest dev-api dev-grpc dev-split run-air run-air-rest run-air-grpc migrate-up migrate-down migrate-version migrate-force create-server delete-server list-servers shell-server shell-incus enroll-server link-server restart-incus
 
 proto:
 	protoc --go_out=. --go_opt=module=github.com/arturo/autohost-cloud-api \
@@ -15,13 +15,43 @@ test:
 docker:
 	docker build -t autohost-cloud-api .
 
+# Modo monolítico (REST + gRPC juntos en un proceso)
 dev: 
 	-kill -9 $$(lsof -t -i :9090) 2>/dev/null || true
+	-kill -9 $$(lsof -t -i :8080) 2>/dev/null || true
 	$(MAKE) run-air
+
+# Modo desacoplado: Solo REST / HTTP (réplica de Cloud Run en :8080)
+dev-rest:
+	-kill -9 $$(lsof -t -i :8080) 2>/dev/null || true
+	$(MAKE) run-air-rest
+
+dev-api: dev-rest
+
+# Modo desacoplado: Solo gRPC (réplica de Compute Engine / VPS en :9090)
+dev-grpc:
+	-kill -9 $$(lsof -t -i :9090) 2>/dev/null || true
+	$(MAKE) run-air-grpc
+
+# Levantar ambos por separado en paralelo en una sola terminal
+dev-split:
+	@echo "🚀 Iniciando REST (:8080) y gRPC (:9090) en paralelo..."
+	@$(MAKE) -j2 dev-rest dev-grpc
 
 run-air:
 	docker compose up -d
-	$(shell go env GOPATH)/bin/air -c .air.toml
+	mkdir -p tmp
+	SERVICE_MODE=all $(shell go env GOPATH)/bin/air -c .air.toml
+
+run-air-rest:
+	docker compose up -d
+	mkdir -p tmp/http
+	PORT=8080 SERVICE_MODE=http $(shell go env GOPATH)/bin/air -c .air.http.toml
+
+run-air-grpc:
+	docker compose up -d
+	mkdir -p tmp/grpc
+	GRPC_PORT=9090 SERVICE_MODE=grpc $(shell go env GOPATH)/bin/air -c .air.grpc.toml
 
 
 migrate-up:

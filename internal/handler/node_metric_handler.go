@@ -16,6 +16,7 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 	"github.com/go-chi/chi/v5"
+	"github.com/redis/go-redis/v9"
 )
 
 // alertCooldown is the minimum time between repeated alerts for the same
@@ -28,18 +29,27 @@ type NodeMetricHandler struct {
 	nodeService   *node.Service
 	grpc          *grpcserver.NodeAgentServer
 	alertEventSvc *alertevent.Service
+	redis         *redis.Client
 
 	cooldownMu sync.Mutex
 	cooldowns  map[string]time.Time // key: "nodeID:metricName"
 }
 
-func NewNodeMetricHandler(service *nodemetric.Service, alertService *nodealert.Service, nodeService *node.Service, grpc *grpcserver.NodeAgentServer, alertEventSvc *alertevent.Service) *NodeMetricHandler {
+func NewNodeMetricHandler(
+	service *nodemetric.Service,
+	alertService *nodealert.Service,
+	nodeService *node.Service,
+	grpc *grpcserver.NodeAgentServer,
+	alertEventSvc *alertevent.Service,
+	redis *redis.Client,
+) *NodeMetricHandler {
 	return &NodeMetricHandler{
 		service:       service,
 		alertService:  alertService,
 		nodeService:   nodeService,
 		grpc:          grpc,
 		alertEventSvc: alertEventSvc,
+		redis:         redis,
 		cooldowns:     make(map[string]time.Time),
 	}
 }
@@ -255,9 +265,6 @@ func (h *NodeMetricHandler) StreamLiveMetrics(w http.ResponseWriter, r *http.Req
 	// Without this, net/http kills the stream after WriteTimeout (30 s).
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 
-	ch, cancel := h.grpc.SubscribeToNodeMetrics(nodeID)
-	defer cancel()
-
 	log.Printf("[SSE] live metrics stream started for node %s", nodeID)
 
 	fmt.Fprintf(w, ": connected\n\n")
@@ -266,6 +273,38 @@ func (h *NodeMetricHandler) StreamLiveMetrics(w http.ResponseWriter, r *http.Req
 	// Keepalive ticker so the browser knows the connection is alive.
 	keepalive := time.NewTicker(30 * time.Second)
 	defer keepalive.Stop()
+
+	// 1. If Redis is available, subscribe to Redis Pub/Sub (supports distributed Cloud Run + VM gRPC).
+	if h.redis != nil {
+		channel := fmt.Sprintf("nodes:%s:metrics", nodeID)
+		pubsub := h.redis.Subscribe(r.Context(), channel)
+		defer pubsub.Close()
+		redisCh := pubsub.Channel()
+
+		for {
+			select {
+			case <-r.Context().Done():
+				log.Printf("[SSE] live metrics stream closed for node %s", nodeID)
+				return
+
+			case <-keepalive.C:
+				fmt.Fprintf(w, ": keepalive\n\n")
+				flusher.Flush()
+
+			case msg, ok := <-redisCh:
+				if !ok {
+					return
+				}
+				fmt.Fprintf(w, "event: metric\ndata: %s\n\n", msg.Payload)
+				flusher.Flush()
+			}
+		}
+	}
+
+	// 2. Fallback to in-memory broker (monolith local mode without Redis).
+	if h.grpc != nil {
+		ch, cancel := h.grpc.SubscribeToNodeMetrics(nodeID)
+		defer cancel()
 
 	type liveMetric struct {
 		CPUUsagePercent    float32 `json:"cpu_usage_percent"`
@@ -312,5 +351,6 @@ func (h *NodeMetricHandler) StreamLiveMetrics(w http.ResponseWriter, r *http.Req
 			fmt.Fprintf(w, "event: metric\ndata: %s\n\n", data)
 			flusher.Flush()
 		}
+	}
 	}
 }
