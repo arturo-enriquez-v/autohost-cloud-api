@@ -110,6 +110,10 @@ func (b *logBroker) fanOut(nodeID string, entry *pb.LogEntryPayload) {
 
 // startStream sends a StreamLogs command to the agent.
 func (b *logBroker) startStream(nodeID, unit string, lines int32) error {
+	b.mu.Lock()
+	b.params[nodeID] = &logStreamParams{unit: unit, lines: lines}
+	b.mu.Unlock()
+
 	return b.sendCmd(nodeID, &pb.ServerMessage{
 		Payload: &pb.ServerMessage_StreamLogs{
 			StreamLogs: &pb.StreamLogsPayload{Unit: unit, Lines: lines},
@@ -121,6 +125,7 @@ func (b *logBroker) startStream(nodeID, unit string, lines int32) error {
 func (b *logBroker) stopStream(nodeID string) error {
 	b.mu.Lock()
 	delete(b.subs, nodeID)
+	delete(b.params, nodeID)
 	b.mu.Unlock()
 
 	return b.sendCmd(nodeID, &pb.ServerMessage{
@@ -128,4 +133,12 @@ func (b *logBroker) stopStream(nodeID string) error {
 			StopLogs: &pb.StopLogsPayload{},
 		},
 	})
+}
+
+// getParams returns active stream parameters for a node if recorded.
+func (b *logBroker) getParams(nodeID string) (*logStreamParams, bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	p, ok := b.params[nodeID]
+	return p, ok
 }

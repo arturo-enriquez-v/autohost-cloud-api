@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
@@ -21,10 +23,11 @@ import (
 type NodeLogHandler struct {
 	grpc    *grpcserver.NodeAgentServer
 	nodeSvc *node.Service
+	redis   *redis.Client
 }
 
-func NewNodeLogHandler(grpc *grpcserver.NodeAgentServer, nodeSvc *node.Service) *NodeLogHandler {
-	return &NodeLogHandler{grpc: grpc, nodeSvc: nodeSvc}
+func NewNodeLogHandler(grpc *grpcserver.NodeAgentServer, nodeSvc *node.Service, redis *redis.Client) *NodeLogHandler {
+	return &NodeLogHandler{grpc: grpc, nodeSvc: nodeSvc, redis: redis}
 }
 
 func (h *NodeLogHandler) Routes() http.Handler {
@@ -89,15 +92,84 @@ func (h *NodeLogHandler) streamLogs(w http.ResponseWriter, r *http.Request) {
 	// Without this, net/http kills the stream after WriteTimeout (30 s).
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 
-	// Subscribe — this also asks the agent to start streaming if needed.
-	ch, cancel := h.grpc.SubscribeToNodeLogs(nodeID, unit, lines)
-	defer cancel()
-
 	log.Printf("[SSE] log stream started for node %s (unit=%q lines=%d)", nodeID, unit, lines)
 
 	// Send an initial keepalive comment so the browser confirms the connection.
 	fmt.Fprintf(w, ": connected\n\n")
 	flusher.Flush()
+
+	// 1. Decoupled streaming via Redis Pub/Sub (supports distributed Cloud Run + VM gRPC)
+	if h.redis != nil {
+		isOnline := false
+		if val, err := h.redis.Exists(r.Context(), fmt.Sprintf("nodes:%s:online", nodeID)).Result(); err == nil && val > 0 {
+			isOnline = true
+		} else if h.grpc != nil && h.grpc.IsNodeConnected(nodeID) {
+			isOnline = true
+		}
+
+		if !isOnline {
+			fmt.Fprintf(w, "event: server-error\ndata: {\"message\":\"node not connected via gRPC — is the agent running?\"}\n\n")
+			flusher.Flush()
+		}
+
+		// Subscribe to logs for this node
+		pubsub := h.redis.Subscribe(r.Context(), fmt.Sprintf("nodes:%s:logs", nodeID))
+		defer pubsub.Close()
+		redisCh := pubsub.Channel()
+
+		// Request gRPC server to start streaming logs for this node
+		cmdPayload, _ := json.Marshal(map[string]any{
+			"action": "start",
+			"unit":   unit,
+			"lines":  lines,
+		})
+		_ = h.redis.Publish(r.Context(), fmt.Sprintf("nodes:%s:logs:cmd", nodeID), cmdPayload).Err()
+
+		defer func() {
+			stopPayload, _ := json.Marshal(map[string]any{
+				"action": "stop",
+			})
+			_ = h.redis.Publish(context.Background(), fmt.Sprintf("nodes:%s:logs:cmd", nodeID), stopPayload).Err()
+		}()
+
+		keepalive := time.NewTicker(5 * time.Second)
+		defer keepalive.Stop()
+
+		for {
+			select {
+			case <-r.Context().Done():
+				log.Printf("[SSE] log stream closed for node %s", nodeID)
+				return
+
+			case <-keepalive.C:
+				if _, err := fmt.Fprintf(w, ": ping\n\n"); err != nil {
+					log.Printf("[SSE] log stream client disconnected for node %s", nodeID)
+					return
+				}
+				flusher.Flush()
+
+			case msg, ok := <-redisCh:
+				if !ok {
+					return
+				}
+				if _, err := fmt.Fprintf(w, "data: %s\n\n", msg.Payload); err != nil {
+					log.Printf("[SSE] log stream write error for node %s: %v", nodeID, err)
+					return
+				}
+				flusher.Flush()
+			}
+		}
+	}
+
+	// 2. In-memory broker fallback (local dev / monolith mode without Redis)
+	if h.grpc == nil {
+		http.Error(w, "node streaming not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Subscribe — this also asks the agent to start streaming if needed.
+	ch, cancel := h.grpc.SubscribeToNodeLogs(nodeID, unit, lines)
+	defer cancel()
 
 	// Verify the node actually has a live gRPC stream.
 	if !h.grpc.IsNodeConnected(nodeID) {

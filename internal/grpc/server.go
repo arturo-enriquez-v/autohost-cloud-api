@@ -211,6 +211,21 @@ func (s *NodeAgentServer) Connect(
 		} else {
 			log.Printf("[gRPC] re-issued StreamLogs to reconnected node %s", nodeID)
 		}
+	} else if s.redis != nil {
+		channel := fmt.Sprintf("nodes:%s:logs", nodeID)
+		if numMap, err := s.redis.PubSubNumSub(context.Background(), channel).Result(); err == nil && numMap[channel] > 0 {
+			unit := ""
+			lines := int32(100)
+			if p, ok := s.logs.getParams(nodeID); ok && p != nil {
+				unit = p.unit
+				lines = p.lines
+			}
+			if err := s.logs.startStream(nodeID, unit, lines); err != nil {
+				log.Printf("[gRPC] re-start log stream for node %s via Redis: %v", nodeID, err)
+			} else {
+				log.Printf("[gRPC] re-issued StreamLogs (Redis) to reconnected node %s", nodeID)
+			}
+		}
 	}
 
 	// Re-send all enabled health check configs so the agent resumes monitoring
@@ -404,6 +419,16 @@ func (s *NodeAgentServer) Connect(
 
 		case *pb.NodeMessage_LogEntry:
 			s.logs.fanOut(nodeID, p.LogEntry)
+			if s.redis != nil && p.LogEntry != nil {
+				entry := map[string]any{
+					"timestamp_us": p.LogEntry.GetTimestampUs(),
+					"unit":         p.LogEntry.GetUnit(),
+					"message":      p.LogEntry.GetMessage(),
+				}
+				if data, err := json.Marshal(entry); err == nil {
+					_ = s.redis.Publish(context.Background(), fmt.Sprintf("nodes:%s:logs", nodeID), data).Err()
+				}
+			}
 
 		case *pb.NodeMessage_ContainerList:
 			s.containerBroker.fanOut(nodeID, p.ContainerList)
@@ -681,9 +706,9 @@ func (s *NodeAgentServer) sendServiceDownAlert(nodeID string, monitor *sm.Servic
 	platform.SendTelegramMessage(alert.TelegramBotToken, alert.TelegramChatID, message) //nolint:errcheck
 }
 
-// listenContainerCommands listens for container stream commands and remote jobs published via Redis.
+// listenContainerCommands listens for container/log stream commands and remote jobs published via Redis.
 func (s *NodeAgentServer) listenContainerCommands() {
-	pubsub := s.redis.PSubscribe(context.Background(), "nodes:*:containers:cmd", "nodes:*:jobs:cmd")
+	pubsub := s.redis.PSubscribe(context.Background(), "nodes:*:containers:cmd", "nodes:*:jobs:cmd", "nodes:*:logs:cmd")
 	defer pubsub.Close()
 
 	ch := pubsub.Channel()
@@ -711,6 +736,37 @@ func (s *NodeAgentServer) listenContainerCommands() {
 					log.Printf("[gRPC] received container stream stop for node %s via Redis", targetNodeID)
 					if err := s.containerBroker.stopStream(targetNodeID); err != nil {
 						log.Printf("[gRPC] stop container stream for node %s error: %v", targetNodeID, err)
+					}
+				}
+			} else if scope == "logs" {
+				var req struct {
+					Action string `json:"action"` // "start" or "stop"
+					Unit   string `json:"unit"`
+					Lines  int32  `json:"lines"`
+				}
+				if err := json.Unmarshal([]byte(msg.Payload), &req); err != nil {
+					req.Action = msg.Payload
+					req.Lines = 100
+				}
+				switch req.Action {
+				case "start":
+					log.Printf("[gRPC] received log stream start for node %s (unit=%q lines=%d) via Redis", targetNodeID, req.Unit, req.Lines)
+					if err := s.logs.startStream(targetNodeID, req.Unit, req.Lines); err != nil {
+						log.Printf("[gRPC] start log stream for node %s error: %v", targetNodeID, err)
+					}
+				case "stop":
+					log.Printf("[gRPC] received log stream stop for node %s via Redis", targetNodeID)
+					if s.redis != nil {
+						channel := fmt.Sprintf("nodes:%s:logs", targetNodeID)
+						if numMap, err := s.redis.PubSubNumSub(context.Background(), channel).Result(); err == nil {
+							if numMap[channel] > 0 {
+								log.Printf("[gRPC] skipping stop log stream for node %s: %d active subscribers still listening", targetNodeID, numMap[channel])
+								continue
+							}
+						}
+					}
+					if err := s.logs.stopStream(targetNodeID); err != nil {
+						log.Printf("[gRPC] stop log stream for node %s error: %v", targetNodeID, err)
 					}
 				}
 			} else if scope == "jobs" {
