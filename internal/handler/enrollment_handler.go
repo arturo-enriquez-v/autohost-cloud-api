@@ -14,6 +14,7 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
 	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
+	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 	"github.com/go-chi/chi/v5"
@@ -24,10 +25,11 @@ type EnrollmentHandler struct {
 	nodeService      *node.Service
 	nodeTokenService *nodetoken.Service
 	planService      *plan.Service
+	vmRepo           vm.Repository
 }
 
-func NewEnrollmentHandler(service *enrollment.Service, nodeService *node.Service, nodeTokenService *nodetoken.Service, planService *plan.Service) *EnrollmentHandler {
-	return &EnrollmentHandler{service: service, nodeService: nodeService, nodeTokenService: nodeTokenService, planService: planService}
+func NewEnrollmentHandler(service *enrollment.Service, nodeService *node.Service, nodeTokenService *nodetoken.Service, planService *plan.Service, vmRepo vm.Repository) *EnrollmentHandler {
+	return &EnrollmentHandler{service: service, nodeService: nodeService, nodeTokenService: nodeTokenService, planService: planService, vmRepo: vmRepo}
 }
 
 func (h *EnrollmentHandler) Routes() chi.Router {
@@ -176,6 +178,10 @@ func (h *EnrollmentHandler) EnrollNode(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "failed to save api token", http.StatusInternalServerError)
 		return
+	}
+
+	if h.vmRepo != nil {
+		_ = h.vmRepo.LinkNodeByHostname(r.Context(), enroll.UserID, req.Hostname, createdNode.ID, req.IPLocal)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

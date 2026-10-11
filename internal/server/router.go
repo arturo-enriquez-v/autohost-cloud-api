@@ -44,6 +44,8 @@ type RouterParams struct {
 	LogDiagnosticHandler  *handler.LogDiagnosticHandler
 	ClusterHandler        *handler.ClusterHandler
 	NotificationHandler   *handler.NotificationHandler
+	HypervisorHandler     *handler.HypervisorHandler
+	VMHandler             *handler.VMHandler
 	NodeTokenService      *nodetoken.Service
 }
 
@@ -98,6 +100,10 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/diagnostics", p.LogDiagnosticHandler.Routes())
 		r.Mount("/clusters", p.ClusterHandler.Routes())
 		r.Mount("/notifications", p.NotificationHandler.Routes())
+		r.Mount("/hypervisors", p.HypervisorHandler.Routes())
+		r.Mount("/vms", p.VMHandler.VMRoutes())
+		r.Mount("/node-vms", p.VMHandler.NodeVMRoutes())
+		r.Mount("/nodes/{nodeId}/vms", p.VMHandler.NodeVMRoutes())
 		// Agent → POST /v1/agent/network-stats
 		r.Mount("/agent/network-stats", p.NodeNetworkHandler.Routes(nodeAuthMiddleware))
 		// Frontend → GET /v1/node-network/{nodeId}

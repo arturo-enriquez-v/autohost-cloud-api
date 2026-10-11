@@ -58,7 +58,25 @@ message NodeMessage {
     ContainerListPayload     container_list   = 7;
     LogDiagnosticPayload     log_diagnostic   = 8;
     NetworkStatsPayload      network_stats    = 9;
+    HypervisorInfoPayload    hypervisor_info  = 10;
   }
+}
+
+// ─── Hypervisor (agent → server) ─────────────────────────────────────────────
+
+// Reports whether the node can host virtual machines (KVM + libvirt) and how
+// many resources it has available for them. Sent once per Connect session.
+message HypervisorInfoPayload {
+  bool   capable                 = 1;  // true when KVM and libvirt are both usable
+  bool   kvm_available           = 2;  // /dev/kvm is present
+  bool   libvirt_available       = 3;  // virsh can reach qemu:///system
+  string libvirt_version         = 4;
+  string reason                  = 5;  // human-readable cause when capable == false
+  string network_name            = 6;  // libvirt network used for guests (e.g. "default")
+  uint32 cpu_cores               = 7;  // host logical cores
+  uint64 ram_total_bytes         = 8;  // host RAM
+  uint64 storage_total_bytes     = 9;  // size of the VM storage pool filesystem
+  uint64 storage_available_bytes = 10;
 }
 
 // ─── Metric (agent → server, via Connect stream) ─────────────────────────────
