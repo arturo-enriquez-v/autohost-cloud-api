@@ -9,6 +9,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o autohost-cloud-api ./cmd/api
 # Etapa 2: runtime
 FROM gcr.io/distroless/base-debian12
 COPY --from=builder /app/autohost-cloud-api /usr/local/bin/autohost-cloud-api
+LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
 EXPOSE 8080
 
 # USER 65532 es el usuario 'nonroot' preconfigurado por Google en distroless

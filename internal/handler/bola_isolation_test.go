@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package handler_test
 
 import (
@@ -144,7 +147,7 @@ func setupTestRouter() (*chi.Mux, *MockNodeRepo, *MockProjectRepo) {
 	containerMetricSvc := containermetric.NewService(&MockContainerMetricRepo{})
 
 	nodeHandler := handler.NewNodeHandler(nodeSvc, nodeTokenSvc)
-	projHandler := handler.NewProjectHandler(projSvc, nodeSvc, nil)
+	projHandler := handler.NewProjectHandler(projSvc, nodeSvc)
 	caddyHandler := handler.NewCaddyRouteHandler(caddySvc, nil, nil, nodeSvc)
 	containerHandler := handler.NewNodeContainerHandler(nil, nodeSvc, containerMetricSvc, nil, nil)
 	logHandler := handler.NewNodeLogHandler(nil, nodeSvc, nil)

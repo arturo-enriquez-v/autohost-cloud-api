@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package handler
 
 import (
@@ -7,7 +10,6 @@ import (
 	"net/http"
 
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
 	"github.com/arturo/autohost-cloud-api/internal/domain/project"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
@@ -16,11 +18,10 @@ import (
 type ProjectHandler struct {
 	projectService *project.Service
 	nodeService    *node.Service
-	planService    *plan.Service
 }
 
-func NewProjectHandler(projectService *project.Service, nodeService *node.Service, planService *plan.Service) *ProjectHandler {
-	return &ProjectHandler{projectService: projectService, nodeService: nodeService, planService: planService}
+func NewProjectHandler(projectService *project.Service, nodeService *node.Service) *ProjectHandler {
+	return &ProjectHandler{projectService: projectService, nodeService: nodeService}
 }
 
 func (h *ProjectHandler) Routes() chi.Router {
@@ -61,16 +62,6 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if claims == nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
-	}
-
-	if h.planService != nil {
-		projects, err := h.projectService.GetByUser(claims.UserID)
-		if err == nil {
-			if err := h.planService.CheckProjectLimit(claims.UserID, len(projects)); err != nil {
-				http.Error(w, err.Error(), http.StatusForbidden)
-				return
-			}
-		}
 	}
 
 	var req struct {

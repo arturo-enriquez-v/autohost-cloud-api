@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package postgres
 
 import (
@@ -20,16 +23,10 @@ func NewAuthRepository(db *sqlx.DB) *AuthRepository {
 	return &AuthRepository{db: db}
 }
 
-// CreateUser crea un nuevo usuario y le asigna el plan starter de forma atómica.
+// CreateUser crea un nuevo usuario.
 func (r *AuthRepository) CreateUser(email, name, passwordHash string) (string, error) {
-	tx, err := r.db.BeginTxx(context.Background(), nil)
-	if err != nil {
-		return "", fmt.Errorf("auth_repo.CreateUser: begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
 	var id string
-	err = tx.QueryRowContext(context.Background(), `
+	err := r.db.QueryRowContext(context.Background(), `
 		INSERT INTO users (email, name, password_hash)
 		VALUES ($1, $2, $3)
 		RETURNING id`, email, name, passwordHash).Scan(&id)
@@ -37,13 +34,7 @@ func (r *AuthRepository) CreateUser(email, name, passwordHash string) (string, e
 		return "", fmt.Errorf("auth_repo.CreateUser: %w", err)
 	}
 
-	_, err = tx.ExecContext(context.Background(), `
-		INSERT INTO user_subscriptions (user_id, plan_id) VALUES ($1, 'free')`, id)
-	if err != nil {
-		return "", fmt.Errorf("auth_repo.CreateUser: assign starter plan: %w", err)
-	}
-
-	return id, tx.Commit()
+	return id, nil
 }
 
 // FindUserByEmail busca un usuario por email
@@ -156,30 +147,14 @@ func (r *AuthRepository) FindOrCreateOAuthUser(email, name, provider, providerID
 		return userModelToDomain(&model), nil
 	}
 
-	// 3. Crear nuevo usuario (sin password) + asignar plan starter
-	tx, err := r.db.BeginTxx(context.Background(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("auth_repo.FindOrCreateOAuthUser: begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
+	// 3. Crear nuevo usuario (sin password)
 	var id string
-	err = tx.QueryRowContext(context.Background(), `
+	err = r.db.QueryRowContext(context.Background(), `
 		INSERT INTO users (email, name, oauth_provider, oauth_provider_id)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id`, email, name, provider, providerID).Scan(&id)
 	if err != nil {
 		return nil, fmt.Errorf("auth_repo.FindOrCreateOAuthUser: %w", err)
-	}
-
-	_, err = tx.ExecContext(context.Background(), `
-		INSERT INTO user_subscriptions (user_id, plan_id) VALUES ($1, 'free')`, id)
-	if err != nil {
-		return nil, fmt.Errorf("auth_repo.FindOrCreateOAuthUser: assign starter plan: %w", err)
-	}
-
-	if err = tx.Commit(); err != nil {
-		return nil, fmt.Errorf("auth_repo.FindOrCreateOAuthUser: commit: %w", err)
 	}
 
 	return &auth.User{

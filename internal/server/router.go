@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package server
 
 import (
@@ -30,7 +33,7 @@ type RouterParams struct {
 	ScheduledTaskHandler  *handler.ScheduledTaskHandler
 	AlertEventHandler     *handler.AlertEventHandler
 	ProjectHandler        *handler.ProjectHandler
-	PlanHandler          *handler.PlanHandler
+	PlanHandler           *handler.PlanHandler
 	ServiceMonitorHandler *handler.ServiceMonitorHandler
 	CaddyRouteHandler     *handler.CaddyRouteHandler
 	MarketplaceHandler    *handler.MarketplaceHandler
@@ -84,6 +87,7 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/scheduled-tasks", p.ScheduledTaskHandler.Routes())
 		r.Mount("/alert-events", p.AlertEventHandler.Routes())
 		r.Mount("/projects", p.ProjectHandler.Routes())
+		r.Mount("/usage", p.PlanHandler.Routes())
 		r.Mount("/plans", p.PlanHandler.Routes())
 		r.Mount("/service-monitors", p.ServiceMonitorHandler.Routes())
 		r.Mount("/caddy-routes", p.CaddyRouteHandler.Routes())
