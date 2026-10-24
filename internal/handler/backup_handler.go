@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package handler
 
 import (
@@ -14,7 +17,6 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/domain/job"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
-	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -27,7 +29,6 @@ type BackupHandler struct {
 	jobSvc     *job.Service
 	dispatcher ParamDispatcher
 	nodeSvc    *node.Service
-	planSvc    *plan.Service
 }
 
 func NewBackupHandler(
@@ -35,14 +36,12 @@ func NewBackupHandler(
 	jobSvc *job.Service,
 	dispatcher ParamDispatcher,
 	nodeSvc *node.Service,
-	planSvc *plan.Service,
 ) *BackupHandler {
 	return &BackupHandler{
 		backupSvc:  backupSvc,
 		jobSvc:     jobSvc,
 		dispatcher: dispatcher,
 		nodeSvc:    nodeSvc,
-		planSvc:    planSvc,
 	}
 }
 
@@ -152,13 +151,6 @@ func (h *BackupHandler) UpsertConfig(w http.ResponseWriter, r *http.Request) {
 		retention = 7
 	}
 
-	if h.planSvc != nil && req.Enabled {
-		if err := h.planSvc.CheckBackupRetentionLimit(claims.UserID, retention); err != nil {
-			writeJSONError(w, err.Error(), http.StatusForbidden)
-			return
-		}
-	}
-
 	backupMethod := req.BackupMethod
 	if backupMethod != "pg_dump" {
 		backupMethod = "volume"
@@ -219,16 +211,6 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 	if claims == nil {
 		writeJSONError(w, "unauthorized", http.StatusUnauthorized)
 		return
-	}
-
-	if h.planSvc != nil {
-		usage, err := h.planSvc.GetPlanUsage(claims.UserID)
-		if err == nil {
-			if err := h.planSvc.CheckBackupStorageLimit(claims.UserID, usage.BackupStorageBytes, 0); err != nil {
-				writeJSONError(w, err.Error(), http.StatusForbidden)
-				return
-			}
-		}
 	}
 
 	nodeID := chi.URLParam(r, "nodeId")

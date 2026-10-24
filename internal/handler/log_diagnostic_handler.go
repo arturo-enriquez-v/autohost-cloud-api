@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package handler
 
 import (
@@ -7,7 +10,6 @@ import (
 
 	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/handler/response"
@@ -19,7 +21,6 @@ type LogDiagnosticHandler struct {
 	service *logdiagnostic.Service
 	grpc    *grpcserver.NodeAgentServer
 	nodeSvc *node.Service
-	planSvc *plan.Service
 }
 
 // NewLogDiagnosticHandler creates a new handler with all required dependencies.
@@ -27,13 +28,11 @@ func NewLogDiagnosticHandler(
 	service *logdiagnostic.Service,
 	grpc *grpcserver.NodeAgentServer,
 	nodeSvc *node.Service,
-	planSvc *plan.Service,
 ) *LogDiagnosticHandler {
 	return &LogDiagnosticHandler{
 		service: service,
 		grpc:    grpc,
 		nodeSvc: nodeSvc,
-		planSvc: planSvc,
 	}
 }
 
@@ -56,16 +55,6 @@ func (h *LogDiagnosticHandler) Collect(w http.ResponseWriter, r *http.Request) {
 	if claims == nil || claims.UserID == "" {
 		response.RespondError(w, http.StatusUnauthorized, "unauthorized")
 		return
-	}
-
-	if h.planSvc != nil {
-		usage, err := h.planSvc.GetPlanUsage(claims.UserID)
-		if err == nil {
-			if err := h.planSvc.CheckAIDiagnosticsLimit(claims.UserID, usage.AIDiagnosticsThisMonth); err != nil {
-				response.RespondError(w, http.StatusForbidden, err.Error())
-				return
-			}
-		}
 	}
 
 	var req logdiagnostic.CollectRequest

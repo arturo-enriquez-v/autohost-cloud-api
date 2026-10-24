@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package grpcserver
 
 import (
@@ -28,6 +31,7 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
 	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
 	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
+	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 )
 
@@ -60,6 +64,7 @@ type NodeAgentServer struct {
 	backupSvc          *backup.Service
 	logDiagnosticSvc   *logdiagnostic.Service
 	networkStatSvc     *networkstat.Service
+	vmRepo             vm.Repository
 
 	registry        *streamRegistry
 	logs            *logBroker
@@ -74,6 +79,9 @@ type NodeAgentServer struct {
 	metricLastPersist map[string]time.Time // nodeID -> last DB write time
 
 	redis *redis.Client
+
+	// hypervisorInfo caches the latest HypervisorInfo per node (nodeID -> *HypervisorInfo).
+	hypervisorInfo sync.Map
 }
 
 // NewNodeAgentServer creates a ready-to-register gRPC server.
@@ -94,6 +102,7 @@ func NewNodeAgentServer(
 	logDiagnosticSvc *logdiagnostic.Service,
 	networkStatSvc *networkstat.Service,
 	redis *redis.Client,
+	vmRepo vm.Repository,
 ) *NodeAgentServer {
 	reg := newStreamRegistry()
 	s := &NodeAgentServer{
@@ -114,6 +123,7 @@ func NewNodeAgentServer(
 		logDiagnosticSvc:    logDiagnosticSvc,
 		networkStatSvc:      networkStatSvc,
 		redis:               redis,
+		vmRepo:              vmRepo,
 		networkStatsPending: make(map[string]chan *networkStatsResponse),
 		metricBroker:        newMetricBroker(),
 		metricLastPersist:   make(map[string]time.Time),
@@ -128,6 +138,10 @@ func NewNodeAgentServer(
 
 func (s *NodeAgentServer) SetBackupService(svc *backup.Service) {
 	s.backupSvc = svc
+}
+
+func (s *NodeAgentServer) SetVMRepository(repo vm.Repository) {
+	s.vmRepo = repo
 }
 
 // ---- RegisterCommands (client-side stream) ----------------------------------
@@ -353,6 +367,56 @@ func (s *NodeAgentServer) Connect(
 				}
 			}
 
+			// Sync VM status when a vm.* job finishes.
+			if s.vmRepo != nil {
+				if j, err := s.jobSvc.GetByID(r.GetJobId()); err == nil && j != nil {
+					if j.CommandName == "vm.create" {
+						var p struct {
+							VMID string `json:"vm_id"`
+						}
+						if err := json.Unmarshal([]byte(j.Params), &p); err == nil && p.VMID != "" {
+							if targetVM, err := s.vmRepo.GetByID(context.Background(), p.VMID); err == nil && targetVM != nil {
+								if jobStatus != job.StatusCompleted {
+									targetVM.Status = string(vm.StatusError)
+									targetVM.ErrorMessage = r.GetError()
+									if _, err := s.vmRepo.Update(context.Background(), targetVM); err != nil {
+										log.Printf("[gRPC] update vm %s status to error: %v", targetVM.ID, err)
+									} else {
+										log.Printf("[gRPC] updated vm %s (%s) status to error: %s", targetVM.ID, targetVM.Name, r.GetError())
+									}
+								} else {
+									targetVM.ErrorMessage = ""
+									_, _ = s.vmRepo.Update(context.Background(), targetVM)
+								}
+							}
+						}
+					} else if strings.HasPrefix(j.CommandName, "vm.") {
+						parts := strings.Split(j.CommandName, ".")
+						if len(parts) >= 3 {
+							action := parts[1]
+							vmName := parts[2]
+							if targetVM, err := s.vmRepo.GetByHostAndName(context.Background(), nodeID, vmName); err == nil && targetVM != nil {
+								if jobStatus != job.StatusCompleted {
+									targetVM.ErrorMessage = r.GetError()
+									if action == "start" {
+										targetVM.Status = string(vm.StatusStopped)
+									}
+									_, _ = s.vmRepo.Update(context.Background(), targetVM)
+								} else {
+									targetVM.ErrorMessage = ""
+									if action == "start" {
+										targetVM.Status = string(vm.StatusRunning)
+									} else if action == "stop" {
+										targetVM.Status = string(vm.StatusStopped)
+									}
+									_, _ = s.vmRepo.Update(context.Background(), targetVM)
+								}
+							}
+						}
+					}
+				}
+			}
+
 		case *pb.NodeMessage_Heartbeat:
 			if s.redis != nil {
 				_ = s.redis.Set(context.Background(), fmt.Sprintf("nodes:%s:online", nodeID), "1", 2*time.Minute).Err()
@@ -429,6 +493,9 @@ func (s *NodeAgentServer) Connect(
 					_ = s.redis.Publish(context.Background(), fmt.Sprintf("nodes:%s:logs", nodeID), data).Err()
 				}
 			}
+
+		case *pb.NodeMessage_HypervisorInfo:
+			s.storeHypervisorInfo(nodeID, p.HypervisorInfo)
 
 		case *pb.NodeMessage_ContainerList:
 			s.containerBroker.fanOut(nodeID, p.ContainerList)

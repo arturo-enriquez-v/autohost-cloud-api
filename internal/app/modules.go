@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package app
 
 import (
@@ -28,6 +31,7 @@ import (
 	scheduledtask "github.com/arturo/autohost-cloud-api/internal/domain/scheduled_task"
 	servicemonitor "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	telegrambot "github.com/arturo/autohost-cloud-api/internal/domain/telegram_bot"
+	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
 	"github.com/arturo/autohost-cloud-api/internal/domain/vpn"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
@@ -65,6 +69,7 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewClusterRepository, fx.As(new(clusterdomain.Repository))),
 	fx.Annotate(postgres.NewContainerSettingRepository, fx.As(new(containersetting.Repository))),
 	fx.Annotate(postgres.NewNotificationMarkerRepository, fx.As(new(notification.MarkerRepository))),
+	fx.Annotate(postgres.NewVMRepository, fx.As(new(vm.Repository))),
 )
 
 var ServiceModule = fx.Provide(
@@ -97,6 +102,11 @@ var ServiceModule = fx.Provide(
 			return clusterdomain.NewService(repo, nodeRepo, jobService, grpc)
 		},
 	),
+	fx.Annotate(
+		func(repo vm.Repository, nodeRepo node.Repository, enrollSvc *enrollment.Service, jobService *job.Service, grpc *grpcserver.NodeAgentServer) *vm.Service {
+			return vm.NewService(repo, nodeRepo, enrollSvc, jobService, grpc)
+		},
+	),
 )
 
 var HandlerModule = fx.Provide(
@@ -127,6 +137,8 @@ var HandlerModule = fx.Provide(
 	handler.NewLogDiagnosticHandler,
 	handler.NewClusterHandler,
 	handler.NewNotificationHandler,
+	handler.NewHypervisorHandler,
+	handler.NewVMHandler,
 )
 
 var InfraModule = fx.Provide(

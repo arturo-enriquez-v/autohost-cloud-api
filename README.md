@@ -220,6 +220,11 @@ Para agregar una funcionalidad nueva:
 4. Registrar rutas en `internal/handler/router.go`
 5. Crear migración si hay cambios en el esquema
 
-## Licencia
 
-MIT
+## Licencia / License
+
+Este proyecto es software libre y de código abierto (Open Source), distribuido bajo la licencia **[GNU Affero General Public License v3.0 (AGPLv3)](LICENSE)**.
+
+Eres libre de usarlo, modificarlo y hospedar tu propia instancia (self-hosted) de forma gratuita. De acuerdo con los términos de AGPLv3, si modificas el software y ofreces servicios a través de una red, debes poner a disposición el código fuente correspondiente bajo la misma licencia.
+
+Para licencias comerciales alternativas o consultas sobre la versión SaaS gestionada, contacta al equipo de AutoHost.

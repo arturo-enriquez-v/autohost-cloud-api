@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package server
 
 import (
@@ -30,7 +33,7 @@ type RouterParams struct {
 	ScheduledTaskHandler  *handler.ScheduledTaskHandler
 	AlertEventHandler     *handler.AlertEventHandler
 	ProjectHandler        *handler.ProjectHandler
-	PlanHandler          *handler.PlanHandler
+	PlanHandler           *handler.PlanHandler
 	ServiceMonitorHandler *handler.ServiceMonitorHandler
 	CaddyRouteHandler     *handler.CaddyRouteHandler
 	MarketplaceHandler    *handler.MarketplaceHandler
@@ -44,6 +47,8 @@ type RouterParams struct {
 	LogDiagnosticHandler  *handler.LogDiagnosticHandler
 	ClusterHandler        *handler.ClusterHandler
 	NotificationHandler   *handler.NotificationHandler
+	HypervisorHandler     *handler.HypervisorHandler
+	VMHandler             *handler.VMHandler
 	NodeTokenService      *nodetoken.Service
 }
 
@@ -82,6 +87,7 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/scheduled-tasks", p.ScheduledTaskHandler.Routes())
 		r.Mount("/alert-events", p.AlertEventHandler.Routes())
 		r.Mount("/projects", p.ProjectHandler.Routes())
+		r.Mount("/usage", p.PlanHandler.Routes())
 		r.Mount("/plans", p.PlanHandler.Routes())
 		r.Mount("/service-monitors", p.ServiceMonitorHandler.Routes())
 		r.Mount("/caddy-routes", p.CaddyRouteHandler.Routes())
@@ -98,6 +104,10 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/diagnostics", p.LogDiagnosticHandler.Routes())
 		r.Mount("/clusters", p.ClusterHandler.Routes())
 		r.Mount("/notifications", p.NotificationHandler.Routes())
+		r.Mount("/hypervisors", p.HypervisorHandler.Routes())
+		r.Mount("/vms", p.VMHandler.VMRoutes())
+		r.Mount("/node-vms", p.VMHandler.NodeVMRoutes())
+		r.Mount("/nodes/{nodeId}/vms", p.VMHandler.NodeVMRoutes())
 		// Agent → POST /v1/agent/network-stats
 		r.Mount("/agent/network-stats", p.NodeNetworkHandler.Routes(nodeAuthMiddleware))
 		// Frontend → GET /v1/node-network/{nodeId}

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package main
 
 import (
@@ -14,7 +17,7 @@ import (
 
 func main() {
 	// 1. Cargar entorno básico antes de iniciar Fx
-	if err := godotenv.Load(); err != nil {
+	if err := godotenv.Overload(); err != nil {
 		log.Println("No .env file found, using system environment")
 	}
 
