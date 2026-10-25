@@ -12,11 +12,11 @@ import (
 	"time"
 
 	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
-	"github.com/arturo/autohost-cloud-api/internal/domain/project"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/handler/response"
 	"github.com/go-chi/chi/v5"
@@ -36,7 +36,7 @@ type NodeReportHandler struct {
 	alertEventService     *alertevent.Service
 	nodeAlertService      *nodealert.Service
 	reportSettingsService *identity.ReportSettingsService
-	projectService        *project.Service
+	projectService        *apps.ProjectService
 	redis                 *redis.Client
 }
 
@@ -47,7 +47,7 @@ func NewNodeReportHandler(
 	alertEventService *alertevent.Service,
 	nodeAlertService *nodealert.Service,
 	reportSettingsService *identity.ReportSettingsService,
-	projectService *project.Service,
+	projectService *apps.ProjectService,
 	redis *redis.Client,
 ) *NodeReportHandler {
 	return &NodeReportHandler{

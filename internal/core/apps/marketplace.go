@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package marketplace
+package apps
 
 import (
 	"errors"
@@ -50,8 +50,8 @@ type MarketplaceApp struct {
 	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
 }
 
-// Repository defines the persistence contract for marketplace apps.
-type Repository interface {
+// MarketplaceRepository defines the persistence contract for marketplace apps.
+type MarketplaceRepository interface {
 	Create(app *MarketplaceApp) (*MarketplaceApp, error)
 	FindByNodeID(nodeID string) ([]*MarketplaceApp, error)
 	FindByJobID(jobID string) (*MarketplaceApp, error)

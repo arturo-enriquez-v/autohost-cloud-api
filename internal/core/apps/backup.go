@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package backup
+package apps
 
 import (
 	"encoding/json"
@@ -10,7 +10,8 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("backup entity not found")
+	ErrBackupNotFound = errors.New("backup entity not found")
+	ErrNotFound       = ErrBackupNotFound
 )
 
 type StorageCredential struct {
@@ -64,7 +65,7 @@ type BackupRecord struct {
 	CompletedAt    *time.Time `db:"completed_at"     json:"completed_at,omitempty"`
 }
 
-type Repository interface {
+type BackupRepository interface {
 	// Storage Credentials
 	CreateCredential(cred *StorageCredential) (*StorageCredential, error)
 	GetCredentialByID(id, userID string) (*StorageCredential, error)
@@ -85,62 +86,62 @@ type Repository interface {
 	GetRecordByID(id string) (*BackupRecord, error)
 }
 
-type Service struct {
-	repo Repository
+type BackupService struct {
+	repo BackupRepository
 }
 
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+func NewBackupService(repo BackupRepository) *BackupService {
+	return &BackupService{repo: repo}
 }
 
-func (s *Service) CreateCredential(cred *StorageCredential) (*StorageCredential, error) {
+func (s *BackupService) CreateCredential(cred *StorageCredential) (*StorageCredential, error) {
 	return s.repo.CreateCredential(cred)
 }
 
-func (s *Service) ListCredentials(userID string) ([]*StorageCredential, error) {
+func (s *BackupService) ListCredentials(userID string) ([]*StorageCredential, error) {
 	return s.repo.ListCredentialsByUser(userID)
 }
 
-func (s *Service) DeleteCredential(id, userID string) error {
+func (s *BackupService) DeleteCredential(id, userID string) error {
 	return s.repo.DeleteCredential(id, userID)
 }
 
-func (s *Service) GetCredentialByID(id, userID string) (*StorageCredential, error) {
+func (s *BackupService) GetCredentialByID(id, userID string) (*StorageCredential, error) {
 	return s.repo.GetCredentialByID(id, userID)
 }
 
-func (s *Service) UpsertConfig(cfg *BackupConfig) (*BackupConfig, error) {
+func (s *BackupService) UpsertConfig(cfg *BackupConfig) (*BackupConfig, error) {
 	return s.repo.UpsertConfig(cfg)
 }
 
-func (s *Service) GetConfigByContainer(nodeID, containerName string) (*BackupConfig, error) {
+func (s *BackupService) GetConfigByContainer(nodeID, containerName string) (*BackupConfig, error) {
 	return s.repo.GetConfigByContainer(nodeID, containerName)
 }
 
-func (s *Service) GetConfigByID(id string) (*BackupConfig, error) {
+func (s *BackupService) GetConfigByID(id string) (*BackupConfig, error) {
 	return s.repo.GetConfigByID(id)
 }
 
-func (s *Service) CreateRecord(rec *BackupRecord) (*BackupRecord, error) {
+func (s *BackupService) CreateRecord(rec *BackupRecord) (*BackupRecord, error) {
 	return s.repo.CreateRecord(rec)
 }
 
-func (s *Service) UpdateRecordStatus(id string, status string, s3Key string, fileSize int64, errMsg *string) error {
+func (s *BackupService) UpdateRecordStatus(id string, status string, s3Key string, fileSize int64, errMsg *string) error {
 	return s.repo.UpdateRecordStatus(id, status, s3Key, fileSize, errMsg)
 }
 
-func (s *Service) UpdateRecordByJobID(jobID string, status string, s3Key string, fileSize int64, errMsg *string) error {
+func (s *BackupService) UpdateRecordByJobID(jobID string, status string, s3Key string, fileSize int64, errMsg *string) error {
 	return s.repo.UpdateRecordByJobID(jobID, status, s3Key, fileSize, errMsg)
 }
 
-func (s *Service) UpdateRecordJobID(id string, jobID string) error {
+func (s *BackupService) UpdateRecordJobID(id string, jobID string) error {
 	return s.repo.UpdateRecordJobID(id, jobID)
 }
 
-func (s *Service) ListRecordsByContainer(nodeID, containerName string) ([]*BackupRecord, error) {
+func (s *BackupService) ListRecordsByContainer(nodeID, containerName string) ([]*BackupRecord, error) {
 	return s.repo.ListRecordsByContainer(nodeID, containerName)
 }
 
-func (s *Service) GetRecordByID(id string) (*BackupRecord, error) {
+func (s *BackupService) GetRecordByID(id string) (*BackupRecord, error) {
 	return s.repo.GetRecordByID(id)
 }

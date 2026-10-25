@@ -17,17 +17,15 @@ import (
 
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
-	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
 	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
 	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
-	"github.com/arturo/autohost-cloud-api/internal/domain/marketplace"
 	"github.com/arturo/autohost-cloud-api/internal/core/network"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
-	sm "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
@@ -39,27 +37,17 @@ type NodeAgentServer struct {
 
 	authSvc            *identity.AuthService
 	notificationSvc    *identity.NotificationService
-	sm                 *sm.Service
-	nodealert          *nodealert.Service
-	alertevent         *alertevent.Service
-	marketplace        marketplace.Repository
-	nodetoken          *nodetoken.Service
-	nodecommand        *jobs.NodeCommandService
-	job                *jobs.JobService
-	node               *node.Service
-	nodemetric         *nodemetric.Service
-	containermetric    *containermetric.Service
-	serviceMonitorSvc  *sm.Service
+	serviceMonitorSvc  *apps.ServiceMonitorService
 	alertSvc           *nodealert.Service
 	alertEventSvc      *alertevent.Service
-	marketplaceRepo    marketplace.Repository
+	marketplaceRepo    apps.MarketplaceRepository
 	tokenSvc           *nodetoken.Service
 	commandSvc         *jobs.NodeCommandService
 	jobSvc             *jobs.JobService
 	nodeSvc            *node.Service
 	metricSvc          *nodemetric.Service
 	containerMetricSvc *containermetric.Service
-	backupSvc          *backup.Service
+	backupSvc          *apps.BackupService
 	logDiagnosticSvc   *logdiagnostic.Service
 	networkStatSvc     *network.NetworkStatService
 	vmRepo             vm.Repository
@@ -91,12 +79,12 @@ func NewNodeAgentServer(
 	nodeSvc *node.Service,
 	metricSvc *nodemetric.Service,
 	containerMetricSvc *containermetric.Service,
-	marketplaceRepo marketplace.Repository,
+	marketplaceRepo apps.MarketplaceRepository,
 	alertEventSvc *alertevent.Service,
-	serviceMonitorSvc *sm.Service,
+	serviceMonitorSvc *apps.ServiceMonitorService,
 	authSvc *identity.AuthService,
 	notificationSvc *identity.NotificationService,
-	backupSvc *backup.Service,
+	backupSvc *apps.BackupService,
 	logDiagnosticSvc *logdiagnostic.Service,
 	networkStatSvc *network.NetworkStatService,
 	redis *redis.Client,
@@ -134,7 +122,7 @@ func NewNodeAgentServer(
 	return s
 }
 
-func (s *NodeAgentServer) SetBackupService(svc *backup.Service) {
+func (s *NodeAgentServer) SetBackupService(svc *apps.BackupService) {
 	s.backupSvc = svc
 }
 
@@ -353,11 +341,11 @@ func (s *NodeAgentServer) Connect(
 			// Sync marketplace_apps status when an install job finishes.
 			if s.marketplaceRepo != nil {
 				if mApp, err := s.marketplaceRepo.FindByJobID(r.GetJobId()); err == nil {
-					var appStatus marketplace.AppStatus
+					var appStatus apps.AppStatus
 					if jobStatus == jobs.StatusCompleted {
-						appStatus = marketplace.StatusRunning
+						appStatus = apps.StatusRunning
 					} else {
-						appStatus = marketplace.StatusFailed
+						appStatus = apps.StatusFailed
 					}
 					if err := s.marketplaceRepo.UpdateStatus(mApp.ID, appStatus); err != nil {
 						log.Printf("[gRPC] update marketplace app %s status: %v", mApp.ID, err)
@@ -612,7 +600,7 @@ func (s *NodeAgentServer) SubscribeToNodeMetrics(nodeID string) (<-chan *pb.Metr
 // ---- Health Check helpers ---------------------------------------------------
 
 // SendHealthCheckConfig pushes a monitor configuration to a connected agent.
-func (s *NodeAgentServer) SendHealthCheckConfig(nodeID string, m *sm.ServiceMonitor) {
+func (s *NodeAgentServer) SendHealthCheckConfig(nodeID string, m *apps.ServiceMonitor) {
 	if s == nil || s.registry == nil {
 		return
 	}
@@ -669,12 +657,12 @@ func (s *NodeAgentServer) handleHealthCheckResult(nodeID string, r *pb.HealthChe
 	}
 
 	// Determine new aggregate status.
-	newStatus := sm.StatusHealthy
+	newStatus := apps.StatusHealthy
 	if r.GetStatus() == "down" {
 		if int(r.GetConsecutiveFailures()) >= monitor.FailureThreshold {
-			newStatus = sm.StatusDown
+			newStatus = apps.StatusDown
 		} else {
-			newStatus = sm.StatusDegraded
+			newStatus = apps.StatusDegraded
 		}
 	}
 
@@ -739,7 +727,7 @@ func (s *NodeAgentServer) handleHealthCheckResult(nodeID string, r *pb.HealthChe
 		}
 	}
 
-	event := &sm.ServiceHealthEvent{
+	event := &apps.ServiceHealthEvent{
 		MonitorID: monitor.ID,
 		NodeID:    nodeID,
 		UserID:    monitor.UserID,
@@ -753,7 +741,7 @@ func (s *NodeAgentServer) handleHealthCheckResult(nodeID string, r *pb.HealthChe
 	}
 
 	// Send Telegram alert on state transition to down.
-	if newStatus == sm.StatusDown && monitor.NotifyTelegram {
+	if newStatus == apps.StatusDown && monitor.NotifyTelegram {
 		go s.sendServiceDownAlert(nodeID, monitor)
 	}
 
@@ -762,7 +750,7 @@ func (s *NodeAgentServer) handleHealthCheckResult(nodeID string, r *pb.HealthChe
 }
 
 // sendServiceDownAlert sends a Telegram notification when a service goes down.
-func (s *NodeAgentServer) sendServiceDownAlert(nodeID string, monitor *sm.ServiceMonitor) {
+func (s *NodeAgentServer) sendServiceDownAlert(nodeID string, monitor *apps.ServiceMonitor) {
 	alert, err := s.alertSvc.FindByNodeID(nodeID)
 	if err != nil || alert.TelegramBotToken == "" || alert.TelegramChatID == "" {
 		return

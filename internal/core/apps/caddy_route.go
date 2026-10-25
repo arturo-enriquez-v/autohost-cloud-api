@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package caddyroute
+package apps
 
 import (
 	"errors"
@@ -9,8 +9,8 @@ import (
 )
 
 var (
-	ErrNotFound      = errors.New("caddy route not found")
-	ErrAlreadyExists = errors.New("caddy route already exists for this domain")
+	ErrCaddyRouteNotFound      = errors.New("caddy route not found")
+	ErrCaddyRouteAlreadyExists = errors.New("caddy route already exists for this domain")
 )
 
 // CaddyRoute represents a Caddy reverse-proxy route managed by autohost.
@@ -24,34 +24,33 @@ type CaddyRoute struct {
 	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
 }
 
-// Repository defines persistence operations for Caddy routes.
-type Repository interface {
+// CaddyRouteRepository defines persistence operations for Caddy routes.
+type CaddyRouteRepository interface {
 	Upsert(r *CaddyRoute) (*CaddyRoute, error)
 	ListByNode(nodeID string) ([]*CaddyRoute, error)
 	Delete(nodeID, domain string) error
 }
 
-// Service contains the business logic for managing Caddy routes.
-type Service struct {
-	repo Repository
+// CaddyRouteService contains the business logic for managing Caddy routes.
+type CaddyRouteService struct {
+	repo CaddyRouteRepository
 }
 
-// NewService creates a new CaddyRoute service.
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+func NewCaddyRouteService(repo CaddyRouteRepository) *CaddyRouteService {
+	return &CaddyRouteService{repo: repo}
 }
 
 // Upsert creates or updates a Caddy route record.
-func (s *Service) Upsert(r *CaddyRoute) (*CaddyRoute, error) {
+func (s *CaddyRouteService) Upsert(r *CaddyRoute) (*CaddyRoute, error) {
 	return s.repo.Upsert(r)
 }
 
 // ListByNode returns all Caddy routes for the given node.
-func (s *Service) ListByNode(nodeID string) ([]*CaddyRoute, error) {
+func (s *CaddyRouteService) ListByNode(nodeID string) ([]*CaddyRoute, error) {
 	return s.repo.ListByNode(nodeID)
 }
 
 // Delete removes a Caddy route record for the given node + domain.
-func (s *Service) Delete(nodeID, domain string) error {
+func (s *CaddyRouteService) Delete(nodeID, domain string) error {
 	return s.repo.Delete(nodeID, domain)
 }

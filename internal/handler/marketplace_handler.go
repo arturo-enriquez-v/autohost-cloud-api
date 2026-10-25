@@ -9,8 +9,8 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
-	"github.com/arturo/autohost-cloud-api/internal/domain/marketplace"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
@@ -28,14 +28,14 @@ type InstallAppParams struct {
 // MarketplaceHandler handles marketplace app listing and deployment.
 type MarketplaceHandler struct {
 	jobService      *jobs.JobService
-	marketplaceRepo marketplace.Repository
+	marketplaceRepo apps.MarketplaceRepository
 	dispatcher      dispatcher.ParamDispatcher
 	r2              *platform.R2Client
 }
 
 func NewMarketplaceHandler(
 	jobService *jobs.JobService,
-	marketplaceRepo marketplace.Repository,
+	marketplaceRepo apps.MarketplaceRepository,
 	disp dispatcher.ParamDispatcher,
 	r2 *platform.R2Client,
 ) *MarketplaceHandler {
@@ -60,7 +60,7 @@ func (h *MarketplaceHandler) Routes() chi.Router {
 // GET /v1/marketplace/apps
 func (h *MarketplaceHandler) ListApps(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(marketplace.Catalog)
+	json.NewEncoder(w).Encode(apps.Catalog)
 }
 
 // deployAppRequest is the payload from the dashboard.
@@ -91,7 +91,7 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate the app is in the catalog.
-	if _, ok := marketplace.GetCatalogEntry(req.AppName); !ok {
+	if _, ok := apps.GetCatalogEntry(req.AppName); !ok {
 		http.Error(w, fmt.Sprintf("app %q not found in catalog", req.AppName), http.StatusBadRequest)
 		return
 	}
@@ -125,10 +125,10 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 	paramsJSON := string(paramsBytes)
 
 	// Create the tracking record.
-	mApp, err := h.marketplaceRepo.Create(&marketplace.MarketplaceApp{
+	mApp, err := h.marketplaceRepo.Create(&apps.MarketplaceApp{
 		NodeID:  req.NodeID,
 		AppName: req.AppName,
-		Status:  marketplace.StatusInstalling,
+		Status:  apps.StatusInstalling,
 	})
 	if err != nil {
 		log.Printf("[ERROR] marketplace: create app record: %v", err)

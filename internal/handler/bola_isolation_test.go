@@ -11,11 +11,10 @@ import (
 	"testing"
 	"time"
 
-	caddyroute "github.com/arturo/autohost-cloud-api/internal/domain/caddy_route"
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
-	"github.com/arturo/autohost-cloud-api/internal/domain/project"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
@@ -74,21 +73,21 @@ func (m *MockNodeRepo) UpdateVPNIP(nodeID string, ipVPN string) error           
 func (m *MockNodeRepo) UpdateVersionAgent(nodeID, version string) error                      { return nil }
 func (m *MockNodeRepo) AssignProject(nodeID string, projectID *string) error                 { return nil }
 
-// MockProjectRepo implements project.Repository for testing
+// MockProjectRepo implements apps.ProjectRepository for testing
 type MockProjectRepo struct {
-	projects map[string]*project.Project
+	projects map[string]*apps.Project
 }
 
-func (m *MockProjectRepo) Create(p *project.Project) (*project.Project, error) { return p, nil }
-func (m *MockProjectRepo) FindByID(id string) (*project.Project, error) {
+func (m *MockProjectRepo) Create(p *apps.Project) (*apps.Project, error) { return p, nil }
+func (m *MockProjectRepo) FindByID(id string) (*apps.Project, error) {
 	p, ok := m.projects[id]
 	if !ok {
-		return nil, project.ErrProjectNotFound
+		return nil, apps.ErrProjectNotFound
 	}
 	return p, nil
 }
-func (m *MockProjectRepo) FindByUserID(userID string) ([]*project.Project, error) { return nil, nil }
-func (m *MockProjectRepo) Update(p *project.Project) (*project.Project, error)     { return p, nil }
+func (m *MockProjectRepo) FindByUserID(userID string) ([]*apps.Project, error) { return nil, nil }
+func (m *MockProjectRepo) Update(p *apps.Project) (*apps.Project, error)     { return p, nil }
 func (m *MockProjectRepo) Delete(id string) error                                  { return nil }
 
 // MockNodeTokenRepo implements nodetoken.Repository for testing
@@ -99,14 +98,14 @@ func (m *MockNodeTokenRepo) FindNodeTokenByHash(tokenHash string) (*nodetoken.No
 func (m *MockNodeTokenRepo) UpdateLastSeen(tokenID string, lastSeenAt time.Time) error  { return nil }
 func (m *MockNodeTokenRepo) RevokeByNodeID(nodeID string) error                        { return nil }
 
-// MockCaddyRouteRepo implements caddyroute.Repository
+// MockCaddyRouteRepo implements apps.CaddyRouteRepository
 type MockCaddyRouteRepo struct{}
 
-func (m *MockCaddyRouteRepo) Upsert(r *caddyroute.CaddyRoute) (*caddyroute.CaddyRoute, error) {
+func (m *MockCaddyRouteRepo) Upsert(r *apps.CaddyRoute) (*apps.CaddyRoute, error) {
 	return r, nil
 }
-func (m *MockCaddyRouteRepo) ListByNode(nodeID string) ([]*caddyroute.CaddyRoute, error) {
-	return []*caddyroute.CaddyRoute{}, nil
+func (m *MockCaddyRouteRepo) ListByNode(nodeID string) ([]*apps.CaddyRoute, error) {
+	return []*apps.CaddyRoute{}, nil
 }
 func (m *MockCaddyRouteRepo) Delete(nodeID, domain string) error { return nil }
 
@@ -131,7 +130,7 @@ func setupTestRouter() (*chi.Mux, *MockNodeRepo, *MockProjectRepo) {
 		},
 	}
 	projectRepo := &MockProjectRepo{
-		projects: map[string]*project.Project{
+		projects: map[string]*apps.Project{
 			"proj_owned_by_a": {
 				ID:     "proj_owned_by_a",
 				UserID: ownerUserA,
@@ -141,9 +140,9 @@ func setupTestRouter() (*chi.Mux, *MockNodeRepo, *MockProjectRepo) {
 	}
 
 	nodeSvc := node.NewService(nodeRepo)
-	projSvc := project.NewService(projectRepo)
+	projSvc := apps.NewProjectService(projectRepo)
 	nodeTokenSvc := nodetoken.NewService(&MockNodeTokenRepo{})
-	caddySvc := caddyroute.NewService(&MockCaddyRouteRepo{})
+	caddySvc := apps.NewCaddyRouteService(&MockCaddyRouteRepo{})
 	containerMetricSvc := containermetric.NewService(&MockContainerMetricRepo{})
 
 	nodeHandler := handler.NewNodeHandler(nodeSvc, nodeTokenSvc)
