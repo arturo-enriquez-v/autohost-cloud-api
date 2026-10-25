@@ -106,7 +106,7 @@ type wsExecuteJobPayload struct {
 	CommandType nodecommand.CommandType `json:"command_type"`
 }
 
-// DispatchJob implements handler.NodeDispatcher: serializes an execute_job
+// DispatchJob implements dispatcher.NodeDispatcher: serializes an execute_job
 // WebSocket message and queues it for the target node.
 func (h *WSHandler) DispatchJob(nodeID, jobID, commandName string, commandType nodecommand.CommandType) error {
 	payload, err := json.Marshal(wsExecuteJobPayload{

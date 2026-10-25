@@ -17,6 +17,7 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/domain/job"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -27,20 +28,20 @@ import (
 type BackupHandler struct {
 	backupSvc  *backup.Service
 	jobSvc     *job.Service
-	dispatcher ParamDispatcher
+	dispatcher dispatcher.ParamDispatcher
 	nodeSvc    *node.Service
 }
 
 func NewBackupHandler(
 	backupSvc *backup.Service,
 	jobSvc *job.Service,
-	dispatcher ParamDispatcher,
+	disp dispatcher.ParamDispatcher,
 	nodeSvc *node.Service,
 ) *BackupHandler {
 	return &BackupHandler{
 		backupSvc:  backupSvc,
 		jobSvc:     jobSvc,
-		dispatcher: dispatcher,
+		dispatcher: disp,
 		nodeSvc:    nodeSvc,
 	}
 }

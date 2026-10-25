@@ -12,6 +12,7 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/domain/job"
 	"github.com/arturo/autohost-cloud-api/internal/domain/marketplace"
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 	"github.com/go-chi/chi/v5"
@@ -29,20 +30,20 @@ type InstallAppParams struct {
 type MarketplaceHandler struct {
 	jobService      *job.Service
 	marketplaceRepo marketplace.Repository
-	dispatcher      ParamDispatcher
+	dispatcher      dispatcher.ParamDispatcher
 	r2              *platform.R2Client
 }
 
 func NewMarketplaceHandler(
 	jobService *job.Service,
 	marketplaceRepo marketplace.Repository,
-	dispatcher ParamDispatcher,
+	disp dispatcher.ParamDispatcher,
 	r2 *platform.R2Client,
 ) *MarketplaceHandler {
 	return &MarketplaceHandler{
 		jobService:      jobService,
 		marketplaceRepo: marketplaceRepo,
-		dispatcher:      dispatcher,
+		dispatcher:      disp,
 		r2:              r2,
 	}
 }

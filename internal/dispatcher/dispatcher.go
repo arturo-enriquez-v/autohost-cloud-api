@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package handler
+package dispatcher
 
 import (
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
@@ -20,7 +20,7 @@ type ParamDispatcher interface {
 }
 
 // MultiDispatcher tries each dispatcher in order and returns nil on the first
-// success.  This lets the server dispatch jobs over gRPC or WebSocket
+// success. This lets the server dispatch jobs over gRPC or WebSocket
 // transparently: whichever transport the node is currently connected on wins.
 type MultiDispatcher struct {
 	dispatchers []NodeDispatcher

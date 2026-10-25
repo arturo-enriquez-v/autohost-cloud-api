@@ -33,7 +33,7 @@ func (s *NodeAgentServer) IsNodeConnected(nodeID string) bool {
 }
 
 // DispatchJob builds a gRPC ServerMessage and pushes it to the connected node.
-// Implements handler.NodeDispatcher.
+// Implements dispatcher.NodeDispatcher.
 func (s *NodeAgentServer) DispatchJob(
 	nodeID, jobID, commandName string,
 	commandType nodecommand.CommandType,

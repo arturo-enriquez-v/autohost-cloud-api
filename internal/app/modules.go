@@ -33,6 +33,7 @@ import (
 	telegrambot "github.com/arturo/autohost-cloud-api/internal/domain/telegram_bot"
 	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
 	"github.com/arturo/autohost-cloud-api/internal/domain/vpn"
+	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
@@ -148,15 +149,15 @@ var InfraModule = fx.Provide(
 	headscale.NewClient,
 	// NodeAgentServer also satisfies ParamDispatcher (used by CaddyRoute and Marketplace handlers).
 	fx.Annotate(
-		func(s *grpcserver.NodeAgentServer) handler.ParamDispatcher { return s },
+		func(s *grpcserver.NodeAgentServer) dispatcher.ParamDispatcher { return s },
 	),
 	// Non-variadic wrapper: wire grpc + ws into MultiDispatcher.
-	// Exposed as handler.NodeDispatcher (JobHandler) and scheduler.Dispatcher (Scheduler).
+	// Exposed as dispatcher.NodeDispatcher (JobHandler) and scheduler.Dispatcher (Scheduler).
 	fx.Annotate(
-		func(grpc *grpcserver.NodeAgentServer, ws *handler.WSHandler) *handler.MultiDispatcher {
-			return handler.NewMultiDispatcher(grpc, ws)
+		func(grpc *grpcserver.NodeAgentServer, ws *handler.WSHandler) *dispatcher.MultiDispatcher {
+			return dispatcher.NewMultiDispatcher(grpc, ws)
 		},
-		fx.As(new(handler.NodeDispatcher)),
+		fx.As(new(dispatcher.NodeDispatcher)),
 		fx.As(new(scheduler.Dispatcher)),
 	),
 	handler.NewJobHandler,

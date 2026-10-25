@@ -13,6 +13,7 @@ import (
 	containersetting "github.com/arturo/autohost-cloud-api/internal/domain/container_setting"
 	"github.com/arturo/autohost-cloud-api/internal/domain/job"
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
 )
@@ -20,18 +21,18 @@ import (
 // JobHandler handles job dispatch and status queries.
 type JobHandler struct {
 	jobService          *job.Service
-	dispatcher          NodeDispatcher
+	dispatcher          dispatcher.NodeDispatcher
 	containerSettingSvc *containersetting.Service
 }
 
 func NewJobHandler(
 	jobService *job.Service,
-	dispatcher NodeDispatcher,
+	disp dispatcher.NodeDispatcher,
 	containerSettingSvc *containersetting.Service,
 ) *JobHandler {
 	return &JobHandler{
 		jobService:          jobService,
-		dispatcher:          dispatcher,
+		dispatcher:          disp,
 		containerSettingSvc: containerSettingSvc,
 	}
 }
@@ -94,7 +95,7 @@ func (h *JobHandler) Dispatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var dispatchErr error
-	if pd, ok := h.dispatcher.(ParamDispatcher); ok && req.Params != "" {
+	if pd, ok := h.dispatcher.(dispatcher.ParamDispatcher); ok && req.Params != "" {
 		dispatchErr = pd.DispatchJobWithParams(req.NodeID, j.ID, j.CommandName, j.CommandType, req.Params)
 	} else {
 		dispatchErr = h.dispatcher.DispatchJob(req.NodeID, j.ID, j.CommandName, j.CommandType)

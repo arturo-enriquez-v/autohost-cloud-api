@@ -16,19 +16,20 @@ import (
 
 	"github.com/arturo/autohost-cloud-api/internal/domain/job"
 	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/go-chi/chi/v5"
 )
 
 // WebhookHandler handles incoming webhooks from external services.
 type WebhookHandler struct {
 	jobService *job.Service
-	dispatcher NodeDispatcher
+	dispatcher dispatcher.NodeDispatcher
 }
 
-func NewWebhookHandler(jobService *job.Service, dispatcher NodeDispatcher) *WebhookHandler {
+func NewWebhookHandler(jobService *job.Service, disp dispatcher.NodeDispatcher) *WebhookHandler {
 	return &WebhookHandler{
 		jobService: jobService,
-		dispatcher: dispatcher,
+		dispatcher: disp,
 	}
 }
 
