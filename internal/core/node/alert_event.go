@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package alertevent
+package node
 
 import "time"
 
@@ -32,23 +32,51 @@ type AlertEvent struct {
 	CreatedAt time.Time      `db:"created_at" json:"created_at"`
 }
 
-// Repository defines the persistence interface for alert events.
-type Repository interface {
-	Create(event *AlertEvent) (*AlertEvent, error)
-	ListByUserID(userID string, limit, offset int) ([]*AlertEvent, error)
-	// ListFiltered returns events matching the filter plus the total matching count.
-	ListFiltered(userID string, filter AlertFilter, limit, offset int) ([]*AlertEvent, int, error)
-	// CountDistinctNodesWithRecentAlerts returns the number of distinct nodes
-	// that fired at least one alert event since `since`.
-	CountDistinctNodesWithRecentAlerts(userID string, since time.Time) (int, error)
-	// ListNodeAlertSummaryByUserID returns per-node alert count and distinct
-	// alert types for events fired since `since`.
-	ListNodeAlertSummaryByUserID(userID string, since time.Time) ([]*NodeAlertSummary, error)
-}
-
 // NodeAlertSummary holds aggregated alert info for a single node.
 type NodeAlertSummary struct {
 	NodeID string
 	Count  int
 	Types  []AlertEventType
+}
+
+type AlertEventRepository interface {
+	Create(event *AlertEvent) (*AlertEvent, error)
+	ListByUserID(userID string, limit, offset int) ([]*AlertEvent, error)
+	ListFiltered(userID string, filter AlertFilter, limit, offset int) ([]*AlertEvent, int, error)
+	CountDistinctNodesWithRecentAlerts(userID string, since time.Time) (int, error)
+	ListNodeAlertSummaryByUserID(userID string, since time.Time) ([]*NodeAlertSummary, error)
+}
+
+type AlertEventService struct {
+	repo AlertEventRepository
+}
+
+func NewAlertEventService(repo AlertEventRepository) *AlertEventService {
+	return &AlertEventService{repo: repo}
+}
+
+func (s *AlertEventService) Create(event *AlertEvent) (*AlertEvent, error) {
+	return s.repo.Create(event)
+}
+
+func (s *AlertEventService) ListByUserID(userID string, limit, offset int) ([]*AlertEvent, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	return s.repo.ListByUserID(userID, limit, offset)
+}
+
+func (s *AlertEventService) CountDistinctNodesWithRecentAlerts(userID string, since time.Time) (int, error) {
+	return s.repo.CountDistinctNodesWithRecentAlerts(userID, since)
+}
+
+func (s *AlertEventService) ListNodeAlertSummaryByUserID(userID string, since time.Time) ([]*NodeAlertSummary, error) {
+	return s.repo.ListNodeAlertSummaryByUserID(userID, since)
+}
+
+func (s *AlertEventService) ListFiltered(userID string, filter AlertFilter, limit, offset int) ([]*AlertEvent, int, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+	return s.repo.ListFiltered(userID, filter, limit, offset)
 }

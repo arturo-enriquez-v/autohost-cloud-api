@@ -10,17 +10,17 @@ import (
 	"net/http"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
 )
 
 type ProjectHandler struct {
 	projectService *apps.ProjectService
-	nodeService    *node.Service
+	nodeService    *node.NodeService
 }
 
-func NewProjectHandler(projectService *apps.ProjectService, nodeService *node.Service) *ProjectHandler {
+func NewProjectHandler(projectService *apps.ProjectService, nodeService *node.NodeService) *ProjectHandler {
 	return &ProjectHandler{projectService: projectService, nodeService: nodeService}
 }
 

@@ -9,17 +9,17 @@ import (
 	"strconv"
 	"time"
 
-	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
 )
 
 // AlertEventHandler serves the persisted alert history.
 type AlertEventHandler struct {
-	service *alertevent.Service
+	service *node.AlertEventService
 }
 
-func NewAlertEventHandler(service *alertevent.Service) *AlertEventHandler {
+func NewAlertEventHandler(service *node.AlertEventService) *AlertEventHandler {
 	return &AlertEventHandler{service: service}
 }
 
@@ -31,8 +31,8 @@ func (h *AlertEventHandler) Routes() chi.Router {
 }
 
 type listAlertsResponse struct {
-	Events []*alertevent.AlertEvent `json:"events"`
-	Total  int                      `json:"total"`
+	Events []*node.AlertEvent `json:"events"`
+	Total  int                `json:"total"`
 }
 
 // List returns alert events for the authenticated user.
@@ -57,7 +57,7 @@ func (h *AlertEventHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var filter alertevent.AlertFilter
+	var filter node.AlertFilter
 	if v := r.URL.Query().Get("node_id"); v != "" {
 		filter.NodeID = v
 	}

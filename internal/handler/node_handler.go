@@ -8,19 +8,18 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/handler/response"
 	"github.com/go-chi/chi/v5"
 )
 
 type NodeHandler struct {
-	service          *node.Service
-	nodeTokenService *nodetoken.Service
+	service          *node.NodeService
+	nodeTokenService *node.NodeTokenService
 }
 
-func NewNodeHandler(service *node.Service, nodeTokenService *nodetoken.Service) *NodeHandler {
+func NewNodeHandler(service *node.NodeService, nodeTokenService *node.NodeTokenService) *NodeHandler {
 	return &NodeHandler{service: service, nodeTokenService: nodeTokenService}
 }
 

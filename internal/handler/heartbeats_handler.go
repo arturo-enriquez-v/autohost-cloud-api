@@ -7,16 +7,16 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
 )
 
 type HeartbeatsHandler struct {
-	nodeService *node.Service
+	nodeService *node.NodeService
 }
 
-func NewHeartbeatsHandler(service *node.Service) *HeartbeatsHandler {
+func NewHeartbeatsHandler(service *node.NodeService) *HeartbeatsHandler {
 	return &HeartbeatsHandler{
 		nodeService: service,
 	}

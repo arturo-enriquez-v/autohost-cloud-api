@@ -11,8 +11,8 @@ import (
 
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
 )
@@ -22,14 +22,14 @@ type CaddyRouteHandler struct {
 	service    *apps.CaddyRouteService
 	jobService *jobs.JobService
 	dispatcher dispatcher.ParamDispatcher
-	nodeSvc    *node.Service
+	nodeSvc    *node.NodeService
 }
 
 func NewCaddyRouteHandler(
 	service *apps.CaddyRouteService,
 	jobService *jobs.JobService,
 	disp dispatcher.ParamDispatcher,
-	nodeSvc *node.Service,
+	nodeSvc *node.NodeService,
 ) *CaddyRouteHandler {
 	return &CaddyRouteHandler{
 		service:    service,

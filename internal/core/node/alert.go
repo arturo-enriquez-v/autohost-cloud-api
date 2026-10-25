@@ -1,9 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package nodealert
+package node
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrNodeAlertNotFound is returned when no alert config exists for the given node.
+var ErrNodeAlertNotFound = errors.New("node alert config not found")
 
 // NodeAlert stores the alert configuration for a specific node.
 type NodeAlert struct {
@@ -20,10 +26,28 @@ type NodeAlert struct {
 	UpdatedAt        time.Time `db:"updated_at"         json:"updated_at"`
 }
 
-// Repository defines the persistence interface for node alert configs.
-type Repository interface {
+type NodeAlertRepository interface {
 	Upsert(alert *NodeAlert) (*NodeAlert, error)
 	FindByNodeID(nodeID string) (*NodeAlert, error)
-	// FindAllByOwnerID returns all alert configs for nodes owned by ownerID.
 	FindAllByOwnerID(ownerID string) ([]*NodeAlert, error)
+}
+
+type NodeAlertService struct {
+	repo NodeAlertRepository
+}
+
+func NewNodeAlertService(repo NodeAlertRepository) *NodeAlertService {
+	return &NodeAlertService{repo: repo}
+}
+
+func (s *NodeAlertService) Upsert(alert *NodeAlert) (*NodeAlert, error) {
+	return s.repo.Upsert(alert)
+}
+
+func (s *NodeAlertService) FindByNodeID(nodeID string) (*NodeAlert, error) {
+	return s.repo.FindByNodeID(nodeID)
+}
+
+func (s *NodeAlertService) FindAllByOwnerID(ownerID string) ([]*NodeAlert, error) {
+	return s.repo.FindAllByOwnerID(ownerID)
 }

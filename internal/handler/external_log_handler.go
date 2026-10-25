@@ -9,16 +9,16 @@ import (
 	"strconv"
 	"time"
 
-	externallog "github.com/arturo/autohost-cloud-api/internal/domain/external_log"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
 )
 
 type ExternalLogHandler struct {
-	service *externallog.Service
+	service *node.ExternalLogService
 }
 
-func NewExternalLogHandler(service *externallog.Service) *ExternalLogHandler {
+func NewExternalLogHandler(service *node.ExternalLogService) *ExternalLogHandler {
 	return &ExternalLogHandler{service: service}
 }
 
@@ -56,7 +56,7 @@ func (h *ExternalLogHandler) IngestLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var input externallog.IngestLogInput
+	var input node.IngestLogInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		http.Error(w, `{"error":"invalid json body"}`, http.StatusBadRequest)
 		return
@@ -97,7 +97,7 @@ func (h *ExternalLogHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var filter externallog.LogFilter
+	var filter node.LogFilter
 	if v := r.URL.Query().Get("node_id"); v != "" {
 		filter.NodeID = &v
 	}
@@ -204,7 +204,7 @@ func (h *ExternalLogHandler) CreateToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var input externallog.CreateTokenInput
+	var input node.CreateTokenInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		http.Error(w, `{"error":"invalid json body"}`, http.StatusBadRequest)
 		return

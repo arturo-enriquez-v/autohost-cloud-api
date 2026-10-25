@@ -8,8 +8,7 @@ import (
 	"net/http"
 	"strconv"
 
-	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/handler/response"
@@ -18,16 +17,16 @@ import (
 
 // LogDiagnosticHandler exposes REST endpoints for log diagnostic operations.
 type LogDiagnosticHandler struct {
-	service *logdiagnostic.Service
+	service *node.LogDiagnosticService
 	grpc    *grpcserver.NodeAgentServer
-	nodeSvc *node.Service
+	nodeSvc *node.NodeService
 }
 
 // NewLogDiagnosticHandler creates a new handler with all required dependencies.
 func NewLogDiagnosticHandler(
-	service *logdiagnostic.Service,
+	service *node.LogDiagnosticService,
 	grpc *grpcserver.NodeAgentServer,
-	nodeSvc *node.Service,
+	nodeSvc *node.NodeService,
 ) *LogDiagnosticHandler {
 	return &LogDiagnosticHandler{
 		service: service,
@@ -57,7 +56,7 @@ func (h *LogDiagnosticHandler) Collect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req logdiagnostic.CollectRequest
+	var req node.CollectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.RespondError(w, http.StatusBadRequest, "invalid json body")
 		return
@@ -133,7 +132,7 @@ func (h *LogDiagnosticHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var filter logdiagnostic.ListFilter
+	var filter node.ListFilter
 	if v := r.URL.Query().Get("node_id"); v != "" {
 		filter.NodeID = &v
 	}

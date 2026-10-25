@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"log"
 
-	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
 )
 
@@ -28,11 +28,11 @@ func (s *NodeAgentServer) handleLogDiagnosticResult(nodeID string, payload *pb.L
 	}
 
 	// Serialize the source bundles to JSON for storage.
-	var sourcesJSON logdiagnostic.JSONRawMessage
+	var sourcesJSON node.JSONRawMessage
 	if sources := payload.GetSources(); len(sources) > 0 {
-		bundles := make([]logdiagnostic.SourceBundle, 0, len(sources))
+		bundles := make([]node.SourceBundle, 0, len(sources))
 		for _, s := range sources {
-			bundles = append(bundles, logdiagnostic.SourceBundle{
+			bundles = append(bundles, node.SourceBundle{
 				Source:    s.GetSource(),
 				RawLogs:  s.GetRawLogs(),
 				LineCount: s.GetLineCount(),
@@ -43,7 +43,7 @@ func (s *NodeAgentServer) handleLogDiagnosticResult(nodeID string, payload *pb.L
 			log.Printf("[gRPC] log diagnostic %s: marshal sources: %v", requestID, err)
 			return
 		}
-		sourcesJSON = logdiagnostic.JSONRawMessage(data)
+		sourcesJSON = node.JSONRawMessage(data)
 	}
 
 	// Extract system_health from the diagnostic JSON.

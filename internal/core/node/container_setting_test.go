@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package containersetting_test
+package node_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 
-	containersetting "github.com/arturo/autohost-cloud-api/internal/domain/container_setting"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 )
 
-type mockRepo struct {
-	settings map[string]*containersetting.ContainerSetting
+type mockContainerSettingRepo struct {
+	settings map[string]*node.ContainerSetting
 }
 
-func newMockRepo() *mockRepo {
-	return &mockRepo{settings: make(map[string]*containersetting.ContainerSetting)}
+func newMockContainerSettingRepo() *mockContainerSettingRepo {
+	return &mockContainerSettingRepo{settings: make(map[string]*node.ContainerSetting)}
 }
 
-func (m *mockRepo) GetByNodeID(ctx context.Context, nodeID string) (*containersetting.ContainerSetting, error) {
+func (m *mockContainerSettingRepo) GetByNodeID(ctx context.Context, nodeID string) (*node.ContainerSetting, error) {
 	s, ok := m.settings[nodeID]
 	if !ok {
 		return nil, errors.New("not found")
@@ -27,12 +27,12 @@ func (m *mockRepo) GetByNodeID(ctx context.Context, nodeID string) (*containerse
 	return s, nil
 }
 
-func (m *mockRepo) Upsert(ctx context.Context, setting *containersetting.ContainerSetting) (*containersetting.ContainerSetting, error) {
+func (m *mockContainerSettingRepo) Upsert(ctx context.Context, setting *node.ContainerSetting) (*node.ContainerSetting, error) {
 	m.settings[setting.NodeID] = setting
 	return setting, nil
 }
 
-func (m *mockRepo) IsContainerLocked(ctx context.Context, nodeID, containerName string) (bool, error) {
+func (m *mockContainerSettingRepo) IsContainerLocked(ctx context.Context, nodeID, containerName string) (bool, error) {
 	s, ok := m.settings[nodeID]
 	if !ok {
 		return false, nil
@@ -40,9 +40,9 @@ func (m *mockRepo) IsContainerLocked(ctx context.Context, nodeID, containerName 
 	return s.LockedContainers[containerName], nil
 }
 
-func TestService_GetByNodeID_Default(t *testing.T) {
-	repo := newMockRepo()
-	svc := containersetting.NewService(repo)
+func TestContainerSettingService_GetByNodeID_Default(t *testing.T) {
+	repo := newMockContainerSettingRepo()
+	svc := node.NewContainerSettingService(repo)
 
 	setting, err := svc.GetByNodeID(context.Background(), "node-1")
 	if err != nil {
@@ -59,9 +59,9 @@ func TestService_GetByNodeID_Default(t *testing.T) {
 	}
 }
 
-func TestService_SaveAndLockCheck(t *testing.T) {
-	repo := newMockRepo()
-	svc := containersetting.NewService(repo)
+func TestContainerSettingService_SaveAndLockCheck(t *testing.T) {
+	repo := newMockContainerSettingRepo()
+	svc := node.NewContainerSettingService(repo)
 	ctx := context.Background()
 
 	sortOrder := []string{"web", "db", "redis"}

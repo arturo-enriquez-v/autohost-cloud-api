@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 )
 
 var (

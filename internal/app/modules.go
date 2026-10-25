@@ -10,18 +10,9 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/infra"
-	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
-	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
-	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
-	containersetting "github.com/arturo/autohost-cloud-api/internal/domain/container_setting"
-	"github.com/arturo/autohost-cloud-api/internal/domain/enrollment"
-	externallog "github.com/arturo/autohost-cloud-api/internal/domain/external_log"
-	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
-	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
-	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
 	"github.com/arturo/autohost-cloud-api/internal/core/network"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
+	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
@@ -34,17 +25,17 @@ import (
 
 var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewAuthRepository, fx.As(new(identity.AuthRepository))),
-	fx.Annotate(postgres.NewNodeRepository, fx.As(new(node.Repository))),
-	fx.Annotate(postgres.NewNodeMetricRepository, fx.As(new(nodemetric.Repository))),
-	fx.Annotate(postgres.NewContainerMetricRepository, fx.As(new(containermetric.Repository))),
-	fx.Annotate(postgres.NewEnrollmentRepository, fx.As(new(enrollment.Repository))),
-	fx.Annotate(postgres.NewNodeTokenRepository, fx.As(new(nodetoken.Repository))),
+	fx.Annotate(postgres.NewNodeRepository, fx.As(new(node.NodeRepository))),
+	fx.Annotate(postgres.NewNodeMetricRepository, fx.As(new(node.NodeMetricRepository))),
+	fx.Annotate(postgres.NewContainerMetricRepository, fx.As(new(node.ContainerMetricRepository))),
+	fx.Annotate(postgres.NewEnrollmentRepository, fx.As(new(node.EnrollmentRepository))),
+	fx.Annotate(postgres.NewNodeTokenRepository, fx.As(new(node.NodeTokenRepository))),
 	fx.Annotate(postgres.NewNodeCommandRepository, fx.As(new(jobs.NodeCommandRepository))),
 	fx.Annotate(postgres.NewJobRepository, fx.As(new(jobs.JobRepository))),
-	fx.Annotate(postgres.NewNodeAlertRepository, fx.As(new(nodealert.Repository))),
+	fx.Annotate(postgres.NewNodeAlertRepository, fx.As(new(node.NodeAlertRepository))),
 	fx.Annotate(postgres.NewScheduledTaskRepository, fx.As(new(jobs.ScheduledTaskRepository))),
 	fx.Annotate(postgres.NewMarketplaceRepository, fx.As(new(apps.MarketplaceRepository))),
-	fx.Annotate(postgres.NewAlertEventRepository, fx.As(new(alertevent.Repository))),
+	fx.Annotate(postgres.NewAlertEventRepository, fx.As(new(node.AlertEventRepository))),
 	fx.Annotate(postgres.NewPlanRepository, fx.As(new(identity.PlanRepository))),
 	fx.Annotate(postgres.NewProjectRepository, fx.As(new(apps.ProjectRepository))),
 	fx.Annotate(postgres.NewServiceMonitorRepository, fx.As(new(apps.ServiceMonitorRepository))),
@@ -52,47 +43,47 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewReportSettingsRepository, fx.As(new(identity.ReportSettingsRepository))),
 	fx.Annotate(postgres.NewTelegramBotRepository, fx.As(new(identity.TelegramBotRepository))),
 	fx.Annotate(postgres.NewNetworkStatRepository, fx.As(new(network.NetworkStatRepository))),
-	fx.Annotate(postgres.NewExternalLogRepository, fx.As(new(externallog.Repository))),
+	fx.Annotate(postgres.NewExternalLogRepository, fx.As(new(node.ExternalLogRepository))),
 	fx.Annotate(postgres.NewBackupRepository, fx.As(new(apps.BackupRepository))),
-	fx.Annotate(postgres.NewLogDiagnosticRepository, fx.As(new(logdiagnostic.Repository))),
+	fx.Annotate(postgres.NewLogDiagnosticRepository, fx.As(new(node.LogDiagnosticRepository))),
 	fx.Annotate(postgres.NewClusterRepository, fx.As(new(infra.ClusterRepository))),
-	fx.Annotate(postgres.NewContainerSettingRepository, fx.As(new(containersetting.Repository))),
+	fx.Annotate(postgres.NewContainerSettingRepository, fx.As(new(node.ContainerSettingRepository))),
 	fx.Annotate(postgres.NewNotificationMarkerRepository, fx.As(new(identity.NotificationMarkerRepository))),
 	fx.Annotate(postgres.NewVMRepository, fx.As(new(infra.VMRepository))),
 )
 
 var ServiceModule = fx.Provide(
 	identity.NewAuthService,
-	node.NewService,
-	nodemetric.NewService,
-	containermetric.NewService,
-	containersetting.NewService,
-	enrollment.NewService,
-	nodetoken.NewService,
+	node.NewNodeService,
+	node.NewNodeMetricService,
+	node.NewContainerMetricService,
+	node.NewContainerSettingService,
+	node.NewEnrollmentService,
+	node.NewNodeTokenService,
 	jobs.NewNodeCommandService,
 	jobs.NewJobService,
-	nodealert.NewService,
+	node.NewNodeAlertService,
 	jobs.NewScheduledTaskService,
-	alertevent.NewService,
+	node.NewAlertEventService,
 	identity.NewPlanService,
 	apps.NewProjectService,
 	apps.NewServiceMonitorService,
 	apps.NewCaddyRouteService,
 	identity.NewReportSettingsService,
 	identity.NewTelegramBotService,
-	externallog.NewService,
+	node.NewExternalLogService,
 	network.NewNetworkStatService,
 	network.NewVPNService,
 	identity.NewNotificationService,
 	apps.NewBackupService,
-	logdiagnostic.NewService,
+	node.NewLogDiagnosticService,
 	fx.Annotate(
-		func(repo infra.ClusterRepository, nodeRepo node.Repository, jobService *jobs.JobService, grpc *grpcserver.NodeAgentServer) *infra.ClusterManager {
+		func(repo infra.ClusterRepository, nodeRepo node.NodeRepository, jobService *jobs.JobService, grpc *grpcserver.NodeAgentServer) *infra.ClusterManager {
 			return infra.NewClusterManager(repo, nodeRepo, jobService, grpc)
 		},
 	),
 	fx.Annotate(
-		func(repo infra.VMRepository, nodeRepo node.Repository, enrollSvc *enrollment.Service, jobService *jobs.JobService, grpc *grpcserver.NodeAgentServer) *infra.VMService {
+		func(repo infra.VMRepository, nodeRepo node.NodeRepository, enrollSvc *node.EnrollmentService, jobService *jobs.JobService, grpc *grpcserver.NodeAgentServer) *infra.VMService {
 			return infra.NewVMService(repo, nodeRepo, enrollSvc, jobService, grpc)
 		},
 	),

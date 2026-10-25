@@ -18,15 +18,9 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
-	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
-	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
-	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
-	"github.com/arturo/autohost-cloud-api/internal/core/network"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
-	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
-	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
 	"github.com/arturo/autohost-cloud-api/internal/core/infra"
+	"github.com/arturo/autohost-cloud-api/internal/core/network"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 )
@@ -38,17 +32,17 @@ type NodeAgentServer struct {
 	authSvc            *identity.AuthService
 	notificationSvc    *identity.NotificationService
 	serviceMonitorSvc  *apps.ServiceMonitorService
-	alertSvc           *nodealert.Service
-	alertEventSvc      *alertevent.Service
+	alertSvc           *node.NodeAlertService
+	alertEventSvc      *node.AlertEventService
 	marketplaceRepo    apps.MarketplaceRepository
-	tokenSvc           *nodetoken.Service
+	tokenSvc           *node.NodeTokenService
 	commandSvc         *jobs.NodeCommandService
 	jobSvc             *jobs.JobService
-	nodeSvc            *node.Service
-	metricSvc          *nodemetric.Service
-	containerMetricSvc *containermetric.Service
+	nodeSvc            *node.NodeService
+	metricSvc          *node.NodeMetricService
+	containerMetricSvc *node.ContainerMetricService
 	backupSvc          *apps.BackupService
-	logDiagnosticSvc   *logdiagnostic.Service
+	logDiagnosticSvc   *node.LogDiagnosticService
 	networkStatSvc     *network.NetworkStatService
 	vmRepo             infra.VMRepository
 
@@ -74,18 +68,18 @@ type NodeAgentServer struct {
 func NewNodeAgentServer(
 	commandSvc *jobs.NodeCommandService,
 	jobSvc *jobs.JobService,
-	tokenSvc *nodetoken.Service,
-	alertSvc *nodealert.Service,
-	nodeSvc *node.Service,
-	metricSvc *nodemetric.Service,
-	containerMetricSvc *containermetric.Service,
+	tokenSvc *node.NodeTokenService,
+	alertSvc *node.NodeAlertService,
+	nodeSvc *node.NodeService,
+	metricSvc *node.NodeMetricService,
+	containerMetricSvc *node.ContainerMetricService,
 	marketplaceRepo apps.MarketplaceRepository,
-	alertEventSvc *alertevent.Service,
+	alertEventSvc *node.AlertEventService,
 	serviceMonitorSvc *apps.ServiceMonitorService,
 	authSvc *identity.AuthService,
 	notificationSvc *identity.NotificationService,
 	backupSvc *apps.BackupService,
-	logDiagnosticSvc *logdiagnostic.Service,
+	logDiagnosticSvc *node.LogDiagnosticService,
 	networkStatSvc *network.NetworkStatService,
 	redis *redis.Client,
 	vmRepo infra.VMRepository,
@@ -443,7 +437,7 @@ func (s *NodeAgentServer) Connect(
 
 			// Persist to DB at most once per minute to keep write volume low.
 			if s.shouldPersistMetric(nodeID) {
-				req := &nodemetric.CreateNodeMetricRequest{
+				req := &node.CreateNodeMetricRequest{
 					NodeID:               nodeID,
 					CPUUsagePercent:      float64(m.GetCpuUsagePercent()),
 					MemoryTotalBytes:     int64(m.GetRamTotalBytes()),
@@ -522,9 +516,9 @@ func (s *NodeAgentServer) Connect(
 				}
 			}
 			if s.containerMetricSvc != nil && p.ContainerList != nil && len(p.ContainerList.Containers) > 0 {
-				var items []containermetric.ContainerSnapshotItem
+				var items []node.ContainerSnapshotItem
 				for _, c := range p.ContainerList.Containers {
-					items = append(items, containermetric.ContainerSnapshotItem{
+					items = append(items, node.ContainerSnapshotItem{
 						ID:      c.Id,
 						Name:    c.Name,
 						State:   c.State,

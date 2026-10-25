@@ -11,7 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/fx"
 
-	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	handlerMiddleware "github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 )
@@ -49,7 +49,7 @@ type RouterParams struct {
 	NotificationHandler   *handler.NotificationHandler
 	HypervisorHandler     *handler.HypervisorHandler
 	VMHandler             *handler.VMHandler
-	NodeTokenService      *nodetoken.Service
+	NodeTokenService      *node.NodeTokenService
 }
 
 // NewRouter construye el mux de Chi

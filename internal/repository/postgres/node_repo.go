@@ -7,7 +7,7 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/jmoiron/sqlx"
 )
 

@@ -12,9 +12,7 @@ import (
 	"time"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
-	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
@@ -90,11 +88,11 @@ func (m *MockProjectRepo) FindByUserID(userID string) ([]*apps.Project, error) {
 func (m *MockProjectRepo) Update(p *apps.Project) (*apps.Project, error)     { return p, nil }
 func (m *MockProjectRepo) Delete(id string) error                                  { return nil }
 
-// MockNodeTokenRepo implements nodetoken.Repository for testing
+// MockNodeTokenRepo implements node.Repository for testing
 type MockNodeTokenRepo struct{}
 
 func (m *MockNodeTokenRepo) CreateNodeToken(nodeID, token string) error               { return nil }
-func (m *MockNodeTokenRepo) FindNodeTokenByHash(tokenHash string) (*nodetoken.NodeToken, error) { return nil, nil }
+func (m *MockNodeTokenRepo) FindNodeTokenByHash(tokenHash string) (*node.NodeToken, error) { return nil, nil }
 func (m *MockNodeTokenRepo) UpdateLastSeen(tokenID string, lastSeenAt time.Time) error  { return nil }
 func (m *MockNodeTokenRepo) RevokeByNodeID(nodeID string) error                        { return nil }
 
@@ -109,13 +107,13 @@ func (m *MockCaddyRouteRepo) ListByNode(nodeID string) ([]*apps.CaddyRoute, erro
 }
 func (m *MockCaddyRouteRepo) Delete(nodeID, domain string) error { return nil }
 
-// MockContainerMetricRepo implements containermetric.Repository
+// MockContainerMetricRepo implements node.Repository
 type MockContainerMetricRepo struct{}
 
-func (m *MockContainerMetricRepo) StoreBatch(metrics []*containermetric.CreateContainerMetricRequest) error {
+func (m *MockContainerMetricRepo) StoreBatch(metrics []*node.CreateContainerMetricRequest) error {
 	return nil
 }
-func (m *MockContainerMetricRepo) GetHistory(params containermetric.ContainerHistoryParams) ([]*containermetric.ContainerMetricHistoryPoint, error) {
+func (m *MockContainerMetricRepo) GetHistory(params node.ContainerHistoryParams) ([]*node.ContainerMetricHistoryPoint, error) {
 	return nil, nil
 }
 
@@ -139,11 +137,11 @@ func setupTestRouter() (*chi.Mux, *MockNodeRepo, *MockProjectRepo) {
 		},
 	}
 
-	nodeSvc := node.NewService(nodeRepo)
+	nodeSvc := node.NewNodeService(nodeRepo)
 	projSvc := apps.NewProjectService(projectRepo)
-	nodeTokenSvc := nodetoken.NewService(&MockNodeTokenRepo{})
+	nodeTokenSvc := node.NewNodeTokenService(&MockNodeTokenRepo{})
 	caddySvc := apps.NewCaddyRouteService(&MockCaddyRouteRepo{})
-	containerMetricSvc := containermetric.NewService(&MockContainerMetricRepo{})
+	containerMetricSvc := node.NewContainerMetricService(&MockContainerMetricRepo{})
 
 	nodeHandler := handler.NewNodeHandler(nodeSvc, nodeTokenSvc)
 	projHandler := handler.NewProjectHandler(projSvc, nodeSvc)

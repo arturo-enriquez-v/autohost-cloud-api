@@ -9,17 +9,17 @@ import (
 	"net/http"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/network"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
 )
 
 type VPNHandler struct {
 	service *network.VPNService
-	nodeSvc *node.Service
+	nodeSvc *node.NodeService
 }
 
-func NewVPNHandler(service *network.VPNService, nodeSvc *node.Service) *VPNHandler {
+func NewVPNHandler(service *network.VPNService, nodeSvc *node.NodeService) *VPNHandler {
 	return &VPNHandler{service: service, nodeSvc: nodeSvc}
 }
 

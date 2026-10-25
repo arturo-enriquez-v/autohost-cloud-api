@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"strings"
 
-	containersetting "github.com/arturo/autohost-cloud-api/internal/domain/container_setting"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
@@ -21,13 +21,13 @@ import (
 type JobHandler struct {
 	jobService          *jobs.JobService
 	dispatcher          dispatcher.NodeDispatcher
-	containerSettingSvc *containersetting.Service
+	containerSettingSvc *node.ContainerSettingService
 }
 
 func NewJobHandler(
 	jobService *jobs.JobService,
 	disp dispatcher.NodeDispatcher,
-	containerSettingSvc *containersetting.Service,
+	containerSettingSvc *node.ContainerSettingService,
 ) *JobHandler {
 	return &JobHandler{
 		jobService:          jobService,

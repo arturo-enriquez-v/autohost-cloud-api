@@ -16,8 +16,7 @@ import (
 	"time"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
-	"github.com/arturo/autohost-cloud-api/internal/domain/enrollment"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 )
 
@@ -92,16 +91,16 @@ type CreateVMRequest struct {
 
 type VMService struct {
 	repo       VMRepository
-	nodeRepo   node.Repository
-	enrollSvc  *enrollment.Service
+	nodeRepo   node.NodeRepository
+	enrollSvc  *node.EnrollmentService
 	jobService *jobs.JobService
 	dispatcher VMDispatcher
 }
 
 func NewVMService(
 	repo VMRepository,
-	nodeRepo node.Repository,
-	enrollSvc *enrollment.Service,
+	nodeRepo node.NodeRepository,
+	enrollSvc *node.EnrollmentService,
 	jobService *jobs.JobService,
 	dispatcher VMDispatcher,
 ) *VMService {

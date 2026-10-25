@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package nodemetric
+package node
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+var (
+	ErrInvalidNodeMetricData = errors.New("invalid node metric data")
+)
 
 // NodeMetric representa una métrica completa almacenada en BD (con ID, timestamps, etc)
 type NodeMetric struct {
@@ -50,16 +57,7 @@ type HistoryParams struct {
 	NodeID string
 	From   time.Time
 	To     time.Time
-	// Bucket is the Postgres date_trunc granularity: "minute", "hour", or "day".
 	Bucket string
-}
-
-type Repository interface {
-	StoreNodeMetric(metric *CreateNodeMetricRequest) (*NodeMetric, error)
-	GetHistoryByNodeID(params HistoryParams) ([]*NodeMetricHistoryPoint, error)
-	// GetNodePeriodStatsByOwnerID returns avg+max metrics per node for a given owner
-	// over the window [since, now].
-	GetNodePeriodStatsByOwnerID(ownerID string, since time.Time) ([]*NodePeriodStats, error)
 }
 
 // NodePeriodStats holds aggregate CPU/RAM/disk stats for a node over a time window.
@@ -70,4 +68,36 @@ type NodePeriodStats struct {
 	CPUMax      float64 `db:"cpu_max"`
 	RAMAvg      float64 `db:"ram_avg"`
 	DiskFreeAvg float64 `db:"disk_free_avg"` // avg of (100 - disk_usage_percent)
+}
+
+type NodeMetricRepository interface {
+	StoreNodeMetric(metric *CreateNodeMetricRequest) (*NodeMetric, error)
+	GetHistoryByNodeID(params HistoryParams) ([]*NodeMetricHistoryPoint, error)
+	GetNodePeriodStatsByOwnerID(ownerID string, since time.Time) ([]*NodePeriodStats, error)
+}
+
+type NodeMetricService struct {
+	repo NodeMetricRepository
+}
+
+func NewNodeMetricService(repo NodeMetricRepository) *NodeMetricService {
+	return &NodeMetricService{repo: repo}
+}
+
+func (s *NodeMetricService) StoreNodeMetric(req *CreateNodeMetricRequest) (*NodeMetric, error) {
+	if req == nil || req.NodeID == "" {
+		return nil, ErrInvalidNodeMetricData
+	}
+	return s.repo.StoreNodeMetric(req)
+}
+
+func (s *NodeMetricService) GetHistory(params HistoryParams) ([]*NodeMetricHistoryPoint, error) {
+	if params.NodeID == "" {
+		return nil, ErrInvalidNodeMetricData
+	}
+	return s.repo.GetHistoryByNodeID(params)
+}
+
+func (s *NodeMetricService) GetNodePeriodStats(ownerID string, since time.Time) ([]*NodePeriodStats, error) {
+	return s.repo.GetNodePeriodStatsByOwnerID(ownerID, since)
 }

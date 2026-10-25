@@ -15,7 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/network"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 )
@@ -24,11 +24,11 @@ import (
 // network stats (interface counters + listening ports).
 type NodeNetworkHandler struct {
 	svc     *network.NetworkStatService
-	nodeSvc *node.Service
+	nodeSvc *node.NodeService
 	grpc    *grpcserver.NodeAgentServer
 }
 
-func NewNodeNetworkHandler(svc *network.NetworkStatService, nodeSvc *node.Service, grpc *grpcserver.NodeAgentServer) *NodeNetworkHandler {
+func NewNodeNetworkHandler(svc *network.NetworkStatService, nodeSvc *node.NodeService, grpc *grpcserver.NodeAgentServer) *NodeNetworkHandler {
 	return &NodeNetworkHandler{svc: svc, nodeSvc: nodeSvc, grpc: grpc}
 }
 

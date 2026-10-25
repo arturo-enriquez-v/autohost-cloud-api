@@ -13,7 +13,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	containersetting "github.com/arturo/autohost-cloud-api/internal/domain/container_setting"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 )
 
 type ContainerSettingRepo struct {
@@ -24,7 +24,7 @@ func NewContainerSettingRepository(db *sqlx.DB) *ContainerSettingRepo {
 	return &ContainerSettingRepo{db: db}
 }
 
-func (r *ContainerSettingRepo) Upsert(ctx context.Context, s *containersetting.ContainerSetting) (*containersetting.ContainerSetting, error) {
+func (r *ContainerSettingRepo) Upsert(ctx context.Context, s *node.ContainerSetting) (*node.ContainerSetting, error) {
 	sortOrderJSON, err := json.Marshal(s.SortOrder)
 	if err != nil {
 		return nil, fmt.Errorf("marshal sort_order: %w", err)
@@ -51,7 +51,7 @@ func (r *ContainerSettingRepo) Upsert(ctx context.Context, s *containersetting.C
 	return r.GetByNodeID(ctx, s.NodeID)
 }
 
-func (r *ContainerSettingRepo) GetByNodeID(ctx context.Context, nodeID string) (*containersetting.ContainerSetting, error) {
+func (r *ContainerSettingRepo) GetByNodeID(ctx context.Context, nodeID string) (*node.ContainerSetting, error) {
 	type row struct {
 		ID               string    `db:"id"`
 		NodeID           string    `db:"node_id"`
@@ -74,7 +74,7 @@ func (r *ContainerSettingRepo) GetByNodeID(ctx context.Context, nodeID string) (
 		return nil, fmt.Errorf("get container settings: %w", err)
 	}
 
-	res := &containersetting.ContainerSetting{
+	res := &node.ContainerSetting{
 		ID:               r0.ID,
 		NodeID:           r0.NodeID,
 		SortOrder:        []string{},

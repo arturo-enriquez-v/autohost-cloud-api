@@ -1,82 +1,82 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package logdiagnostic_test
+package node_test
 
 import (
 	"context"
 	"encoding/json"
 	"testing"
 
-	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 )
 
-type mockRepo struct {
-	created       *logdiagnostic.LogDiagnostic
+type mockDiagnosticRepo struct {
+	created       *node.LogDiagnostic
 	updatedHealth string
 	approved      bool
 	rejected      bool
 }
 
-func (m *mockRepo) Create(ctx context.Context, d *logdiagnostic.LogDiagnostic) (*logdiagnostic.LogDiagnostic, error) {
+func (m *mockDiagnosticRepo) Create(ctx context.Context, d *node.LogDiagnostic) (*node.LogDiagnostic, error) {
 	d.ID = "diag-123"
 	m.created = d
 	return d, nil
 }
 
-func (m *mockRepo) GetByID(ctx context.Context, userID, id string) (*logdiagnostic.LogDiagnostic, error) {
-	return &logdiagnostic.LogDiagnostic{
+func (m *mockDiagnosticRepo) GetByID(ctx context.Context, userID, id string) (*node.LogDiagnostic, error) {
+	return &node.LogDiagnostic{
 		ID:        id,
 		UserID:    userID,
-		Status:    logdiagnostic.StatusPreview,
+		Status:    node.StatusPreview,
 		RequestID: "req-123",
 	}, nil
 }
 
-func (m *mockRepo) GetByRequestID(ctx context.Context, requestID string) (*logdiagnostic.LogDiagnostic, error) {
-	return &logdiagnostic.LogDiagnostic{
+func (m *mockDiagnosticRepo) GetByRequestID(ctx context.Context, requestID string) (*node.LogDiagnostic, error) {
+	return &node.LogDiagnostic{
 		ID:        "diag-123",
 		RequestID: requestID,
-		Status:    logdiagnostic.StatusPreview,
+		Status:    node.StatusPreview,
 	}, nil
 }
 
-func (m *mockRepo) UpdateStatus(ctx context.Context, id, status string) error {
+func (m *mockDiagnosticRepo) UpdateStatus(ctx context.Context, id, status string) error {
 	return nil
 }
 
-func (m *mockRepo) UpdatePreview(ctx context.Context, requestID string, diagnosticJSON, sources logdiagnostic.JSONRawMessage, systemHealth string) error {
+func (m *mockDiagnosticRepo) UpdatePreview(ctx context.Context, requestID string, diagnosticJSON, sources node.JSONRawMessage, systemHealth string) error {
 	m.updatedHealth = systemHealth
 	return nil
 }
 
-func (m *mockRepo) Approve(ctx context.Context, userID, id string) error {
+func (m *mockDiagnosticRepo) Approve(ctx context.Context, userID, id string) error {
 	m.approved = true
 	return nil
 }
 
-func (m *mockRepo) Reject(ctx context.Context, userID, id string) error {
+func (m *mockDiagnosticRepo) Reject(ctx context.Context, userID, id string) error {
 	m.rejected = true
 	return nil
 }
 
-func (m *mockRepo) List(ctx context.Context, userID string, filter logdiagnostic.ListFilter, limit, offset int) ([]*logdiagnostic.LogDiagnostic, int, error) {
-	return []*logdiagnostic.LogDiagnostic{}, 0, nil
+func (m *mockDiagnosticRepo) List(ctx context.Context, userID string, filter node.ListFilter, limit, offset int) ([]*node.LogDiagnostic, int, error) {
+	return []*node.LogDiagnostic{}, 0, nil
 }
 
-func (m *mockRepo) Delete(ctx context.Context, userID, id string) error {
+func (m *mockDiagnosticRepo) Delete(ctx context.Context, userID, id string) error {
 	return nil
 }
 
-func (m *mockRepo) CleanupExpired(ctx context.Context) (int64, error) {
+func (m *mockDiagnosticRepo) CleanupExpired(ctx context.Context) (int64, error) {
 	return 5, nil
 }
 
-func TestService_RequestCollection(t *testing.T) {
-	repo := &mockRepo{}
-	svc := logdiagnostic.NewService(repo, nil)
+func TestDiagnosticService_RequestCollection(t *testing.T) {
+	repo := &mockDiagnosticRepo{}
+	svc := node.NewLogDiagnosticService(repo, nil)
 
-	req := logdiagnostic.CollectRequest{
+	req := node.CollectRequest{
 		NodeID:  "node-1",
 		Sources: []string{"autohost-agent", "docker:nginx"},
 	}
@@ -86,7 +86,7 @@ func TestService_RequestCollection(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if diag.Status != logdiagnostic.StatusPending {
+	if diag.Status != node.StatusPending {
 		t.Errorf("expected status=pending, got %s", diag.Status)
 	}
 	if diag.RequestID == "" {
@@ -94,9 +94,9 @@ func TestService_RequestCollection(t *testing.T) {
 	}
 }
 
-func TestService_ApproveAndReject(t *testing.T) {
-	repo := &mockRepo{}
-	svc := logdiagnostic.NewService(repo, nil)
+func TestDiagnosticService_ApproveAndReject(t *testing.T) {
+	repo := &mockDiagnosticRepo{}
+	svc := node.NewLogDiagnosticService(repo, nil)
 
 	if err := svc.Approve(context.Background(), "user-1", "diag-123"); err != nil {
 		t.Errorf("unexpected approve error: %v", err)
@@ -114,7 +114,7 @@ func TestService_ApproveAndReject(t *testing.T) {
 }
 
 func TestJSONRawMessage_ScanAndValue(t *testing.T) {
-	var j logdiagnostic.JSONRawMessage
+	var j node.JSONRawMessage
 
 	// Test scanning nil (SQL NULL)
 	if err := j.Scan(nil); err != nil {
@@ -151,7 +151,7 @@ func TestJSONRawMessage_ScanAndValue(t *testing.T) {
 	}
 
 	// Test empty Value()
-	var emptyJ logdiagnostic.JSONRawMessage
+	var emptyJ node.JSONRawMessage
 	emptyVal, err := emptyJ.Value()
 	if err != nil {
 		t.Fatalf("unexpected Value error: %v", err)
@@ -169,4 +169,3 @@ func TestJSONRawMessage_ScanAndValue(t *testing.T) {
 		t.Errorf("expected {\"foo\":\"bar\"}, got %s", string(bytes))
 	}
 }
-
