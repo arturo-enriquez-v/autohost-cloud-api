@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package telegrambot
+package identity
 
 import (
 	"errors"
@@ -9,7 +9,8 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("telegram bot not found")
+	ErrTelegramBotNotFound = errors.New("telegram bot not found")
+	ErrNotFound            = ErrTelegramBotNotFound
 )
 
 // TelegramBot stores a saved Telegram Bot configuration for sending notifications.
@@ -23,8 +24,8 @@ type TelegramBot struct {
 	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
 }
 
-// Repository defines persistence operations for TelegramBot.
-type Repository interface {
+// TelegramBotRepository defines persistence operations for TelegramBot.
+type TelegramBotRepository interface {
 	Create(bot *TelegramBot) (*TelegramBot, error)
 	Update(bot *TelegramBot) (*TelegramBot, error)
 	Delete(id, userID string) error
@@ -32,31 +33,31 @@ type Repository interface {
 	ListByUserID(userID string) ([]*TelegramBot, error)
 }
 
-// Service handles business logic for TelegramBot configs.
-type Service struct {
-	repo Repository
+// TelegramBotService handles business logic for TelegramBot configs.
+type TelegramBotService struct {
+	repo TelegramBotRepository
 }
 
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+func NewTelegramBotService(repo TelegramBotRepository) *TelegramBotService {
+	return &TelegramBotService{repo: repo}
 }
 
-func (s *Service) Create(bot *TelegramBot) (*TelegramBot, error) {
+func (s *TelegramBotService) Create(bot *TelegramBot) (*TelegramBot, error) {
 	return s.repo.Create(bot)
 }
 
-func (s *Service) Update(bot *TelegramBot) (*TelegramBot, error) {
+func (s *TelegramBotService) Update(bot *TelegramBot) (*TelegramBot, error) {
 	return s.repo.Update(bot)
 }
 
-func (s *Service) Delete(id, userID string) error {
+func (s *TelegramBotService) Delete(id, userID string) error {
 	return s.repo.Delete(id, userID)
 }
 
-func (s *Service) FindByID(id string) (*TelegramBot, error) {
+func (s *TelegramBotService) FindByID(id string) (*TelegramBot, error) {
 	return s.repo.FindByID(id)
 }
 
-func (s *Service) ListByUserID(userID string) ([]*TelegramBot, error) {
+func (s *TelegramBotService) ListByUserID(userID string) ([]*TelegramBot, error) {
 	return s.repo.ListByUserID(userID)
 }

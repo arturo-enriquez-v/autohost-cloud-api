@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package notification
+package identity
 
 import (
 	"context"
@@ -86,7 +86,7 @@ func formatTimestamp(ts *int64, fallback time.Time) string {
 }
 
 // SendAutoHealTransitionAlert evaluates state transition and sends the appropriate SystemAlert.
-func (s *Service) SendAutoHealTransitionAlert(ctx context.Context, ac AutoHealAlertContext) {
+func (s *NotificationService) SendAutoHealTransitionAlert(ctx context.Context, ac AutoHealAlertContext) {
 	if s == nil || s.redis == nil || ac.Recipient == "" {
 		return
 	}

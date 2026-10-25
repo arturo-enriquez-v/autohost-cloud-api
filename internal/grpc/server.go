@@ -15,9 +15,9 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
-	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
 	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
 	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
 	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
@@ -27,7 +27,6 @@ import (
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
-	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
 	sm "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
@@ -38,8 +37,8 @@ import (
 type NodeAgentServer struct {
 	pb.UnimplementedNodeAgentServiceServer
 
-	authSvc            *auth.Service
-	notificationSvc    *notification.Service
+	authSvc            *identity.AuthService
+	notificationSvc    *identity.NotificationService
 	sm                 *sm.Service
 	nodealert          *nodealert.Service
 	alertevent         *alertevent.Service
@@ -95,8 +94,8 @@ func NewNodeAgentServer(
 	marketplaceRepo marketplace.Repository,
 	alertEventSvc *alertevent.Service,
 	serviceMonitorSvc *sm.Service,
-	authSvc *auth.Service,
-	notificationSvc *notification.Service,
+	authSvc *identity.AuthService,
+	notificationSvc *identity.NotificationService,
 	backupSvc *backup.Service,
 	logDiagnosticSvc *logdiagnostic.Service,
 	networkStatSvc *network.NetworkStatService,
@@ -685,14 +684,14 @@ func (s *NodeAgentServer) handleHealthCheckResult(nodeID string, r *pb.HealthChe
 
 	if autoHealStateStr := r.GetAutoHealState(); autoHealStateStr != "" && autoHealStateStr != "{}" {
 		// Parse old and new state
-		var oldState notification.AutoHealState
+		var oldState identity.AutoHealState
 		if len(monitor.AutoHealState) > 0 && string(monitor.AutoHealState) != "{}" && string(monitor.AutoHealState) != "null" {
 			_ = json.Unmarshal(monitor.AutoHealState, &oldState)
 		}
 
-		var newState notification.AutoHealState
+		var newState identity.AutoHealState
 		if err := json.Unmarshal([]byte(autoHealStateStr), &newState); err == nil {
-			var cfg notification.AutoHealConfig
+			var cfg identity.AutoHealConfig
 			if len(monitor.AutoHealConfig) > 0 && string(monitor.AutoHealConfig) != "{}" && string(monitor.AutoHealConfig) != "null" {
 				_ = json.Unmarshal(monitor.AutoHealConfig, &cfg)
 			}
@@ -717,7 +716,7 @@ func (s *NodeAgentServer) handleHealthCheckResult(nodeID string, r *pb.HealthChe
 						}
 					}
 
-					s.notificationSvc.SendAutoHealTransitionAlert(context.Background(), notification.AutoHealAlertContext{
+					s.notificationSvc.SendAutoHealTransitionAlert(context.Background(), identity.AutoHealAlertContext{
 						Recipient:    recipient,
 						NodeID:       nodeID,
 						NodeHostname: nodeHostname,

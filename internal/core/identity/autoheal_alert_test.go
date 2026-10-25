@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package notification
+package identity
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 )
 
 func TestAutoHealTransitionAlert_NoDuplicates(t *testing.T) {
-	svc := &Service{} // nil redis is fine for testing transition logic without crashing
+	svc := &NotificationService{} // nil redis is fine for testing transition logic without crashing
 
 	// Case 1: Recovery when OldState was COOLING_DOWN and NewState is HEALTHY
 	ctx1 := AutoHealAlertContext{

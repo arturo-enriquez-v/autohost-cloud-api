@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package auth
+package identity
 
 import (
 	"errors"
+	"time"
 
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 )
@@ -15,18 +16,47 @@ var (
 	ErrInvalidRefreshToken = errors.New("invalid or expired refresh token")
 )
 
-// Service encapsula la lógica de negocio de autenticación
-type Service struct {
-	repo Repository
+// TokenPair holds the access and refresh tokens issued after authentication.
+type TokenPair struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
-// NewService crea una nueva instancia del servicio de autenticación
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+// User representa un usuario del sistema.
+type User struct {
+	ID              string    `db:"id"`
+	Email           string    `db:"email"`
+	Name            *string   `db:"name"`
+	AvatarURL       *string   `db:"avatar_url"`
+	PasswordHash    *string   `db:"password_hash"`
+	OAuthProvider   *string   `db:"oauth_provider"`
+	OAuthProviderID *string   `db:"oauth_provider_id"`
+	CreatedAt       time.Time `db:"created_at"`
+	UpdatedAt       time.Time `db:"updated_at"`
 }
 
-// issueTokenPair firma un access token y genera un refresh token para el usuario dado.
-func (s *Service) issueTokenPair(user *User, ua, ip string) (TokenPair, error) {
+// AuthRepository define las operaciones de persistencia para usuarios.
+type AuthRepository interface {
+	CreateUser(email, name, passwordHash string) (string, error)
+	FindUserByEmail(email string) (*User, error)
+	FindUserByID(id string) (*User, error)
+	FindOrCreateOAuthUser(email, name, provider, providerID string) (*User, error)
+	UpdateUserProfile(userID string, name, avatarURL *string) (*User, error)
+	StoreRefreshToken(userID, tokenHash, userAgent, ip string) error
+	RevokeRefreshToken(userID, tokenHash string) error
+	FindRefreshToken(tokenHash string) (userID string, err error)
+}
+
+// AuthService encapsula la lógica de negocio de autenticación.
+type AuthService struct {
+	repo AuthRepository
+}
+
+func NewAuthService(repo AuthRepository) *AuthService {
+	return &AuthService{repo: repo}
+}
+
+func (s *AuthService) issueTokenPair(user *User, ua, ip string) (TokenPair, error) {
 	name := ""
 	if user.Name != nil {
 		name = *user.Name
@@ -42,8 +72,8 @@ func (s *Service) issueTokenPair(user *User, ua, ip string) (TokenPair, error) {
 	return TokenPair{AccessToken: access, RefreshToken: rt}, nil
 }
 
-// Register registra un nuevo usuario
-func (s *Service) Register(email, name, password string) (userID string, err error) {
+// Register registra un nuevo usuario.
+func (s *AuthService) Register(email, name, password string) (userID string, err error) {
 	existing, _ := s.repo.FindUserByEmail(email)
 	if existing != nil {
 		return "", ErrUserAlreadyExists
@@ -58,7 +88,7 @@ func (s *Service) Register(email, name, password string) (userID string, err err
 }
 
 // RegisterAndIssue registra un nuevo usuario y emite tokens.
-func (s *Service) RegisterAndIssue(email, name, password, ua, ip string) (TokenPair, error) {
+func (s *AuthService) RegisterAndIssue(email, name, password, ua, ip string) (TokenPair, error) {
 	userID, err := s.Register(email, name, password)
 	if err != nil {
 		return TokenPair{}, err
@@ -74,8 +104,8 @@ func (s *Service) RegisterAndIssue(email, name, password, ua, ip string) (TokenP
 	return TokenPair{AccessToken: access, RefreshToken: rt}, nil
 }
 
-// Login autentica a un usuario con email y contraseña
-func (s *Service) Login(email, password string) (*User, error) {
+// Login autentica a un usuario con email y contraseña.
+func (s *AuthService) Login(email, password string) (*User, error) {
 	user, err := s.repo.FindUserByEmail(email)
 	if err != nil || user == nil {
 		return nil, ErrInvalidCredentials
@@ -93,7 +123,7 @@ func (s *Service) Login(email, password string) (*User, error) {
 }
 
 // LoginAndIssue autentica con email/password y emite tokens.
-func (s *Service) LoginAndIssue(email, password, ua, ip string) (TokenPair, error) {
+func (s *AuthService) LoginAndIssue(email, password, ua, ip string) (TokenPair, error) {
 	user, err := s.Login(email, password)
 	if err != nil {
 		return TokenPair{}, err
@@ -102,7 +132,7 @@ func (s *Service) LoginAndIssue(email, password, ua, ip string) (TokenPair, erro
 }
 
 // RefreshTokens rota el refresh token y emite un nuevo par.
-func (s *Service) RefreshTokens(oldPlain, ua, ip string) (TokenPair, error) {
+func (s *AuthService) RefreshTokens(oldPlain, ua, ip string) (TokenPair, error) {
 	oldHash := platform.HashRefreshToken(oldPlain)
 
 	userID, err := s.repo.FindRefreshToken(oldHash)
@@ -121,7 +151,7 @@ func (s *Service) RefreshTokens(oldPlain, ua, ip string) (TokenPair, error) {
 }
 
 // RevokeToken revoca un refresh token si existe.
-func (s *Service) RevokeToken(plainToken string) {
+func (s *AuthService) RevokeToken(plainToken string) {
 	hash := platform.HashRefreshToken(plainToken)
 	userID, err := s.repo.FindRefreshToken(hash)
 	if err != nil {
@@ -131,12 +161,12 @@ func (s *Service) RevokeToken(plainToken string) {
 }
 
 // LoginOAuth busca o crea un usuario mediante proveedor OAuth y emite tokens.
-func (s *Service) LoginOAuth(email, name, provider, providerID string) (*User, error) {
+func (s *AuthService) LoginOAuth(email, name, provider, providerID string) (*User, error) {
 	return s.repo.FindOrCreateOAuthUser(email, name, provider, providerID)
 }
 
 // OAuthLoginAndIssue verifica un ID token de Google y emite tokens.
-func (s *Service) OAuthLoginAndIssue(idToken, ua, ip string) (TokenPair, error) {
+func (s *AuthService) OAuthLoginAndIssue(idToken, ua, ip string) (TokenPair, error) {
 	claims, err := platform.VerifyGoogleIDToken(idToken)
 	if err != nil {
 		return TokenPair{}, err
@@ -151,11 +181,11 @@ func (s *Service) OAuthLoginAndIssue(idToken, ua, ip string) (TokenPair, error) 
 }
 
 // GetByID returns the user with the given ID.
-func (s *Service) GetByID(id string) (*User, error) {
+func (s *AuthService) GetByID(id string) (*User, error) {
 	return s.repo.FindUserByID(id)
 }
 
 // UpdateProfile updates the user's name and/or avatar_url.
-func (s *Service) UpdateProfile(userID string, name, avatarURL *string) (*User, error) {
+func (s *AuthService) UpdateProfile(userID string, name, avatarURL *string) (*User, error) {
 	return s.repo.UpdateUserProfile(userID, name, avatarURL)
 }

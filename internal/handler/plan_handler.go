@@ -6,7 +6,7 @@ package handler
 import (
 	"net/http"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/handler/response"
 	"github.com/go-chi/chi/v5"
@@ -14,10 +14,10 @@ import (
 
 // PlanHandler exposes resource usage endpoints.
 type PlanHandler struct {
-	service *plan.Service
+	service *identity.PlanService
 }
 
-func NewPlanHandler(service *plan.Service) *PlanHandler {
+func NewPlanHandler(service *identity.PlanService) *PlanHandler {
 	return &PlanHandler{service: service}
 }
 

@@ -7,16 +7,16 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
 )
 
 type NotificationHandler struct {
-	repo notification.MarkerRepository
+	repo identity.NotificationMarkerRepository
 }
 
-func NewNotificationHandler(repo notification.MarkerRepository) *NotificationHandler {
+func NewNotificationHandler(repo identity.NotificationMarkerRepository) *NotificationHandler {
 	return &NotificationHandler{repo: repo}
 }
 

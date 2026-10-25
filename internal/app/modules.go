@@ -7,9 +7,9 @@ import (
 	"log"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
-	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
 	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
 	caddyroute "github.com/arturo/autohost-cloud-api/internal/domain/caddy_route"
 	clusterdomain "github.com/arturo/autohost-cloud-api/internal/domain/cluster"
@@ -23,12 +23,8 @@ import (
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
-	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
-	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
 	projectdomain "github.com/arturo/autohost-cloud-api/internal/domain/project"
-	reportsettings "github.com/arturo/autohost-cloud-api/internal/domain/report_settings"
 	servicemonitor "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
-	telegrambot "github.com/arturo/autohost-cloud-api/internal/domain/telegram_bot"
 	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
 	"github.com/arturo/autohost-cloud-api/internal/core/network"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
@@ -42,7 +38,7 @@ import (
 )
 
 var RepositoryModule = fx.Provide(
-	fx.Annotate(postgres.NewAuthRepository, fx.As(new(auth.Repository))),
+	fx.Annotate(postgres.NewAuthRepository, fx.As(new(identity.AuthRepository))),
 	fx.Annotate(postgres.NewNodeRepository, fx.As(new(node.Repository))),
 	fx.Annotate(postgres.NewNodeMetricRepository, fx.As(new(nodemetric.Repository))),
 	fx.Annotate(postgres.NewContainerMetricRepository, fx.As(new(containermetric.Repository))),
@@ -54,24 +50,24 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewScheduledTaskRepository, fx.As(new(jobs.ScheduledTaskRepository))),
 	fx.Annotate(postgres.NewMarketplaceRepository, fx.As(new(marketplace.Repository))),
 	fx.Annotate(postgres.NewAlertEventRepository, fx.As(new(alertevent.Repository))),
-	fx.Annotate(postgres.NewPlanRepository, fx.As(new(plan.Repository))),
+	fx.Annotate(postgres.NewPlanRepository, fx.As(new(identity.PlanRepository))),
 	fx.Annotate(postgres.NewProjectRepository, fx.As(new(projectdomain.Repository))),
 	fx.Annotate(postgres.NewServiceMonitorRepository, fx.As(new(servicemonitor.Repository))),
 	fx.Annotate(postgres.NewCaddyRouteRepository, fx.As(new(caddyroute.Repository))),
-	fx.Annotate(postgres.NewReportSettingsRepository, fx.As(new(reportsettings.Repository))),
-	fx.Annotate(postgres.NewTelegramBotRepository, fx.As(new(telegrambot.Repository))),
+	fx.Annotate(postgres.NewReportSettingsRepository, fx.As(new(identity.ReportSettingsRepository))),
+	fx.Annotate(postgres.NewTelegramBotRepository, fx.As(new(identity.TelegramBotRepository))),
 	fx.Annotate(postgres.NewNetworkStatRepository, fx.As(new(network.NetworkStatRepository))),
 	fx.Annotate(postgres.NewExternalLogRepository, fx.As(new(externallog.Repository))),
 	fx.Annotate(postgres.NewBackupRepository, fx.As(new(backup.Repository))),
 	fx.Annotate(postgres.NewLogDiagnosticRepository, fx.As(new(logdiagnostic.Repository))),
 	fx.Annotate(postgres.NewClusterRepository, fx.As(new(clusterdomain.Repository))),
 	fx.Annotate(postgres.NewContainerSettingRepository, fx.As(new(containersetting.Repository))),
-	fx.Annotate(postgres.NewNotificationMarkerRepository, fx.As(new(notification.MarkerRepository))),
+	fx.Annotate(postgres.NewNotificationMarkerRepository, fx.As(new(identity.NotificationMarkerRepository))),
 	fx.Annotate(postgres.NewVMRepository, fx.As(new(vm.Repository))),
 )
 
 var ServiceModule = fx.Provide(
-	auth.NewService,
+	identity.NewAuthService,
 	node.NewService,
 	nodemetric.NewService,
 	containermetric.NewService,
@@ -83,16 +79,16 @@ var ServiceModule = fx.Provide(
 	nodealert.NewService,
 	jobs.NewScheduledTaskService,
 	alertevent.NewService,
-	plan.NewService,
+	identity.NewPlanService,
 	projectdomain.NewService,
 	servicemonitor.NewService,
 	caddyroute.NewService,
-	reportsettings.NewService,
-	telegrambot.NewService,
+	identity.NewReportSettingsService,
+	identity.NewTelegramBotService,
 	externallog.NewService,
 	network.NewNetworkStatService,
 	network.NewVPNService,
-	notification.NewService,
+	identity.NewNotificationService,
 	backup.NewService,
 	logdiagnostic.NewService,
 	fx.Annotate(

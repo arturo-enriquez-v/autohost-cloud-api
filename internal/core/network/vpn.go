@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/platform/headscale"
 )
 
@@ -23,10 +23,10 @@ type VPNKeyResponse struct {
 
 type VPNService struct {
 	client   *headscale.Client
-	authRepo auth.Repository
+	authRepo identity.AuthRepository
 }
 
-func NewVPNService(client *headscale.Client, authRepo auth.Repository) *VPNService {
+func NewVPNService(client *headscale.Client, authRepo identity.AuthRepository) *VPNService {
 	return &VPNService{
 		client:   client,
 		authRepo: authRepo,
