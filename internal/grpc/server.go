@@ -15,22 +15,22 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
+	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
+	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
+	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
+	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
+	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
 	"github.com/arturo/autohost-cloud-api/internal/domain/marketplace"
+	"github.com/arturo/autohost-cloud-api/internal/core/network"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
-	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
-	sm "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
-	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
-	networkstat "github.com/arturo/autohost-cloud-api/internal/domain/network_stat"
-	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
-	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
-	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
 	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
+	sm "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
+	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 )
 
@@ -62,7 +62,7 @@ type NodeAgentServer struct {
 	containerMetricSvc *containermetric.Service
 	backupSvc          *backup.Service
 	logDiagnosticSvc   *logdiagnostic.Service
-	networkStatSvc     *networkstat.Service
+	networkStatSvc     *network.NetworkStatService
 	vmRepo             vm.Repository
 
 	registry        *streamRegistry
@@ -99,7 +99,7 @@ func NewNodeAgentServer(
 	notificationSvc *notification.Service,
 	backupSvc *backup.Service,
 	logDiagnosticSvc *logdiagnostic.Service,
-	networkStatSvc *networkstat.Service,
+	networkStatSvc *network.NetworkStatService,
 	redis *redis.Client,
 	vmRepo vm.Repository,
 ) *NodeAgentServer {

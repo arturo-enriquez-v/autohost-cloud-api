@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	networkstat "github.com/arturo/autohost-cloud-api/internal/domain/network_stat"
+	"github.com/arturo/autohost-cloud-api/internal/core/network"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -22,7 +22,7 @@ func NewNetworkStatRepository(db *sqlx.DB) *NetworkStatRepo {
 
 // Upsert inserts a new snapshot. The table retains history; the handler
 // exposes only the most-recent row via GetLatest.
-func (r *NetworkStatRepo) Upsert(ctx context.Context, s *networkstat.NodeNetworkStats) error {
+func (r *NetworkStatRepo) Upsert(ctx context.Context, s *network.NodeNetworkStats) error {
 	ifacesJSON, err := json.Marshal(s.Interfaces)
 	if err != nil {
 		return fmt.Errorf("marshal interfaces: %w", err)
@@ -60,7 +60,7 @@ func (r *NetworkStatRepo) Upsert(ctx context.Context, s *networkstat.NodeNetwork
 }
 
 // GetLatest returns the most recent snapshot for the node.
-func (r *NetworkStatRepo) GetLatest(ctx context.Context, nodeID string) (*networkstat.NodeNetworkStats, error) {
+func (r *NetworkStatRepo) GetLatest(ctx context.Context, nodeID string) (*network.NodeNetworkStats, error) {
 	type row struct {
 		ID          string  `db:"id"`
 		NodeID      string  `db:"node_id"`
@@ -93,7 +93,7 @@ func (r *NetworkStatRepo) GetLatest(ctx context.Context, nodeID string) (*networ
 		return nil, err
 	}
 
-	snap := &networkstat.NodeNetworkStats{
+	snap := &network.NodeNetworkStats{
 		ID:        r0.ID,
 		NodeID:    r0.NodeID,
 		RxBytes:   r0.RxBytes,

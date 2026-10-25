@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package vpn
+package network
 
 import (
 	"context"
@@ -21,13 +21,13 @@ type VPNKeyResponse struct {
 	Command     string `json:"command"`
 }
 
-type Service struct {
+type VPNService struct {
 	client   *headscale.Client
 	authRepo auth.Repository
 }
 
-func NewService(client *headscale.Client, authRepo auth.Repository) *Service {
-	return &Service{
+func NewVPNService(client *headscale.Client, authRepo auth.Repository) *VPNService {
+	return &VPNService{
 		client:   client,
 		authRepo: authRepo,
 	}
@@ -56,7 +56,7 @@ func FormatHeadscaleUsername(name string, userID string) string {
 	return fmt.Sprintf("%s-%s", cleanName, shortID)
 }
 
-func (s *Service) GenerateVPNKey(ctx context.Context, userID string) (*VPNKeyResponse, error) {
+func (s *VPNService) GenerateVPNKey(ctx context.Context, userID string) (*VPNKeyResponse, error) {
 	userObj, err := s.authRepo.FindUserByID(userID)
 	if err != nil {
 		return nil, fmt.Errorf("find user: %w", err)

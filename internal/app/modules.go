@@ -6,6 +6,8 @@ package app
 import (
 	"log"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
+	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
 	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
 	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
@@ -17,7 +19,6 @@ import (
 	externallog "github.com/arturo/autohost-cloud-api/internal/domain/external_log"
 	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
 	"github.com/arturo/autohost-cloud-api/internal/domain/marketplace"
-	networkstat "github.com/arturo/autohost-cloud-api/internal/domain/network_stat"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
@@ -29,9 +30,7 @@ import (
 	servicemonitor "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	telegrambot "github.com/arturo/autohost-cloud-api/internal/domain/telegram_bot"
 	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
-	"github.com/arturo/autohost-cloud-api/internal/domain/vpn"
-	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
-	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
+	"github.com/arturo/autohost-cloud-api/internal/core/network"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
@@ -61,7 +60,7 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewCaddyRouteRepository, fx.As(new(caddyroute.Repository))),
 	fx.Annotate(postgres.NewReportSettingsRepository, fx.As(new(reportsettings.Repository))),
 	fx.Annotate(postgres.NewTelegramBotRepository, fx.As(new(telegrambot.Repository))),
-	fx.Annotate(postgres.NewNetworkStatRepository, fx.As(new(networkstat.Repository))),
+	fx.Annotate(postgres.NewNetworkStatRepository, fx.As(new(network.NetworkStatRepository))),
 	fx.Annotate(postgres.NewExternalLogRepository, fx.As(new(externallog.Repository))),
 	fx.Annotate(postgres.NewBackupRepository, fx.As(new(backup.Repository))),
 	fx.Annotate(postgres.NewLogDiagnosticRepository, fx.As(new(logdiagnostic.Repository))),
@@ -91,8 +90,8 @@ var ServiceModule = fx.Provide(
 	reportsettings.NewService,
 	telegrambot.NewService,
 	externallog.NewService,
-	networkstat.NewService,
-	vpn.NewService,
+	network.NewNetworkStatService,
+	network.NewVPNService,
 	notification.NewService,
 	backup.NewService,
 	logdiagnostic.NewService,
