@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package vm
+package infra
 
 import (
 	"context"
@@ -21,9 +21,61 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 )
 
+var (
+	ErrVMNotFound      = errors.New("vm not found")
+	ErrVMAlreadyExists = errors.New("vm with this name already exists on host")
+	ErrVMInvalidSpecs  = errors.New("invalid vm specifications")
+	ErrVMUnauthorized  = errors.New("unauthorized")
+
+	// Backward compatibility aliases
+	ErrNotFound      = ErrVMNotFound
+	ErrAlreadyExists = ErrVMAlreadyExists
+	ErrInvalidSpecs  = ErrVMInvalidSpecs
+	ErrUnauthorized  = ErrVMUnauthorized
+)
+
 var validVMName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
-type Dispatcher interface {
+type VMStatus string
+
+const (
+	StatusCreating  VMStatus = "creating"
+	StatusRunning   VMStatus = "running"
+	StatusStopped   VMStatus = "stopped"
+	StatusError     VMStatus = "error"
+	StatusDestroyed VMStatus = "destroyed"
+)
+
+type VM struct {
+	ID            string    `db:"id"               json:"id"`
+	HostNodeID    string    `db:"host_node_id"     json:"host_node_id"`
+	NodeID        *string   `db:"node_id"          json:"node_id,omitempty"`
+	OwnerID       string    `db:"owner_id"         json:"owner_id"`
+	Name          string    `db:"name"             json:"name"`
+	VCPUs         int       `db:"vcpus"            json:"vcpus"`
+	RAMMB         int       `db:"ram_mb"           json:"ram_mb"`
+	DiskGB        int       `db:"disk_gb"          json:"disk_gb"`
+	Image         string    `db:"image"            json:"image"`
+	Status        string    `db:"status"           json:"status"`
+	IPAddress     string    `db:"ip_address"       json:"ip_address"`
+	CloudInitUser string    `db:"cloud_init_user"  json:"cloud_init_user"`
+	ErrorMessage  string    `db:"error_message"    json:"error_message,omitempty"`
+	CreatedAt     time.Time `db:"created_at"       json:"created_at"`
+	UpdatedAt     time.Time `db:"updated_at"       json:"updated_at"`
+}
+
+type VMRepository interface {
+	Create(ctx context.Context, v *VM) (*VM, error)
+	GetByID(ctx context.Context, id string) (*VM, error)
+	GetByHostAndName(ctx context.Context, hostNodeID, name string) (*VM, error)
+	ListByHost(ctx context.Context, hostNodeID string) ([]*VM, error)
+	ListByOwner(ctx context.Context, ownerID string) ([]*VM, error)
+	Update(ctx context.Context, v *VM) (*VM, error)
+	Delete(ctx context.Context, id string) error
+	LinkNodeByHostname(ctx context.Context, ownerID, hostname, nodeID, ipLocal string) error
+}
+
+type VMDispatcher interface {
 	DispatchJobWithParams(nodeID, jobID, commandName string, commandType jobs.CommandType, params string) error
 	IsNodeConnected(nodeID string) bool
 }
@@ -38,22 +90,22 @@ type CreateVMRequest struct {
 	SSHKeys       []string `json:"ssh_keys"`
 }
 
-type Service struct {
-	repo       Repository
+type VMService struct {
+	repo       VMRepository
 	nodeRepo   node.Repository
 	enrollSvc  *enrollment.Service
 	jobService *jobs.JobService
-	dispatcher Dispatcher
+	dispatcher VMDispatcher
 }
 
-func NewService(
-	repo Repository,
+func NewVMService(
+	repo VMRepository,
 	nodeRepo node.Repository,
 	enrollSvc *enrollment.Service,
 	jobService *jobs.JobService,
-	dispatcher Dispatcher,
-) *Service {
-	return &Service{
+	dispatcher VMDispatcher,
+) *VMService {
+	return &VMService{
 		repo:       repo,
 		nodeRepo:   nodeRepo,
 		enrollSvc:  enrollSvc,
@@ -64,10 +116,10 @@ func NewService(
 
 // CreateVM validates specs, generates an enrollment token, persists the VM
 // record, and dispatches the creation job to the host agent.
-func (s *Service) CreateVM(ctx context.Context, hostNodeID, userID string, req CreateVMRequest) (*VM, error) {
+func (s *VMService) CreateVM(ctx context.Context, hostNodeID, userID string, req CreateVMRequest) (*VM, error) {
 	name := strings.TrimSpace(req.Name)
 	if !validVMName.MatchString(name) {
-		return nil, fmt.Errorf("%w: name must be 1-64 chars [a-zA-Z0-9_-]", ErrInvalidSpecs)
+		return nil, fmt.Errorf("%w: name must be 1-64 chars [a-zA-Z0-9_-]", ErrVMInvalidSpecs)
 	}
 
 	// 1. Verify host node exists and belongs to the caller
@@ -76,12 +128,12 @@ func (s *Service) CreateVM(ctx context.Context, hostNodeID, userID string, req C
 		return nil, errors.New("host node not found")
 	}
 	if hostNode.OwnerID == nil || *hostNode.OwnerID != userID {
-		return nil, ErrUnauthorized
+		return nil, ErrVMUnauthorized
 	}
 
 	// 2. Check name uniqueness on this host
 	if existing, _ := s.repo.GetByHostAndName(ctx, hostNodeID, name); existing != nil {
-		return nil, ErrAlreadyExists
+		return nil, ErrVMAlreadyExists
 	}
 
 	// 3. Defaults & bounds
@@ -174,16 +226,16 @@ func (s *Service) CreateVM(ctx context.Context, hostNodeID, userID string, req C
 	}
 
 	params := map[string]any{
-		"vm_id":          created.ID,
-		"name":           created.Name,
-		"vcpus":          created.VCPUs,
-		"ram_mb":         created.RAMMB,
-		"disk_gb":        created.DiskGB,
-		"image":          created.Image,
-		"user":           created.CloudInitUser,
-		"ssh_keys":       req.SSHKeys,
-		"enroll_token":   plainToken,
-		"cloud_api_url":  apiURL,
+		"vm_id":         created.ID,
+		"name":          created.Name,
+		"vcpus":         created.VCPUs,
+		"ram_mb":        created.RAMMB,
+		"disk_gb":       created.DiskGB,
+		"image":         created.Image,
+		"user":          created.CloudInitUser,
+		"ssh_keys":      req.SSHKeys,
+		"enroll_token":  plainToken,
+		"cloud_api_url": apiURL,
 	}
 	paramsJSON, _ := json.Marshal(params)
 
@@ -202,13 +254,13 @@ func (s *Service) CreateVM(ctx context.Context, hostNodeID, userID string, req C
 }
 
 // ActionVM runs a lifecycle action (start, stop, reboot, destroy) against a VM.
-func (s *Service) ActionVM(ctx context.Context, vmID, userID, action string) error {
+func (s *VMService) ActionVM(ctx context.Context, vmID, userID, action string) error {
 	v, err := s.repo.GetByID(ctx, vmID)
 	if err != nil {
 		return err
 	}
 	if v.OwnerID != userID {
-		return ErrUnauthorized
+		return ErrVMUnauthorized
 	}
 
 	action = strings.ToLower(strings.TrimSpace(action))
@@ -243,25 +295,25 @@ func (s *Service) ActionVM(ctx context.Context, vmID, userID, action string) err
 }
 
 // ListByHost returns all VMs created on the given host node.
-func (s *Service) ListByHost(ctx context.Context, hostNodeID, userID string) ([]*VM, error) {
+func (s *VMService) ListByHost(ctx context.Context, hostNodeID, userID string) ([]*VM, error) {
 	hostNode, err := s.nodeRepo.FindByID(hostNodeID)
 	if err != nil || hostNode == nil {
 		return nil, errors.New("host node not found")
 	}
 	if hostNode.OwnerID == nil || *hostNode.OwnerID != userID {
-		return nil, ErrUnauthorized
+		return nil, ErrVMUnauthorized
 	}
 	return s.repo.ListByHost(ctx, hostNodeID)
 }
 
 // GetByID returns the details of a specific VM.
-func (s *Service) GetByID(ctx context.Context, vmID, userID string) (*VM, error) {
+func (s *VMService) GetByID(ctx context.Context, vmID, userID string) (*VM, error) {
 	v, err := s.repo.GetByID(ctx, vmID)
 	if err != nil {
 		return nil, err
 	}
 	if v.OwnerID != userID {
-		return nil, ErrUnauthorized
+		return nil, ErrVMUnauthorized
 	}
 	return v, nil
 }

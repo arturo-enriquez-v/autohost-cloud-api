@@ -9,15 +9,15 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
+	"github.com/arturo/autohost-cloud-api/internal/core/infra"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 )
 
 type VMHandler struct {
-	vmService *vm.Service
+	vmService *infra.VMService
 }
 
-func NewVMHandler(vmService *vm.Service) *VMHandler {
+func NewVMHandler(vmService *infra.VMService) *VMHandler {
 	return &VMHandler{vmService: vmService}
 }
 
@@ -59,7 +59,7 @@ func (h *VMHandler) createVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req vm.CreateVMRequest
+	var req infra.CreateVMRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
@@ -91,7 +91,7 @@ func (h *VMHandler) listVMs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if list == nil {
-		list = []*vm.VM{}
+		list = []*infra.VM{}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

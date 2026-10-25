@@ -10,8 +10,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/infra"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
-	"github.com/arturo/autohost-cloud-api/internal/domain/cluster"
 )
 
 type AutoscalerDispatcher interface {
@@ -20,13 +20,13 @@ type AutoscalerDispatcher interface {
 }
 
 type AutoscalerScheduler struct {
-	clusterRepo cluster.Repository
+	clusterRepo infra.ClusterRepository
 	jobSvc      *jobs.JobService
 	dispatcher  AutoscalerDispatcher
 }
 
 func NewAutoscalerScheduler(
-	clusterRepo cluster.Repository,
+	clusterRepo infra.ClusterRepository,
 	jobSvc *jobs.JobService,
 	dispatcher AutoscalerDispatcher,
 ) *AutoscalerScheduler {
@@ -73,7 +73,7 @@ func (s *AutoscalerScheduler) evaluatePolicies(ctx context.Context) {
 	}
 }
 
-func (s *AutoscalerScheduler) evaluateSinglePolicy(ctx context.Context, item *cluster.AutoscalePolicyWithContext) {
+func (s *AutoscalerScheduler) evaluateSinglePolicy(ctx context.Context, item *infra.AutoscalePolicyWithContext) {
 	policy := item.Policy
 	now := time.Now()
 
@@ -151,7 +151,7 @@ func (s *AutoscalerScheduler) evaluateSinglePolicy(ctx context.Context, item *cl
 	}
 }
 
-func (s *AutoscalerScheduler) executeScaling(ctx context.Context, item *cluster.AutoscalePolicyWithContext, targetReplicas int) {
+func (s *AutoscalerScheduler) executeScaling(ctx context.Context, item *infra.AutoscalePolicyWithContext, targetReplicas int) {
 	// Update replicas in DB
 	_ = s.clusterRepo.UpdateClusterServiceReplicas(ctx, item.ServiceID, targetReplicas)
 	_ = s.clusterRepo.UpdateLastScaledAt(ctx, item.Policy.ID, time.Now())

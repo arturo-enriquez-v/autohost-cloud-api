@@ -26,7 +26,7 @@ import (
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
-	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
+	"github.com/arturo/autohost-cloud-api/internal/core/infra"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 )
@@ -50,7 +50,7 @@ type NodeAgentServer struct {
 	backupSvc          *apps.BackupService
 	logDiagnosticSvc   *logdiagnostic.Service
 	networkStatSvc     *network.NetworkStatService
-	vmRepo             vm.Repository
+	vmRepo             infra.VMRepository
 
 	registry        *streamRegistry
 	logs            *logBroker
@@ -88,7 +88,7 @@ func NewNodeAgentServer(
 	logDiagnosticSvc *logdiagnostic.Service,
 	networkStatSvc *network.NetworkStatService,
 	redis *redis.Client,
-	vmRepo vm.Repository,
+	vmRepo infra.VMRepository,
 ) *NodeAgentServer {
 	reg := newStreamRegistry()
 	s := &NodeAgentServer{
@@ -126,7 +126,7 @@ func (s *NodeAgentServer) SetBackupService(svc *apps.BackupService) {
 	s.backupSvc = svc
 }
 
-func (s *NodeAgentServer) SetVMRepository(repo vm.Repository) {
+func (s *NodeAgentServer) SetVMRepository(repo infra.VMRepository) {
 	s.vmRepo = repo
 }
 
@@ -363,7 +363,7 @@ func (s *NodeAgentServer) Connect(
 						if err := json.Unmarshal([]byte(j.Params), &p); err == nil && p.VMID != "" {
 							if targetVM, err := s.vmRepo.GetByID(context.Background(), p.VMID); err == nil && targetVM != nil {
 								if jobStatus != jobs.StatusCompleted {
-									targetVM.Status = string(vm.StatusError)
+									targetVM.Status = string(infra.StatusError)
 									targetVM.ErrorMessage = r.GetError()
 									if _, err := s.vmRepo.Update(context.Background(), targetVM); err != nil {
 										log.Printf("[gRPC] update vm %s status to error: %v", targetVM.ID, err)
@@ -385,15 +385,15 @@ func (s *NodeAgentServer) Connect(
 								if jobStatus != jobs.StatusCompleted {
 									targetVM.ErrorMessage = r.GetError()
 									if action == "start" {
-										targetVM.Status = string(vm.StatusStopped)
+										targetVM.Status = string(infra.StatusStopped)
 									}
 									_, _ = s.vmRepo.Update(context.Background(), targetVM)
 								} else {
 									targetVM.ErrorMessage = ""
 									if action == "start" {
-										targetVM.Status = string(vm.StatusRunning)
+										targetVM.Status = string(infra.StatusRunning)
 									} else if action == "stop" {
-										targetVM.Status = string(vm.StatusStopped)
+										targetVM.Status = string(infra.StatusStopped)
 									}
 									_, _ = s.vmRepo.Update(context.Background(), targetVM)
 								}

@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/infra"
 	"github.com/arturo/autohost-cloud-api/internal/domain/enrollment"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
-	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 	"github.com/go-chi/chi/v5"
@@ -26,10 +26,10 @@ type EnrollmentHandler struct {
 	service          *enrollment.Service
 	nodeService      *node.Service
 	nodeTokenService *nodetoken.Service
-	vmRepo           vm.Repository
+	vmRepo           infra.VMRepository
 }
 
-func NewEnrollmentHandler(service *enrollment.Service, nodeService *node.Service, nodeTokenService *nodetoken.Service, vmRepo vm.Repository) *EnrollmentHandler {
+func NewEnrollmentHandler(service *enrollment.Service, nodeService *node.Service, nodeTokenService *nodetoken.Service, vmRepo infra.VMRepository) *EnrollmentHandler {
 	return &EnrollmentHandler{service: service, nodeService: nodeService, nodeTokenService: nodeTokenService, vmRepo: vmRepo}
 }
 

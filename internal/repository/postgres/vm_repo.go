@@ -10,7 +10,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
+	"github.com/arturo/autohost-cloud-api/internal/core/infra"
 )
 
 type VMRepository struct {
@@ -21,8 +21,8 @@ func NewVMRepository(db *sqlx.DB) *VMRepository {
 	return &VMRepository{db: db}
 }
 
-func (r *VMRepository) Create(ctx context.Context, v *vm.VM) (*vm.VM, error) {
-	var result vm.VM
+func (r *VMRepository) Create(ctx context.Context, v *infra.VM) (*infra.VM, error) {
+	var result infra.VM
 	query := `
 		INSERT INTO vms (
 			host_node_id, node_id, owner_id, name, vcpus, ram_mb, disk_gb,
@@ -47,8 +47,8 @@ func (r *VMRepository) Create(ctx context.Context, v *vm.VM) (*vm.VM, error) {
 	return &result, nil
 }
 
-func (r *VMRepository) GetByID(ctx context.Context, id string) (*vm.VM, error) {
-	var result vm.VM
+func (r *VMRepository) GetByID(ctx context.Context, id string) (*infra.VM, error) {
+	var result infra.VM
 	query := `
 		SELECT id, host_node_id, node_id, owner_id, name, vcpus, ram_mb, disk_gb,
 		       image, status, ip_address, cloud_init_user, error_message, created_at, updated_at
@@ -57,7 +57,7 @@ func (r *VMRepository) GetByID(ctx context.Context, id string) (*vm.VM, error) {
 
 	err := r.db.GetContext(ctx, &result, query, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, vm.ErrNotFound
+		return nil, infra.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -65,8 +65,8 @@ func (r *VMRepository) GetByID(ctx context.Context, id string) (*vm.VM, error) {
 	return &result, nil
 }
 
-func (r *VMRepository) GetByHostAndName(ctx context.Context, hostNodeID, name string) (*vm.VM, error) {
-	var result vm.VM
+func (r *VMRepository) GetByHostAndName(ctx context.Context, hostNodeID, name string) (*infra.VM, error) {
+	var result infra.VM
 	query := `
 		SELECT id, host_node_id, node_id, owner_id, name, vcpus, ram_mb, disk_gb,
 		       image, status, ip_address, cloud_init_user, error_message, created_at, updated_at
@@ -75,7 +75,7 @@ func (r *VMRepository) GetByHostAndName(ctx context.Context, hostNodeID, name st
 
 	err := r.db.GetContext(ctx, &result, query, hostNodeID, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, vm.ErrNotFound
+		return nil, infra.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -83,8 +83,8 @@ func (r *VMRepository) GetByHostAndName(ctx context.Context, hostNodeID, name st
 	return &result, nil
 }
 
-func (r *VMRepository) ListByHost(ctx context.Context, hostNodeID string) ([]*vm.VM, error) {
-	var list []*vm.VM
+func (r *VMRepository) ListByHost(ctx context.Context, hostNodeID string) ([]*infra.VM, error) {
+	var list []*infra.VM
 	query := `
 		SELECT id, host_node_id, node_id, owner_id, name, vcpus, ram_mb, disk_gb,
 		       image, status, ip_address, cloud_init_user, error_message, created_at, updated_at
@@ -99,8 +99,8 @@ func (r *VMRepository) ListByHost(ctx context.Context, hostNodeID string) ([]*vm
 	return list, nil
 }
 
-func (r *VMRepository) ListByOwner(ctx context.Context, ownerID string) ([]*vm.VM, error) {
-	var list []*vm.VM
+func (r *VMRepository) ListByOwner(ctx context.Context, ownerID string) ([]*infra.VM, error) {
+	var list []*infra.VM
 	query := `
 		SELECT id, host_node_id, node_id, owner_id, name, vcpus, ram_mb, disk_gb,
 		       image, status, ip_address, cloud_init_user, error_message, created_at, updated_at
@@ -115,8 +115,8 @@ func (r *VMRepository) ListByOwner(ctx context.Context, ownerID string) ([]*vm.V
 	return list, nil
 }
 
-func (r *VMRepository) Update(ctx context.Context, v *vm.VM) (*vm.VM, error) {
-	var result vm.VM
+func (r *VMRepository) Update(ctx context.Context, v *infra.VM) (*infra.VM, error) {
+	var result infra.VM
 	query := `
 		UPDATE vms
 		SET node_id = $1, status = $2, ip_address = $3, error_message = $4, updated_at = NOW()
@@ -133,7 +133,7 @@ func (r *VMRepository) Update(ctx context.Context, v *vm.VM) (*vm.VM, error) {
 		&result.CreatedAt, &result.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, vm.ErrNotFound
+		return nil, infra.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -151,7 +151,7 @@ func (r *VMRepository) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	if rows == 0 {
-		return vm.ErrNotFound
+		return infra.ErrNotFound
 	}
 	return nil
 }

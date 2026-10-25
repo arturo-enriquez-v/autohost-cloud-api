@@ -9,9 +9,9 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
+	"github.com/arturo/autohost-cloud-api/internal/core/infra"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
-	clusterdomain "github.com/arturo/autohost-cloud-api/internal/domain/cluster"
 	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
 	containersetting "github.com/arturo/autohost-cloud-api/internal/domain/container_setting"
 	"github.com/arturo/autohost-cloud-api/internal/domain/enrollment"
@@ -21,7 +21,6 @@ import (
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
-	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
 	"github.com/arturo/autohost-cloud-api/internal/core/network"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
@@ -56,10 +55,10 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewExternalLogRepository, fx.As(new(externallog.Repository))),
 	fx.Annotate(postgres.NewBackupRepository, fx.As(new(apps.BackupRepository))),
 	fx.Annotate(postgres.NewLogDiagnosticRepository, fx.As(new(logdiagnostic.Repository))),
-	fx.Annotate(postgres.NewClusterRepository, fx.As(new(clusterdomain.Repository))),
+	fx.Annotate(postgres.NewClusterRepository, fx.As(new(infra.ClusterRepository))),
 	fx.Annotate(postgres.NewContainerSettingRepository, fx.As(new(containersetting.Repository))),
 	fx.Annotate(postgres.NewNotificationMarkerRepository, fx.As(new(identity.NotificationMarkerRepository))),
-	fx.Annotate(postgres.NewVMRepository, fx.As(new(vm.Repository))),
+	fx.Annotate(postgres.NewVMRepository, fx.As(new(infra.VMRepository))),
 )
 
 var ServiceModule = fx.Provide(
@@ -88,13 +87,13 @@ var ServiceModule = fx.Provide(
 	apps.NewBackupService,
 	logdiagnostic.NewService,
 	fx.Annotate(
-		func(repo clusterdomain.Repository, nodeRepo node.Repository, jobService *jobs.JobService, grpc *grpcserver.NodeAgentServer) *clusterdomain.Service {
-			return clusterdomain.NewService(repo, nodeRepo, jobService, grpc)
+		func(repo infra.ClusterRepository, nodeRepo node.Repository, jobService *jobs.JobService, grpc *grpcserver.NodeAgentServer) *infra.ClusterManager {
+			return infra.NewClusterManager(repo, nodeRepo, jobService, grpc)
 		},
 	),
 	fx.Annotate(
-		func(repo vm.Repository, nodeRepo node.Repository, enrollSvc *enrollment.Service, jobService *jobs.JobService, grpc *grpcserver.NodeAgentServer) *vm.Service {
-			return vm.NewService(repo, nodeRepo, enrollSvc, jobService, grpc)
+		func(repo infra.VMRepository, nodeRepo node.Repository, enrollSvc *enrollment.Service, jobService *jobs.JobService, grpc *grpcserver.NodeAgentServer) *infra.VMService {
+			return infra.NewVMService(repo, nodeRepo, enrollSvc, jobService, grpc)
 		},
 	),
 )
@@ -154,7 +153,7 @@ var InfraModule = fx.Provide(
 	scheduler.NewReportScheduler,
 	scheduler.NewDiagnosticCleanupScheduler,
 	fx.Annotate(
-		func(repo clusterdomain.Repository, jobSvc *jobs.JobService, grpc *grpcserver.NodeAgentServer) *scheduler.AutoscalerScheduler {
+		func(repo infra.ClusterRepository, jobSvc *jobs.JobService, grpc *grpcserver.NodeAgentServer) *scheduler.AutoscalerScheduler {
 			return scheduler.NewAutoscalerScheduler(repo, jobSvc, grpc)
 		},
 	),
