@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 )
 
 type mockDispatcher struct {
@@ -15,7 +15,7 @@ type mockDispatcher struct {
 	called     bool
 }
 
-func (m *mockDispatcher) DispatchJob(nodeID, jobID, commandName string, commandType nodecommand.CommandType) error {
+func (m *mockDispatcher) DispatchJob(nodeID, jobID, commandName string, commandType jobs.CommandType) error {
 	m.called = true
 	if m.shouldFail {
 		return errors.New("dispatch failed")
@@ -28,7 +28,7 @@ func TestMultiDispatcher_FirstSucceeds(t *testing.T) {
 	d2 := &mockDispatcher{shouldFail: false}
 
 	md := NewMultiDispatcher(d1, d2)
-	err := md.DispatchJob("node1", "job1", "app.start", nodecommand.CommandTypeDefault)
+	err := md.DispatchJob("node1", "job1", "app.start", jobs.CommandTypeDefault)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -46,7 +46,7 @@ func TestMultiDispatcher_FallsBackToSecond(t *testing.T) {
 	d2 := &mockDispatcher{shouldFail: false}
 
 	md := NewMultiDispatcher(d1, d2)
-	err := md.DispatchJob("node1", "job1", "app.start", nodecommand.CommandTypeDefault)
+	err := md.DispatchJob("node1", "job1", "app.start", jobs.CommandTypeDefault)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}

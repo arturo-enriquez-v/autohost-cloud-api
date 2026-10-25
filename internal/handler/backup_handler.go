@@ -13,10 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -27,14 +26,14 @@ import (
 
 type BackupHandler struct {
 	backupSvc  *backup.Service
-	jobSvc     *job.Service
+	jobSvc     *jobs.JobService
 	dispatcher dispatcher.ParamDispatcher
 	nodeSvc    *node.Service
 }
 
 func NewBackupHandler(
 	backupSvc *backup.Service,
-	jobSvc *job.Service,
+	jobSvc *jobs.JobService,
 	disp dispatcher.ParamDispatcher,
 	nodeSvc *node.Service,
 ) *BackupHandler {
@@ -316,7 +315,7 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 
-	j, err := h.jobSvc.Dispatch(nodeID, commandName, nodecommand.CommandTypeDefault)
+	j, err := h.jobSvc.Dispatch(nodeID, commandName, jobs.CommandTypeDefault)
 	if err != nil {
 		_ = h.backupSvc.UpdateRecordStatus(rec.ID, "failed", "", 0, strPtr(err.Error()))
 		log.Printf("[ERROR] dispatch backup job failed: %v", err)
@@ -327,7 +326,7 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 	_ = h.backupSvc.UpdateRecordJobID(rec.ID, j.ID)
 	rec.JobID = &j.ID
 
-	_ = h.dispatcher.DispatchJobWithParams(nodeID, j.ID, commandName, nodecommand.CommandTypeDefault, string(params))
+	_ = h.dispatcher.DispatchJobWithParams(nodeID, j.ID, commandName, jobs.CommandTypeDefault, string(params))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(rec)
@@ -422,7 +421,7 @@ func (h *BackupHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	j, err := h.jobSvc.Dispatch(rec.NodeID, restoreCommandName, nodecommand.CommandTypeDefault)
+	j, err := h.jobSvc.Dispatch(rec.NodeID, restoreCommandName, jobs.CommandTypeDefault)
 	if err != nil {
 		_ = h.backupSvc.UpdateRecordStatus(restoreRec.ID, "failed", "", 0, strPtr(err.Error()))
 		writeJSONError(w, "failed to dispatch restore job", http.StatusInternalServerError)
@@ -431,7 +430,7 @@ func (h *BackupHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 
 	_ = h.backupSvc.UpdateRecordJobID(restoreRec.ID, j.ID)
 
-	_ = h.dispatcher.DispatchJobWithParams(rec.NodeID, j.ID, restoreCommandName, nodecommand.CommandTypeDefault, string(params))
+	_ = h.dispatcher.DispatchJobWithParams(rec.NodeID, j.ID, restoreCommandName, jobs.CommandTypeDefault, string(params))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{

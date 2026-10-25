@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package nodecommand
+package jobs
 
 import (
 	"errors"
@@ -37,10 +37,40 @@ type NodeCommand struct {
 	CreatedAt   time.Time   `db:"created_at"`
 }
 
-// Repository defines the persistence contract for node commands.
-type Repository interface {
+// NodeCommandRepository defines the persistence contract for node commands.
+type NodeCommandRepository interface {
 	Upsert(cmd *NodeCommand) (*NodeCommand, error)
 	FindByNodeID(nodeID string) ([]*NodeCommand, error)
 	FindByID(id string) (*NodeCommand, error)
 	Delete(id string) error
+}
+
+// NodeCommandService manages registration and discovery of node commands.
+type NodeCommandService struct {
+	repo NodeCommandRepository
+}
+
+func NewNodeCommandService(repo NodeCommandRepository) *NodeCommandService {
+	return &NodeCommandService{repo: repo}
+}
+
+// Register upserts a command for a node (called by the agent on startup / discovery).
+func (s *NodeCommandService) Register(cmd *NodeCommand) (*NodeCommand, error) {
+	if cmd.NodeID == "" || cmd.Name == "" {
+		return nil, ErrInvalidCommandData
+	}
+	if cmd.Type == "" {
+		cmd.Type = CommandTypeDefault
+	}
+	return s.repo.Upsert(cmd)
+}
+
+// ListByNode returns all commands registered for a given node.
+func (s *NodeCommandService) ListByNode(nodeID string) ([]*NodeCommand, error) {
+	return s.repo.FindByNodeID(nodeID)
+}
+
+// Delete removes a command by its ID.
+func (s *NodeCommandService) Delete(id string) error {
+	return s.repo.Delete(id)
 }

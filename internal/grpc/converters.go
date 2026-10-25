@@ -4,31 +4,30 @@
 package grpcserver
 
 import (
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
 )
 
-func pbCommandType(t pb.CommandType) nodecommand.CommandType {
+func pbCommandType(t pb.CommandType) jobs.CommandType {
 	switch t {
 	case pb.CommandType_COMMAND_TYPE_CUSTOM:
-		return nodecommand.CommandTypeCustom
+		return jobs.CommandTypeCustom
 	case pb.CommandType_COMMAND_TYPE_INSTALL_APP:
-		return nodecommand.CommandTypeInstallApp
+		return jobs.CommandTypeInstallApp
 	case pb.CommandType_COMMAND_TYPE_SWARM:
-		return nodecommand.CommandTypeSwarm
+		return jobs.CommandTypeSwarm
 	default:
-		return nodecommand.CommandTypeDefault
+		return jobs.CommandTypeDefault
 	}
 }
 
 func pbJobStatus(s pb.JobStatus) string {
 	switch s {
 	case pb.JobStatus_JOB_STATUS_RUNNING:
-		return string(job.StatusRunning)
+		return string(jobs.StatusRunning)
 	case pb.JobStatus_JOB_STATUS_FAILED:
-		return string(job.StatusFailed)
+		return string(jobs.StatusFailed)
 	default:
-		return string(job.StatusCompleted)
+		return string(jobs.StatusCompleted)
 	}
 }

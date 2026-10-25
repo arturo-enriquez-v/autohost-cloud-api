@@ -10,25 +10,24 @@ import (
 	"os"
 	"time"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/domain/cluster"
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 )
 
 type AutoscalerDispatcher interface {
-	DispatchJobWithParams(nodeID, jobID, commandName string, commandType nodecommand.CommandType, params string) error
+	DispatchJobWithParams(nodeID, jobID, commandName string, commandType jobs.CommandType, params string) error
 	IsNodeConnected(nodeID string) bool
 }
 
 type AutoscalerScheduler struct {
 	clusterRepo cluster.Repository
-	jobSvc      *job.Service
+	jobSvc      *jobs.JobService
 	dispatcher  AutoscalerDispatcher
 }
 
 func NewAutoscalerScheduler(
 	clusterRepo cluster.Repository,
-	jobSvc *job.Service,
+	jobSvc *jobs.JobService,
 	dispatcher AutoscalerDispatcher,
 ) *AutoscalerScheduler {
 	return &AutoscalerScheduler{
@@ -168,9 +167,9 @@ func (s *AutoscalerScheduler) executeScaling(ctx context.Context, item *cluster.
 	})
 
 	if s.jobSvc != nil {
-		j, err := s.jobSvc.DispatchWithParams(item.ManagerNodeID, "swarm.service.scale", nodecommand.CommandTypeSwarm, string(params))
+		j, err := s.jobSvc.DispatchWithParams(item.ManagerNodeID, "swarm.service.scale", jobs.CommandTypeSwarm, string(params))
 		if err == nil && s.dispatcher != nil && s.dispatcher.IsNodeConnected(item.ManagerNodeID) {
-			_ = s.dispatcher.DispatchJobWithParams(item.ManagerNodeID, j.ID, "swarm.service.scale", nodecommand.CommandTypeSwarm, string(params))
+			_ = s.dispatcher.DispatchJobWithParams(item.ManagerNodeID, j.ID, "swarm.service.scale", jobs.CommandTypeSwarm, string(params))
 		}
 	}
 }

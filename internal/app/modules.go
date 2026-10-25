@@ -15,24 +15,22 @@ import (
 	containersetting "github.com/arturo/autohost-cloud-api/internal/domain/container_setting"
 	"github.com/arturo/autohost-cloud-api/internal/domain/enrollment"
 	externallog "github.com/arturo/autohost-cloud-api/internal/domain/external_log"
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
 	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
 	"github.com/arturo/autohost-cloud-api/internal/domain/marketplace"
 	networkstat "github.com/arturo/autohost-cloud-api/internal/domain/network_stat"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
 	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
 	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
 	projectdomain "github.com/arturo/autohost-cloud-api/internal/domain/project"
 	reportsettings "github.com/arturo/autohost-cloud-api/internal/domain/report_settings"
-	scheduledtask "github.com/arturo/autohost-cloud-api/internal/domain/scheduled_task"
 	servicemonitor "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
 	telegrambot "github.com/arturo/autohost-cloud-api/internal/domain/telegram_bot"
 	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
 	"github.com/arturo/autohost-cloud-api/internal/domain/vpn"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
@@ -51,10 +49,10 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewContainerMetricRepository, fx.As(new(containermetric.Repository))),
 	fx.Annotate(postgres.NewEnrollmentRepository, fx.As(new(enrollment.Repository))),
 	fx.Annotate(postgres.NewNodeTokenRepository, fx.As(new(nodetoken.Repository))),
-	fx.Annotate(postgres.NewNodeCommandRepository, fx.As(new(nodecommand.Repository))),
-	fx.Annotate(postgres.NewJobRepository, fx.As(new(job.Repository))),
+	fx.Annotate(postgres.NewNodeCommandRepository, fx.As(new(jobs.NodeCommandRepository))),
+	fx.Annotate(postgres.NewJobRepository, fx.As(new(jobs.JobRepository))),
 	fx.Annotate(postgres.NewNodeAlertRepository, fx.As(new(nodealert.Repository))),
-	fx.Annotate(postgres.NewScheduledTaskRepository, fx.As(new(scheduledtask.Repository))),
+	fx.Annotate(postgres.NewScheduledTaskRepository, fx.As(new(jobs.ScheduledTaskRepository))),
 	fx.Annotate(postgres.NewMarketplaceRepository, fx.As(new(marketplace.Repository))),
 	fx.Annotate(postgres.NewAlertEventRepository, fx.As(new(alertevent.Repository))),
 	fx.Annotate(postgres.NewPlanRepository, fx.As(new(plan.Repository))),
@@ -81,10 +79,10 @@ var ServiceModule = fx.Provide(
 	containersetting.NewService,
 	enrollment.NewService,
 	nodetoken.NewService,
-	nodecommand.NewService,
-	job.NewService,
+	jobs.NewNodeCommandService,
+	jobs.NewJobService,
 	nodealert.NewService,
-	scheduledtask.NewService,
+	jobs.NewScheduledTaskService,
 	alertevent.NewService,
 	plan.NewService,
 	projectdomain.NewService,
@@ -99,12 +97,12 @@ var ServiceModule = fx.Provide(
 	backup.NewService,
 	logdiagnostic.NewService,
 	fx.Annotate(
-		func(repo clusterdomain.Repository, nodeRepo node.Repository, jobService *job.Service, grpc *grpcserver.NodeAgentServer) *clusterdomain.Service {
+		func(repo clusterdomain.Repository, nodeRepo node.Repository, jobService *jobs.JobService, grpc *grpcserver.NodeAgentServer) *clusterdomain.Service {
 			return clusterdomain.NewService(repo, nodeRepo, jobService, grpc)
 		},
 	),
 	fx.Annotate(
-		func(repo vm.Repository, nodeRepo node.Repository, enrollSvc *enrollment.Service, jobService *job.Service, grpc *grpcserver.NodeAgentServer) *vm.Service {
+		func(repo vm.Repository, nodeRepo node.Repository, enrollSvc *enrollment.Service, jobService *jobs.JobService, grpc *grpcserver.NodeAgentServer) *vm.Service {
 			return vm.NewService(repo, nodeRepo, enrollSvc, jobService, grpc)
 		},
 	),
@@ -165,7 +163,7 @@ var InfraModule = fx.Provide(
 	scheduler.NewReportScheduler,
 	scheduler.NewDiagnosticCleanupScheduler,
 	fx.Annotate(
-		func(repo clusterdomain.Repository, jobSvc *job.Service, grpc *grpcserver.NodeAgentServer) *scheduler.AutoscalerScheduler {
+		func(repo clusterdomain.Repository, jobSvc *jobs.JobService, grpc *grpcserver.NodeAgentServer) *scheduler.AutoscalerScheduler {
 			return scheduler.NewAutoscalerScheduler(repo, jobSvc, grpc)
 		},
 	),

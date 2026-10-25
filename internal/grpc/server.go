@@ -16,11 +16,10 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/domain/marketplace"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
 	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
 	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
 	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
@@ -46,8 +45,8 @@ type NodeAgentServer struct {
 	alertevent         *alertevent.Service
 	marketplace        marketplace.Repository
 	nodetoken          *nodetoken.Service
-	nodecommand        *nodecommand.Service
-	job                *job.Service
+	nodecommand        *jobs.NodeCommandService
+	job                *jobs.JobService
 	node               *node.Service
 	nodemetric         *nodemetric.Service
 	containermetric    *containermetric.Service
@@ -56,8 +55,8 @@ type NodeAgentServer struct {
 	alertEventSvc      *alertevent.Service
 	marketplaceRepo    marketplace.Repository
 	tokenSvc           *nodetoken.Service
-	commandSvc         *nodecommand.Service
-	jobSvc             *job.Service
+	commandSvc         *jobs.NodeCommandService
+	jobSvc             *jobs.JobService
 	nodeSvc            *node.Service
 	metricSvc          *nodemetric.Service
 	containerMetricSvc *containermetric.Service
@@ -86,8 +85,8 @@ type NodeAgentServer struct {
 
 // NewNodeAgentServer creates a ready-to-register gRPC server.
 func NewNodeAgentServer(
-	commandSvc *nodecommand.Service,
-	jobSvc *job.Service,
+	commandSvc *jobs.NodeCommandService,
+	jobSvc *jobs.JobService,
 	tokenSvc *nodetoken.Service,
 	alertSvc *nodealert.Service,
 	nodeSvc *node.Service,
@@ -163,7 +162,7 @@ func (s *NodeAgentServer) RegisterCommands(
 		if recvErr != nil {
 			return recvErr // propagate as gRPC status error
 		}
-		cmd := &nodecommand.NodeCommand{
+		cmd := &jobs.NodeCommand{
 			NodeID:      nodeID,
 			Name:        req.GetName(),
 			Description: req.GetDescription(),
@@ -261,7 +260,7 @@ func (s *NodeAgentServer) Connect(
 
 	// Re-dispatch pending install_app jobs so the agent receives params it may
 	// have missed while it was offline.
-	if pendingJobs, err := s.jobSvc.FindPendingByNodeID(nodeID, nodecommand.CommandTypeInstallApp); err != nil {
+	if pendingJobs, err := s.jobSvc.FindPendingByNodeID(nodeID, jobs.CommandTypeInstallApp); err != nil {
 		log.Printf("[gRPC] list pending install_app jobs for node %s: %v", nodeID, err)
 	} else {
 		for _, j := range pendingJobs {
@@ -303,7 +302,7 @@ func (s *NodeAgentServer) Connect(
 		switch p := in.Payload.(type) {
 		case *pb.NodeMessage_JobResult:
 			r := p.JobResult
-			jobStatus := job.JobStatus(pbJobStatus(r.GetStatus()))
+			jobStatus := jobs.JobStatus(pbJobStatus(r.GetStatus()))
 			if err := s.jobSvc.UpdateResult(
 				r.GetJobId(),
 				jobStatus,
@@ -342,7 +341,7 @@ func (s *NodeAgentServer) Connect(
 					errMsg = &e
 				}
 				statusStr := "completed"
-				if jobStatus != job.StatusCompleted {
+				if jobStatus != jobs.StatusCompleted {
 					statusStr = "failed"
 				}
 				if err := s.backupSvc.UpdateRecordByJobID(r.GetJobId(), statusStr, outputData.S3Key, outputData.FileSizeBytes, errMsg); err != nil {
@@ -356,7 +355,7 @@ func (s *NodeAgentServer) Connect(
 			if s.marketplaceRepo != nil {
 				if mApp, err := s.marketplaceRepo.FindByJobID(r.GetJobId()); err == nil {
 					var appStatus marketplace.AppStatus
-					if jobStatus == job.StatusCompleted {
+					if jobStatus == jobs.StatusCompleted {
 						appStatus = marketplace.StatusRunning
 					} else {
 						appStatus = marketplace.StatusFailed
@@ -376,7 +375,7 @@ func (s *NodeAgentServer) Connect(
 						}
 						if err := json.Unmarshal([]byte(j.Params), &p); err == nil && p.VMID != "" {
 							if targetVM, err := s.vmRepo.GetByID(context.Background(), p.VMID); err == nil && targetVM != nil {
-								if jobStatus != job.StatusCompleted {
+								if jobStatus != jobs.StatusCompleted {
 									targetVM.Status = string(vm.StatusError)
 									targetVM.ErrorMessage = r.GetError()
 									if _, err := s.vmRepo.Update(context.Background(), targetVM); err != nil {
@@ -396,7 +395,7 @@ func (s *NodeAgentServer) Connect(
 							action := parts[1]
 							vmName := parts[2]
 							if targetVM, err := s.vmRepo.GetByHostAndName(context.Background(), nodeID, vmName); err == nil && targetVM != nil {
-								if jobStatus != job.StatusCompleted {
+								if jobStatus != jobs.StatusCompleted {
 									targetVM.ErrorMessage = r.GetError()
 									if action == "start" {
 										targetVM.Status = string(vm.StatusStopped)
@@ -846,12 +845,12 @@ func (s *NodeAgentServer) listenContainerCommands() {
 				if err := json.Unmarshal([]byte(msg.Payload), &req); err == nil {
 					log.Printf("[gRPC] received remote job dispatch for node %s (%s) via Redis -> delivering to node", targetNodeID, req.CommandName)
 					ct := pb.CommandType_COMMAND_TYPE_DEFAULT
-					switch nodecommand.CommandType(req.CommandType) {
-					case nodecommand.CommandTypeCustom:
+					switch jobs.CommandType(req.CommandType) {
+					case jobs.CommandTypeCustom:
 						ct = pb.CommandType_COMMAND_TYPE_CUSTOM
-					case nodecommand.CommandTypeInstallApp:
+					case jobs.CommandTypeInstallApp:
 						ct = pb.CommandType_COMMAND_TYPE_INSTALL_APP
-					case nodecommand.CommandTypeSwarm:
+					case jobs.CommandTypeSwarm:
 						ct = pb.CommandType_COMMAND_TYPE_SWARM
 					}
 					serverMsg := &pb.ServerMessage{

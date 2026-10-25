@@ -11,8 +11,7 @@ import (
 	"strings"
 
 	containersetting "github.com/arturo/autohost-cloud-api/internal/domain/container_setting"
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
@@ -20,13 +19,13 @@ import (
 
 // JobHandler handles job dispatch and status queries.
 type JobHandler struct {
-	jobService          *job.Service
+	jobService          *jobs.JobService
 	dispatcher          dispatcher.NodeDispatcher
 	containerSettingSvc *containersetting.Service
 }
 
 func NewJobHandler(
-	jobService *job.Service,
+	jobService *jobs.JobService,
 	disp dispatcher.NodeDispatcher,
 	containerSettingSvc *containersetting.Service,
 ) *JobHandler {
@@ -48,10 +47,10 @@ func (h *JobHandler) Routes() chi.Router {
 
 // dispatchJobRequest is the payload from the dashboard.
 type dispatchJobRequest struct {
-	NodeID      string                  `json:"node_id"`
-	CommandName string                  `json:"command_name"`
-	CommandType nodecommand.CommandType `json:"command_type"` // "default" | "custom"
-	Params      string                  `json:"params,omitempty"`
+	NodeID      string           `json:"node_id"`
+	CommandName string           `json:"command_name"`
+	CommandType jobs.CommandType `json:"command_type"` // "default" | "custom"
+	Params      string           `json:"params,omitempty"`
 }
 
 // Dispatch creates a pending job and sends an execute_job message to the node.
@@ -81,7 +80,7 @@ func (h *JobHandler) Dispatch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var j *job.Job
+	var j *jobs.Job
 	var err error
 	if req.Params != "" {
 		j, err = h.jobService.DispatchWithParams(req.NodeID, req.CommandName, req.CommandType, req.Params)
@@ -117,7 +116,7 @@ func (h *JobHandler) GetJob(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	j, err := h.jobService.GetByID(id)
 	if err != nil {
-		if err == job.ErrJobNotFound {
+		if err == jobs.ErrJobNotFound {
 			http.Error(w, "job not found", http.StatusNotFound)
 			return
 		}

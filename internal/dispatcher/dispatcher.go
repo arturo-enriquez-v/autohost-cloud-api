@@ -4,19 +4,19 @@
 package dispatcher
 
 import (
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 )
 
 // NodeDispatcher abstracts sending an execute_job request to a connected node,
 // regardless of the underlying transport (WebSocket or gRPC).
 type NodeDispatcher interface {
-	DispatchJob(nodeID, jobID, commandName string, commandType nodecommand.CommandType) error
+	DispatchJob(nodeID, jobID, commandName string, commandType jobs.CommandType) error
 }
 
 // ParamDispatcher extends NodeDispatcher with parameterized dispatch and connectivity checks.
 type ParamDispatcher interface {
 	NodeDispatcher
-	DispatchJobWithParams(nodeID, jobID, commandName string, commandType nodecommand.CommandType, params string) error
+	DispatchJobWithParams(nodeID, jobID, commandName string, commandType jobs.CommandType, params string) error
 }
 
 // MultiDispatcher tries each dispatcher in order and returns nil on the first
@@ -35,7 +35,7 @@ func NewMultiDispatcher(dispatchers ...NodeDispatcher) *MultiDispatcher {
 // DispatchJob tries each dispatcher until one succeeds.
 func (m *MultiDispatcher) DispatchJob(
 	nodeID, jobID, commandName string,
-	commandType nodecommand.CommandType,
+	commandType jobs.CommandType,
 ) error {
 	return m.DispatchJobWithParams(nodeID, jobID, commandName, commandType, "")
 }
@@ -43,7 +43,7 @@ func (m *MultiDispatcher) DispatchJob(
 // DispatchJobWithParams tries each dispatcher that supports parameters or falls back to DispatchJob.
 func (m *MultiDispatcher) DispatchJobWithParams(
 	nodeID, jobID, commandName string,
-	commandType nodecommand.CommandType,
+	commandType jobs.CommandType,
 	params string,
 ) error {
 	var lastErr error

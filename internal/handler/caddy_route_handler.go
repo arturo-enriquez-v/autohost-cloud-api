@@ -10,9 +10,8 @@ import (
 	"net/http"
 
 	caddyroute "github.com/arturo/autohost-cloud-api/internal/domain/caddy_route"
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
@@ -21,14 +20,14 @@ import (
 // CaddyRouteHandler manages Caddy reverse-proxy routes for a node.
 type CaddyRouteHandler struct {
 	service    *caddyroute.Service
-	jobService *job.Service
+	jobService *jobs.JobService
 	dispatcher dispatcher.ParamDispatcher
 	nodeSvc    *node.Service
 }
 
 func NewCaddyRouteHandler(
 	service *caddyroute.Service,
-	jobService *job.Service,
+	jobService *jobs.JobService,
 	disp dispatcher.ParamDispatcher,
 	nodeSvc *node.Service,
 ) *CaddyRouteHandler {
@@ -140,10 +139,10 @@ func (h *CaddyRouteHandler) Upsert(w http.ResponseWriter, r *http.Request) {
 		"domain":   req.Domain,
 		"upstream": req.Upstream,
 	})
-	j, err := h.jobService.Dispatch(nodeID, "caddy.upsert-route", nodecommand.CommandTypeDefault)
+	j, err := h.jobService.Dispatch(nodeID, "caddy.upsert-route", jobs.CommandTypeDefault)
 	if err != nil {
 		log.Printf("[WARN] create caddy.upsert-route job for node %s: %v", nodeID, err)
-	} else if err := h.dispatcher.DispatchJobWithParams(nodeID, j.ID, "caddy.upsert-route", nodecommand.CommandTypeDefault, string(params)); err != nil {
+	} else if err := h.dispatcher.DispatchJobWithParams(nodeID, j.ID, "caddy.upsert-route", jobs.CommandTypeDefault, string(params)); err != nil {
 		log.Printf("[WARN] dispatch caddy.upsert-route to node %s: %v", nodeID, err)
 	}
 
@@ -187,10 +186,10 @@ func (h *CaddyRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	// Dispatch the caddy.delete-route job to the agent asynchronously.
 	params, _ := json.Marshal(map[string]string{"domain": domain})
-	j, err := h.jobService.Dispatch(nodeID, "caddy.delete-route", nodecommand.CommandTypeDefault)
+	j, err := h.jobService.Dispatch(nodeID, "caddy.delete-route", jobs.CommandTypeDefault)
 	if err != nil {
 		log.Printf("[WARN] create caddy.delete-route job for node %s: %v", nodeID, err)
-	} else if err := h.dispatcher.DispatchJobWithParams(nodeID, j.ID, "caddy.delete-route", nodecommand.CommandTypeDefault, string(params)); err != nil {
+	} else if err := h.dispatcher.DispatchJobWithParams(nodeID, j.ID, "caddy.delete-route", jobs.CommandTypeDefault, string(params)); err != nil {
 		log.Printf("[WARN] dispatch caddy.delete-route to node %s: %v", nodeID, err)
 	}
 

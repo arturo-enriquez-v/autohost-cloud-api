@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	containersetting "github.com/arturo/autohost-cloud-api/internal/domain/container_setting"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 )
@@ -40,7 +40,7 @@ func (m *mockSettingRepo) IsContainerLocked(ctx context.Context, nodeID, contain
 
 type dummyDispatcher struct{}
 
-func (d *dummyDispatcher) DispatchJob(nodeID, jobID, commandName string, commandType nodecommand.CommandType) error {
+func (d *dummyDispatcher) DispatchJob(nodeID, jobID, commandName string, commandType jobs.CommandType) error {
 	return nil
 }
 

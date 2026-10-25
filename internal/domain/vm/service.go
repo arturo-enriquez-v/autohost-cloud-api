@@ -15,17 +15,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/domain/enrollment"
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 )
 
 var validVMName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
 type Dispatcher interface {
-	DispatchJobWithParams(nodeID, jobID, commandName string, commandType nodecommand.CommandType, params string) error
+	DispatchJobWithParams(nodeID, jobID, commandName string, commandType jobs.CommandType, params string) error
 	IsNodeConnected(nodeID string) bool
 }
 
@@ -43,7 +42,7 @@ type Service struct {
 	repo       Repository
 	nodeRepo   node.Repository
 	enrollSvc  *enrollment.Service
-	jobService *job.Service
+	jobService *jobs.JobService
 	dispatcher Dispatcher
 }
 
@@ -51,7 +50,7 @@ func NewService(
 	repo Repository,
 	nodeRepo node.Repository,
 	enrollSvc *enrollment.Service,
-	jobService *job.Service,
+	jobService *jobs.JobService,
 	dispatcher Dispatcher,
 ) *Service {
 	return &Service{
@@ -189,10 +188,10 @@ func (s *Service) CreateVM(ctx context.Context, hostNodeID, userID string, req C
 	paramsJSON, _ := json.Marshal(params)
 
 	if s.jobService != nil {
-		j, err := s.jobService.DispatchWithParams(hostNodeID, "vm.create", nodecommand.CommandTypeDefault, string(paramsJSON))
+		j, err := s.jobService.DispatchWithParams(hostNodeID, "vm.create", jobs.CommandTypeDefault, string(paramsJSON))
 		if err == nil && j != nil {
 			if s.dispatcher != nil {
-				if err := s.dispatcher.DispatchJobWithParams(hostNodeID, j.ID, "vm.create", nodecommand.CommandTypeDefault, string(paramsJSON)); err != nil {
+				if err := s.dispatcher.DispatchJobWithParams(hostNodeID, j.ID, "vm.create", jobs.CommandTypeDefault, string(paramsJSON)); err != nil {
 					log.Printf("[VM Service] dispatch vm.create error: %v", err)
 				}
 			}
@@ -222,9 +221,9 @@ func (s *Service) ActionVM(ctx context.Context, vmID, userID, action string) err
 	commandName := fmt.Sprintf("vm.%s.%s", action, v.Name)
 
 	if s.jobService != nil {
-		j, err := s.jobService.DispatchWithParams(v.HostNodeID, commandName, nodecommand.CommandTypeDefault, "")
+		j, err := s.jobService.DispatchWithParams(v.HostNodeID, commandName, jobs.CommandTypeDefault, "")
 		if err == nil && j != nil && s.dispatcher != nil {
-			_ = s.dispatcher.DispatchJobWithParams(v.HostNodeID, j.ID, commandName, nodecommand.CommandTypeDefault, "")
+			_ = s.dispatcher.DispatchJobWithParams(v.HostNodeID, j.ID, commandName, jobs.CommandTypeDefault, "")
 		}
 	}
 

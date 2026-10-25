@@ -10,27 +10,26 @@ import (
 	"log"
 	"time"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 )
 
 type Dispatcher interface {
-	DispatchJobWithParams(nodeID, jobID, commandName string, commandType nodecommand.CommandType, params string) error
+	DispatchJobWithParams(nodeID, jobID, commandName string, commandType jobs.CommandType, params string) error
 	IsNodeConnected(nodeID string) bool
 }
 
 type Service struct {
 	repo       Repository
 	nodeRepo   node.Repository
-	jobService *job.Service
+	jobService *jobs.JobService
 	dispatcher Dispatcher
 }
 
 func NewService(
 	repo Repository,
 	nodeRepo node.Repository,
-	jobService *job.Service,
+	jobService *jobs.JobService,
 	dispatcher Dispatcher,
 ) *Service {
 	return &Service{
@@ -355,7 +354,7 @@ func (s *Service) orchestrateCluster(clusterID, managerNodeID, managerVPNIP stri
 		log.Printf("[ERROR] swarm.init failed on manager %s: %v", managerNodeID, err)
 		return
 	}
-	if initJob.Status != job.StatusCompleted {
+	if initJob.Status != jobs.StatusCompleted {
 		log.Printf("[ERROR] swarm.init job status %s on manager %s: %s", initJob.Status, managerNodeID, initJob.Error)
 		return
 	}
@@ -389,7 +388,7 @@ func (s *Service) orchestrateCluster(clusterID, managerNodeID, managerVPNIP stri
 			"advertise_vpn_ip": *workerNode.IPVPN,
 		})
 		joinJob, err := s.dispatchAndAwaitJob(ctx, workerID, "swarm.join", string(joinPayload))
-		if err == nil && joinJob != nil && joinJob.Status == job.StatusCompleted {
+		if err == nil && joinJob != nil && joinJob.Status == jobs.StatusCompleted {
 			log.Printf("✅ Worker node %s successfully joined Swarm cluster %s", workerID, clusterID)
 			workerCN := &ClusterNode{
 				ClusterID: clusterID,
@@ -414,30 +413,30 @@ func (s *Service) dispatchSwarmJob(nodeID, commandName, params string) {
 	if s.jobService == nil {
 		return
 	}
-	j, err := s.jobService.DispatchWithParams(nodeID, commandName, nodecommand.CommandTypeSwarm, params)
+	j, err := s.jobService.DispatchWithParams(nodeID, commandName, jobs.CommandTypeSwarm, params)
 	if err != nil {
 		log.Printf("[WARN] dispatch swarm job %s to node %s: %v", commandName, nodeID, err)
 		return
 	}
 
 	if s.dispatcher != nil && s.dispatcher.IsNodeConnected(nodeID) {
-		if err := s.dispatcher.DispatchJobWithParams(nodeID, j.ID, commandName, nodecommand.CommandTypeSwarm, params); err != nil {
+		if err := s.dispatcher.DispatchJobWithParams(nodeID, j.ID, commandName, jobs.CommandTypeSwarm, params); err != nil {
 			log.Printf("[WARN] live dispatch swarm job %s to node %s: %v", commandName, nodeID, err)
 		}
 	}
 }
 
-func (s *Service) dispatchAndAwaitJob(ctx context.Context, nodeID, commandName, params string) (*job.Job, error) {
+func (s *Service) dispatchAndAwaitJob(ctx context.Context, nodeID, commandName, params string) (*jobs.Job, error) {
 	if s.jobService == nil {
 		return nil, fmt.Errorf("job service unavailable")
 	}
-	j, err := s.jobService.DispatchWithParams(nodeID, commandName, nodecommand.CommandTypeSwarm, params)
+	j, err := s.jobService.DispatchWithParams(nodeID, commandName, jobs.CommandTypeSwarm, params)
 	if err != nil {
 		return nil, err
 	}
 
 	if s.dispatcher != nil && s.dispatcher.IsNodeConnected(nodeID) {
-		_ = s.dispatcher.DispatchJobWithParams(nodeID, j.ID, commandName, nodecommand.CommandTypeSwarm, params)
+		_ = s.dispatcher.DispatchJobWithParams(nodeID, j.ID, commandName, jobs.CommandTypeSwarm, params)
 	}
 
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -452,7 +451,7 @@ func (s *Service) dispatchAndAwaitJob(ctx context.Context, nodeID, commandName, 
 			if err != nil {
 				continue
 			}
-			if current.Status == job.StatusCompleted || current.Status == job.StatusFailed {
+			if current.Status == jobs.StatusCompleted || current.Status == jobs.StatusFailed {
 				return current, nil
 			}
 		}

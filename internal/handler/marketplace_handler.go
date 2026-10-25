@@ -9,9 +9,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/domain/marketplace"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
@@ -28,14 +27,14 @@ type InstallAppParams struct {
 
 // MarketplaceHandler handles marketplace app listing and deployment.
 type MarketplaceHandler struct {
-	jobService      *job.Service
+	jobService      *jobs.JobService
 	marketplaceRepo marketplace.Repository
 	dispatcher      dispatcher.ParamDispatcher
 	r2              *platform.R2Client
 }
 
 func NewMarketplaceHandler(
-	jobService *job.Service,
+	jobService *jobs.JobService,
 	marketplaceRepo marketplace.Repository,
 	disp dispatcher.ParamDispatcher,
 	r2 *platform.R2Client,
@@ -138,7 +137,7 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the job — params are persisted so the node can receive them on reconnect.
-	j, err := h.jobService.DispatchWithParams(req.NodeID, "marketplace.install", nodecommand.CommandTypeInstallApp, paramsJSON)
+	j, err := h.jobService.DispatchWithParams(req.NodeID, "marketplace.install", jobs.CommandTypeInstallApp, paramsJSON)
 	if err != nil {
 		log.Printf("[ERROR] marketplace: dispatch job: %v", err)
 		http.Error(w, "could not create job", http.StatusInternalServerError)
@@ -152,7 +151,7 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.dispatcher.DispatchJobWithParams(
 		req.NodeID, j.ID, "marketplace.install",
-		nodecommand.CommandTypeInstallApp, paramsJSON,
+		jobs.CommandTypeInstallApp, paramsJSON,
 	); err != nil {
 		log.Printf("[WARN] marketplace: node %s not connected, job %s will be dispatched on reconnect: %v", req.NodeID, j.ID, err)
 	}
