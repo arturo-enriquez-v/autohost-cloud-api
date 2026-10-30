@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package handler
 
 import (
@@ -12,7 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
@@ -22,11 +25,11 @@ import (
 // Server-Sent Events (SSE).  The client must supply a valid user JWT.
 type NodeLogHandler struct {
 	grpc    *grpcserver.NodeAgentServer
-	nodeSvc *node.Service
+	nodeSvc *node.NodeService
 	redis   *redis.Client
 }
 
-func NewNodeLogHandler(grpc *grpcserver.NodeAgentServer, nodeSvc *node.Service, redis *redis.Client) *NodeLogHandler {
+func NewNodeLogHandler(grpc *grpcserver.NodeAgentServer, nodeSvc *node.NodeService, redis *redis.Client) *NodeLogHandler {
 	return &NodeLogHandler{grpc: grpc, nodeSvc: nodeSvc, redis: redis}
 }
 

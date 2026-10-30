@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package handler_test
 
 import (
@@ -8,11 +11,8 @@ import (
 	"testing"
 	"time"
 
-	caddyroute "github.com/arturo/autohost-cloud-api/internal/domain/caddy_route"
-	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
-	"github.com/arturo/autohost-cloud-api/internal/domain/project"
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
@@ -52,7 +52,7 @@ func (m *MockNodeRepo) FindByID(id string) (*node.Node, error) {
 	return n, nil
 }
 func (m *MockNodeRepo) Update(n *node.Node) (*node.Node, error) { return n, nil }
-func (m *MockNodeRepo) Delete(id string) error                 { return nil }
+func (m *MockNodeRepo) Delete(id string) error                  { return nil }
 func (m *MockNodeRepo) FindByOwnerID(ownerID string) ([]*node.Node, error) {
 	var res []*node.Node
 	for _, n := range m.nodes {
@@ -65,55 +65,59 @@ func (m *MockNodeRepo) FindByOwnerID(ownerID string) ([]*node.Node, error) {
 func (m *MockNodeRepo) FindByOwnerIDWithMetrics(ownerID string) ([]*node.NodeWithMetrics, error) {
 	return nil, nil
 }
-func (m *MockNodeRepo) UpdateLastSeen(nodeID string) error                                  { return nil }
-func (m *MockNodeRepo) UpdateLastSeenAndIPs(nodeID string, ipLocal string, ipVPN string) error { return nil }
-func (m *MockNodeRepo) UpdateVPNIP(nodeID string, ipVPN string) error                        { return nil }
-func (m *MockNodeRepo) UpdateVersionAgent(nodeID, version string) error                      { return nil }
-func (m *MockNodeRepo) AssignProject(nodeID string, projectID *string) error                 { return nil }
+func (m *MockNodeRepo) UpdateLastSeen(nodeID string) error { return nil }
+func (m *MockNodeRepo) UpdateLastSeenAndIPs(nodeID string, ipLocal string, ipVPN string) error {
+	return nil
+}
+func (m *MockNodeRepo) UpdateVPNIP(nodeID string, ipVPN string) error        { return nil }
+func (m *MockNodeRepo) UpdateVersionAgent(nodeID, version string) error      { return nil }
+func (m *MockNodeRepo) AssignProject(nodeID string, projectID *string) error { return nil }
 
-// MockProjectRepo implements project.Repository for testing
+// MockProjectRepo implements apps.ProjectRepository for testing
 type MockProjectRepo struct {
-	projects map[string]*project.Project
+	projects map[string]*apps.Project
 }
 
-func (m *MockProjectRepo) Create(p *project.Project) (*project.Project, error) { return p, nil }
-func (m *MockProjectRepo) FindByID(id string) (*project.Project, error) {
+func (m *MockProjectRepo) Create(p *apps.Project) (*apps.Project, error) { return p, nil }
+func (m *MockProjectRepo) FindByID(id string) (*apps.Project, error) {
 	p, ok := m.projects[id]
 	if !ok {
-		return nil, project.ErrProjectNotFound
+		return nil, apps.ErrProjectNotFound
 	}
 	return p, nil
 }
-func (m *MockProjectRepo) FindByUserID(userID string) ([]*project.Project, error) { return nil, nil }
-func (m *MockProjectRepo) Update(p *project.Project) (*project.Project, error)     { return p, nil }
-func (m *MockProjectRepo) Delete(id string) error                                  { return nil }
+func (m *MockProjectRepo) FindByUserID(userID string) ([]*apps.Project, error) { return nil, nil }
+func (m *MockProjectRepo) Update(p *apps.Project) (*apps.Project, error)       { return p, nil }
+func (m *MockProjectRepo) Delete(id string) error                              { return nil }
 
-// MockNodeTokenRepo implements nodetoken.Repository for testing
+// MockNodeTokenRepo implements node.Repository for testing
 type MockNodeTokenRepo struct{}
 
-func (m *MockNodeTokenRepo) CreateNodeToken(nodeID, token string) error               { return nil }
-func (m *MockNodeTokenRepo) FindNodeTokenByHash(tokenHash string) (*nodetoken.NodeToken, error) { return nil, nil }
-func (m *MockNodeTokenRepo) UpdateLastSeen(tokenID string, lastSeenAt time.Time) error  { return nil }
+func (m *MockNodeTokenRepo) CreateNodeToken(nodeID, token string) error { return nil }
+func (m *MockNodeTokenRepo) FindNodeTokenByHash(tokenHash string) (*node.NodeToken, error) {
+	return nil, nil
+}
+func (m *MockNodeTokenRepo) UpdateLastSeen(tokenID string, lastSeenAt time.Time) error { return nil }
 func (m *MockNodeTokenRepo) RevokeByNodeID(nodeID string) error                        { return nil }
 
-// MockCaddyRouteRepo implements caddyroute.Repository
+// MockCaddyRouteRepo implements apps.CaddyRouteRepository
 type MockCaddyRouteRepo struct{}
 
-func (m *MockCaddyRouteRepo) Upsert(r *caddyroute.CaddyRoute) (*caddyroute.CaddyRoute, error) {
+func (m *MockCaddyRouteRepo) Upsert(r *apps.CaddyRoute) (*apps.CaddyRoute, error) {
 	return r, nil
 }
-func (m *MockCaddyRouteRepo) ListByNode(nodeID string) ([]*caddyroute.CaddyRoute, error) {
-	return []*caddyroute.CaddyRoute{}, nil
+func (m *MockCaddyRouteRepo) ListByNode(nodeID string) ([]*apps.CaddyRoute, error) {
+	return []*apps.CaddyRoute{}, nil
 }
 func (m *MockCaddyRouteRepo) Delete(nodeID, domain string) error { return nil }
 
-// MockContainerMetricRepo implements containermetric.Repository
+// MockContainerMetricRepo implements node.Repository
 type MockContainerMetricRepo struct{}
 
-func (m *MockContainerMetricRepo) StoreBatch(metrics []*containermetric.CreateContainerMetricRequest) error {
+func (m *MockContainerMetricRepo) StoreBatch(metrics []*node.CreateContainerMetricRequest) error {
 	return nil
 }
-func (m *MockContainerMetricRepo) GetHistory(params containermetric.ContainerHistoryParams) ([]*containermetric.ContainerMetricHistoryPoint, error) {
+func (m *MockContainerMetricRepo) GetHistory(params node.ContainerHistoryParams) ([]*node.ContainerMetricHistoryPoint, error) {
 	return nil, nil
 }
 
@@ -128,7 +132,7 @@ func setupTestRouter() (*chi.Mux, *MockNodeRepo, *MockProjectRepo) {
 		},
 	}
 	projectRepo := &MockProjectRepo{
-		projects: map[string]*project.Project{
+		projects: map[string]*apps.Project{
 			"proj_owned_by_a": {
 				ID:     "proj_owned_by_a",
 				UserID: ownerUserA,
@@ -137,14 +141,14 @@ func setupTestRouter() (*chi.Mux, *MockNodeRepo, *MockProjectRepo) {
 		},
 	}
 
-	nodeSvc := node.NewService(nodeRepo)
-	projSvc := project.NewService(projectRepo)
-	nodeTokenSvc := nodetoken.NewService(&MockNodeTokenRepo{})
-	caddySvc := caddyroute.NewService(&MockCaddyRouteRepo{})
-	containerMetricSvc := containermetric.NewService(&MockContainerMetricRepo{})
+	nodeSvc := node.NewNodeService(nodeRepo)
+	projSvc := apps.NewProjectService(projectRepo)
+	nodeTokenSvc := node.NewNodeTokenService(&MockNodeTokenRepo{})
+	caddySvc := apps.NewCaddyRouteService(&MockCaddyRouteRepo{})
+	containerMetricSvc := node.NewContainerMetricService(&MockContainerMetricRepo{})
 
 	nodeHandler := handler.NewNodeHandler(nodeSvc, nodeTokenSvc)
-	projHandler := handler.NewProjectHandler(projSvc, nodeSvc, nil)
+	projHandler := handler.NewProjectHandler(projSvc, nodeSvc)
 	caddyHandler := handler.NewCaddyRouteHandler(caddySvc, nil, nil, nodeSvc)
 	containerHandler := handler.NewNodeContainerHandler(nil, nodeSvc, containerMetricSvc, nil, nil)
 	logHandler := handler.NewNodeLogHandler(nil, nodeSvc, nil)

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package scheduler
 
 import (
@@ -5,24 +8,22 @@ import (
 	"log"
 	"time"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
-	scheduledtask "github.com/arturo/autohost-cloud-api/internal/domain/scheduled_task"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 )
 
 // Dispatcher sends a job execution request to a connected node.
 type Dispatcher interface {
-	DispatchJob(nodeID, jobID, commandName string, commandType nodecommand.CommandType) error
+	DispatchJob(nodeID, jobID, commandName string, commandType jobs.CommandType) error
 }
 
 // Scheduler polls for due tasks and dispatches them via the node dispatcher.
 type Scheduler struct {
-	taskSvc    *scheduledtask.Service
-	jobSvc     *job.Service
+	taskSvc    *jobs.ScheduledTaskService
+	jobSvc     *jobs.JobService
 	dispatcher Dispatcher
 }
 
-func NewScheduler(taskSvc *scheduledtask.Service, jobSvc *job.Service, dispatcher Dispatcher) *Scheduler {
+func NewScheduler(taskSvc *jobs.ScheduledTaskService, jobSvc *jobs.JobService, dispatcher Dispatcher) *Scheduler {
 	return &Scheduler{
 		taskSvc:    taskSvc,
 		jobSvc:     jobSvc,
@@ -60,8 +61,8 @@ func (s *Scheduler) runDue() {
 	}
 }
 
-func (s *Scheduler) dispatch(task *scheduledtask.ScheduledTask) {
-	j, err := s.jobSvc.Dispatch(task.NodeID, task.CommandName, nodecommand.CommandTypeCustom)
+func (s *Scheduler) dispatch(task *jobs.ScheduledTask) {
+	j, err := s.jobSvc.Dispatch(task.NodeID, task.CommandName, jobs.CommandTypeCustom)
 	if err != nil {
 		log.Printf("[scheduler] error creating job for task %s: %v", task.ID, err)
 		return

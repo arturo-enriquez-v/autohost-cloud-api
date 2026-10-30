@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package grpcserver
 
 import (
@@ -9,12 +12,12 @@ import (
 
 	"github.com/google/uuid"
 
-	networkstat "github.com/arturo/autohost-cloud-api/internal/domain/network_stat"
+	"github.com/arturo/autohost-cloud-api/internal/core/network"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
 )
 
 type networkStatsResponse struct {
-	stats *networkstat.NodeNetworkStats
+	stats *network.NodeNetworkStats
 	err   error
 }
 
@@ -37,7 +40,7 @@ func (s *NodeAgentServer) handleNetworkStatsResult(nodeID string, payload *pb.Ne
 		return
 	}
 
-	var ingestPayload networkstat.IngestPayload
+	var ingestPayload network.IngestPayload
 	if err := json.Unmarshal([]byte(payload.GetStatsJson()), &ingestPayload); err != nil {
 		ch <- &networkStatsResponse{err: fmt.Errorf("unmarshal stats json: %w", err)}
 		return
@@ -58,7 +61,7 @@ func (s *NodeAgentServer) handleNetworkStatsResult(nodeID string, payload *pb.Ne
 }
 
 // RequestNetworkStats asks the agent over gRPC for an immediate network snapshot.
-func (s *NodeAgentServer) RequestNetworkStats(ctx context.Context, nodeID string) (*networkstat.NodeNetworkStats, error) {
+func (s *NodeAgentServer) RequestNetworkStats(ctx context.Context, nodeID string) (*network.NodeNetworkStats, error) {
 	if !s.IsNodeConnected(nodeID) {
 		return nil, errors.New("node is not connected")
 	}

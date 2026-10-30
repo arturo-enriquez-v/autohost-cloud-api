@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package scheduler
 
 import (
@@ -5,7 +8,7 @@ import (
 	"log"
 	"time"
 
-	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 )
 
 // DiagnosticCleanupScheduler runs periodic background cleanups for expired diagnostics
@@ -13,10 +16,10 @@ import (
 // - pending / rejected: older than 48 hours
 // - approved: older than 30 days
 type DiagnosticCleanupScheduler struct {
-	diagnosticSvc *logdiagnostic.Service
+	diagnosticSvc *node.LogDiagnosticService
 }
 
-func NewDiagnosticCleanupScheduler(diagnosticSvc *logdiagnostic.Service) *DiagnosticCleanupScheduler {
+func NewDiagnosticCleanupScheduler(diagnosticSvc *node.LogDiagnosticService) *DiagnosticCleanupScheduler {
 	return &DiagnosticCleanupScheduler{
 		diagnosticSvc: diagnosticSvc,
 	}

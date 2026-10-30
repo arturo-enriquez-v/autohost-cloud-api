@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package handler
 
 import (
@@ -10,24 +13,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/enrollment"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
-	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
+	"github.com/arturo/autohost-cloud-api/internal/core/infra"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 	"github.com/go-chi/chi/v5"
 )
 
 type EnrollmentHandler struct {
-	service          *enrollment.Service
-	nodeService      *node.Service
-	nodeTokenService *nodetoken.Service
-	planService      *plan.Service
+	service          *node.EnrollmentService
+	nodeService      *node.NodeService
+	nodeTokenService *node.NodeTokenService
+	vmRepo           infra.VMRepository
 }
 
-func NewEnrollmentHandler(service *enrollment.Service, nodeService *node.Service, nodeTokenService *nodetoken.Service, planService *plan.Service) *EnrollmentHandler {
-	return &EnrollmentHandler{service: service, nodeService: nodeService, nodeTokenService: nodeTokenService, planService: planService}
+func NewEnrollmentHandler(service *node.EnrollmentService, nodeService *node.NodeService, nodeTokenService *node.NodeTokenService, vmRepo infra.VMRepository) *EnrollmentHandler {
+	return &EnrollmentHandler{service: service, nodeService: nodeService, nodeTokenService: nodeTokenService, vmRepo: vmRepo}
 }
 
 func (h *EnrollmentHandler) Routes() chi.Router {
@@ -55,16 +56,6 @@ func (h *EnrollmentHandler) CreateEnrollToken(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if h.planService != nil {
-		nodes, err := h.nodeService.GetByOwner(claims.UserID)
-		if err == nil {
-			if err := h.planService.CheckNodeLimit(claims.UserID, len(nodes)); err != nil {
-				http.Error(w, err.Error(), http.StatusForbidden)
-				return
-			}
-		}
-	}
-
 	// Generar token de enrrolamiento
 	plainToken, hash, err := platform.GenerateEnrollToken()
 	if err != nil {
@@ -78,7 +69,7 @@ func (h *EnrollmentHandler) CreateEnrollToken(w http.ResponseWriter, r *http.Req
 
 	// Guardar en BD (guardamos el hash, no el token plano)
 	if err := h.service.CreateEnrollToken(hash, claims.UserID, expiresAt); err != nil {
-		if err == enrollment.ErrInvalidEnrollTokenData {
+		if err == node.ErrInvalidEnrollTokenData {
 			http.Error(w, "invalid token data", http.StatusBadRequest)
 			return
 		}
@@ -137,16 +128,6 @@ func (h *EnrollmentHandler) EnrollNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.planService != nil {
-		nodes, err := h.nodeService.GetByOwner(enroll.UserID)
-		if err == nil {
-			if err := h.planService.CheckNodeLimit(enroll.UserID, len(nodes)); err != nil {
-				http.Error(w, err.Error(), http.StatusForbidden)
-				return
-			}
-		}
-	}
-
 	if err := h.service.MarkTokenAsUsed(enroll.Token, time.Now()); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -176,6 +157,10 @@ func (h *EnrollmentHandler) EnrollNode(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "failed to save api token", http.StatusInternalServerError)
 		return
+	}
+
+	if h.vmRepo != nil {
+		_ = h.vmRepo.LinkNodeByHostname(r.Context(), enroll.UserID, req.Hostname, createdNode.ID, req.IPLocal)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

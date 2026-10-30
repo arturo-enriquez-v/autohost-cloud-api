@@ -1,14 +1,17 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package postgres
 
 import (
 	"context"
 	"database/sql"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/project"
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 	"github.com/jmoiron/sqlx"
 )
 
-// ProjectRepository implements project.Repository using PostgreSQL.
+// ProjectRepository implements apps.ProjectRepository using PostgreSQL.
 type ProjectRepository struct {
 	db *sqlx.DB
 }
@@ -25,8 +28,8 @@ type projectModel struct {
 	UpdatedAt string `db:"updated_at"`
 }
 
-func (r *ProjectRepository) Create(p *project.Project) (*project.Project, error) {
-	var m project.Project
+func (r *ProjectRepository) Create(p *apps.Project) (*apps.Project, error) {
+	var m apps.Project
 	err := r.db.QueryRowContext(context.Background(), `
 		INSERT INTO projects (user_id, name)
 		VALUES ($1, $2)
@@ -39,13 +42,13 @@ func (r *ProjectRepository) Create(p *project.Project) (*project.Project, error)
 	return &m, nil
 }
 
-func (r *ProjectRepository) FindByID(id string) (*project.Project, error) {
-	var m project.Project
+func (r *ProjectRepository) FindByID(id string) (*apps.Project, error) {
+	var m apps.Project
 	err := r.db.GetContext(context.Background(), &m, `
 		SELECT id, user_id, name, created_at, updated_at
 		FROM projects WHERE id = $1`, id)
 	if err == sql.ErrNoRows {
-		return nil, project.ErrProjectNotFound
+		return nil, apps.ErrProjectNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -53,8 +56,8 @@ func (r *ProjectRepository) FindByID(id string) (*project.Project, error) {
 	return &m, nil
 }
 
-func (r *ProjectRepository) FindByUserID(userID string) ([]*project.Project, error) {
-	var projects []*project.Project
+func (r *ProjectRepository) FindByUserID(userID string) ([]*apps.Project, error) {
+	var projects []*apps.Project
 	err := r.db.SelectContext(context.Background(), &projects, `
 		SELECT id, user_id, name, created_at, updated_at
 		FROM projects
@@ -66,8 +69,8 @@ func (r *ProjectRepository) FindByUserID(userID string) ([]*project.Project, err
 	return projects, nil
 }
 
-func (r *ProjectRepository) Update(p *project.Project) (*project.Project, error) {
-	var m project.Project
+func (r *ProjectRepository) Update(p *apps.Project) (*apps.Project, error) {
+	var m apps.Project
 	err := r.db.QueryRowContext(context.Background(), `
 		UPDATE projects
 		SET name = $1, updated_at = NOW()
@@ -76,7 +79,7 @@ func (r *ProjectRepository) Update(p *project.Project) (*project.Project, error)
 		p.Name, p.ID,
 	).Scan(&m.ID, &m.UserID, &m.Name, &m.CreatedAt, &m.UpdatedAt)
 	if err == sql.ErrNoRows {
-		return nil, project.ErrProjectNotFound
+		return nil, apps.ErrProjectNotFound
 	}
 	if err != nil {
 		return nil, err

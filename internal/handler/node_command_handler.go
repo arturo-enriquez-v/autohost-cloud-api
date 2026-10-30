@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package handler
 
 import (
@@ -5,7 +8,7 @@ import (
 	"log"
 	"net/http"
 
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
 )
@@ -14,10 +17,10 @@ import (
 //   - Node-facing routes (nodeAuth): register / delete / list own commands
 //   - User-facing routes (userAuth): list commands for a given node (dashboard)
 type NodeCommandHandler struct {
-	service *nodecommand.Service
+	service *jobs.NodeCommandService
 }
 
-func NewNodeCommandHandler(service *nodecommand.Service) *NodeCommandHandler {
+func NewNodeCommandHandler(service *jobs.NodeCommandService) *NodeCommandHandler {
 	return &NodeCommandHandler{service: service}
 }
 
@@ -40,10 +43,10 @@ func (h *NodeCommandHandler) Routes(nodeAuthMiddleware func(http.Handler) http.H
 
 // registerCommandRequest is the payload sent by the node agent.
 type registerCommandRequest struct {
-	Name        string                  `json:"name"`
-	Description string                  `json:"description"`
-	Type        nodecommand.CommandType `json:"type"` // "default" | "custom"
-	ScriptPath  string                  `json:"script_path,omitempty"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	Type        jobs.CommandType `json:"type"` // "default" | "custom"
+	ScriptPath  string           `json:"script_path,omitempty"`
 }
 
 // Register upserts a command for the authenticated node.
@@ -61,7 +64,7 @@ func (h *NodeCommandHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := &nodecommand.NodeCommand{
+	cmd := &jobs.NodeCommand{
 		NodeID:      nodeToken.NodeID,
 		Name:        req.Name,
 		Description: req.Description,
@@ -106,7 +109,7 @@ func (h *NodeCommandHandler) ListForNode(w http.ResponseWriter, r *http.Request)
 func (h *NodeCommandHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := h.service.Delete(id); err != nil {
-		if err == nodecommand.ErrCommandNotFound {
+		if err == jobs.ErrCommandNotFound {
 			http.Error(w, "command not found", http.StatusNotFound)
 			return
 		}

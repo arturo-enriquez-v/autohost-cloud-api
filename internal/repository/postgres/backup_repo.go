@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package postgres
 
 import (
@@ -7,7 +10,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 )
 
 type BackupRepository struct {
@@ -20,8 +23,8 @@ func NewBackupRepository(db *sqlx.DB) *BackupRepository {
 
 // ─── Storage Credentials ─────────────────────────────────────────────────────
 
-func (r *BackupRepository) CreateCredential(cred *backup.StorageCredential) (*backup.StorageCredential, error) {
-	var res backup.StorageCredential
+func (r *BackupRepository) CreateCredential(cred *apps.StorageCredential) (*apps.StorageCredential, error) {
+	var res apps.StorageCredential
 	err := r.db.QueryRowContext(context.Background(), `
 		INSERT INTO storage_credentials (user_id, name, provider, endpoint, bucket, region, access_key_id, secret_access_key, is_default)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -35,23 +38,23 @@ func (r *BackupRepository) CreateCredential(cred *backup.StorageCredential) (*ba
 	return &res, nil
 }
 
-func (r *BackupRepository) GetCredentialByID(id, userID string) (*backup.StorageCredential, error) {
-	var cred backup.StorageCredential
+func (r *BackupRepository) GetCredentialByID(id, userID string) (*apps.StorageCredential, error) {
+	var cred apps.StorageCredential
 	err := r.db.GetContext(context.Background(), &cred, `
 		SELECT id, user_id, name, provider, endpoint, bucket, region, access_key_id, secret_access_key, is_default, created_at, updated_at
 		FROM storage_credentials
 		WHERE id = $1 AND user_id = $2`, id, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, backup.ErrNotFound
+			return nil, apps.ErrBackupNotFound
 		}
 		return nil, err
 	}
 	return &cred, nil
 }
 
-func (r *BackupRepository) ListCredentialsByUser(userID string) ([]*backup.StorageCredential, error) {
-	var creds []*backup.StorageCredential
+func (r *BackupRepository) ListCredentialsByUser(userID string) ([]*apps.StorageCredential, error) {
+	var creds []*apps.StorageCredential
 	err := r.db.SelectContext(context.Background(), &creds, `
 		SELECT id, user_id, name, provider, endpoint, bucket, region, access_key_id, is_default, created_at, updated_at
 		FROM storage_credentials
@@ -74,15 +77,15 @@ func (r *BackupRepository) DeleteCredential(id, userID string) error {
 		return err
 	}
 	if n == 0 {
-		return backup.ErrNotFound
+		return apps.ErrBackupNotFound
 	}
 	return nil
 }
 
 // ─── Backup Configs ──────────────────────────────────────────────────────────
 
-func (r *BackupRepository) UpsertConfig(cfg *backup.BackupConfig) (*backup.BackupConfig, error) {
-	var res backup.BackupConfig
+func (r *BackupRepository) UpsertConfig(cfg *apps.BackupConfig) (*apps.BackupConfig, error) {
+	var res apps.BackupConfig
 	err := r.db.QueryRowContext(context.Background(), `
 		INSERT INTO backup_configs (user_id, node_id, project_id, container_name, volumes, cron_expression, retention_count, pause_container, backup_method, pg_user, storage_credential_id, enabled)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
@@ -106,30 +109,30 @@ func (r *BackupRepository) UpsertConfig(cfg *backup.BackupConfig) (*backup.Backu
 	return &res, nil
 }
 
-func (r *BackupRepository) GetConfigByContainer(nodeID, containerName string) (*backup.BackupConfig, error) {
-	var cfg backup.BackupConfig
+func (r *BackupRepository) GetConfigByContainer(nodeID, containerName string) (*apps.BackupConfig, error) {
+	var cfg apps.BackupConfig
 	err := r.db.GetContext(context.Background(), &cfg, `
 		SELECT id, user_id, node_id, project_id, container_name, volumes, cron_expression, retention_count, pause_container, backup_method, pg_user, storage_credential_id, enabled, created_at, updated_at
 		FROM backup_configs
 		WHERE node_id = $1 AND container_name = $2`, nodeID, containerName)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, backup.ErrNotFound
+			return nil, apps.ErrBackupNotFound
 		}
 		return nil, err
 	}
 	return &cfg, nil
 }
 
-func (r *BackupRepository) GetConfigByID(id string) (*backup.BackupConfig, error) {
-	var cfg backup.BackupConfig
+func (r *BackupRepository) GetConfigByID(id string) (*apps.BackupConfig, error) {
+	var cfg apps.BackupConfig
 	err := r.db.GetContext(context.Background(), &cfg, `
 		SELECT id, user_id, node_id, project_id, container_name, volumes, cron_expression, retention_count, pause_container, backup_method, pg_user, storage_credential_id, enabled, created_at, updated_at
 		FROM backup_configs
 		WHERE id = $1`, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, backup.ErrNotFound
+			return nil, apps.ErrBackupNotFound
 		}
 		return nil, err
 	}
@@ -138,8 +141,8 @@ func (r *BackupRepository) GetConfigByID(id string) (*backup.BackupConfig, error
 
 // ─── Backup Records ──────────────────────────────────────────────────────────
 
-func (r *BackupRepository) CreateRecord(rec *backup.BackupRecord) (*backup.BackupRecord, error) {
-	var res backup.BackupRecord
+func (r *BackupRepository) CreateRecord(rec *apps.BackupRecord) (*apps.BackupRecord, error) {
+	var res apps.BackupRecord
 	method := rec.BackupMethod
 	if method == "" {
 		method = "volume"
@@ -185,8 +188,8 @@ func (r *BackupRepository) UpdateRecordJobID(id string, jobID string) error {
 	return err
 }
 
-func (r *BackupRepository) ListRecordsByContainer(nodeID, containerName string) ([]*backup.BackupRecord, error) {
-	var recs []*backup.BackupRecord
+func (r *BackupRepository) ListRecordsByContainer(nodeID, containerName string) ([]*apps.BackupRecord, error) {
+	var recs []*apps.BackupRecord
 	err := r.db.SelectContext(context.Background(), &recs, `
 		SELECT br.id, br.backup_config_id, br.node_id, br.user_id, br.job_id, br.container_name, br.s3_key, br.file_size_bytes, br.backup_method, br.trigger_type, br.status, br.error_message, br.started_at, br.completed_at,
 		       u.email AS user_email
@@ -200,8 +203,8 @@ func (r *BackupRepository) ListRecordsByContainer(nodeID, containerName string) 
 	return recs, nil
 }
 
-func (r *BackupRepository) GetRecordByID(id string) (*backup.BackupRecord, error) {
-	var rec backup.BackupRecord
+func (r *BackupRepository) GetRecordByID(id string) (*apps.BackupRecord, error) {
+	var rec apps.BackupRecord
 	err := r.db.GetContext(context.Background(), &rec, `
 		SELECT br.id, br.backup_config_id, br.node_id, br.user_id, br.job_id, br.container_name, br.s3_key, br.file_size_bytes, br.backup_method, br.trigger_type, br.status, br.error_message, br.started_at, br.completed_at,
 		       u.email AS user_email
@@ -210,7 +213,7 @@ func (r *BackupRepository) GetRecordByID(id string) (*backup.BackupRecord, error
 		WHERE br.id = $1`, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, backup.ErrNotFound
+			return nil, apps.ErrBackupNotFound
 		}
 		return nil, err
 	}

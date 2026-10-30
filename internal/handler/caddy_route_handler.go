@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package handler
 
 import (
@@ -6,32 +9,32 @@ import (
 	"log"
 	"net/http"
 
-	caddyroute "github.com/arturo/autohost-cloud-api/internal/domain/caddy_route"
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
+	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
 )
 
 // CaddyRouteHandler manages Caddy reverse-proxy routes for a node.
 type CaddyRouteHandler struct {
-	service    *caddyroute.Service
-	jobService *job.Service
-	dispatcher ParamDispatcher
-	nodeSvc    *node.Service
+	service    *apps.CaddyRouteService
+	jobService *jobs.JobService
+	dispatcher dispatcher.ParamDispatcher
+	nodeSvc    *node.NodeService
 }
 
 func NewCaddyRouteHandler(
-	service *caddyroute.Service,
-	jobService *job.Service,
-	dispatcher ParamDispatcher,
-	nodeSvc *node.Service,
+	service *apps.CaddyRouteService,
+	jobService *jobs.JobService,
+	disp dispatcher.ParamDispatcher,
+	nodeSvc *node.NodeService,
 ) *CaddyRouteHandler {
 	return &CaddyRouteHandler{
 		service:    service,
 		jobService: jobService,
-		dispatcher: dispatcher,
+		dispatcher: disp,
 		nodeSvc:    nodeSvc,
 	}
 }
@@ -74,7 +77,7 @@ func (h *CaddyRouteHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if routes == nil {
-		routes = []*caddyroute.CaddyRoute{}
+		routes = []*apps.CaddyRoute{}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -119,7 +122,7 @@ func (h *CaddyRouteHandler) Upsert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Persist the route in the DB.
-	saved, err := h.service.Upsert(&caddyroute.CaddyRoute{
+	saved, err := h.service.Upsert(&apps.CaddyRoute{
 		NodeID:   nodeID,
 		UserID:   claims.UserID,
 		Domain:   req.Domain,
@@ -136,10 +139,10 @@ func (h *CaddyRouteHandler) Upsert(w http.ResponseWriter, r *http.Request) {
 		"domain":   req.Domain,
 		"upstream": req.Upstream,
 	})
-	j, err := h.jobService.Dispatch(nodeID, "caddy.upsert-route", nodecommand.CommandTypeDefault)
+	j, err := h.jobService.Dispatch(nodeID, "caddy.upsert-route", jobs.CommandTypeDefault)
 	if err != nil {
 		log.Printf("[WARN] create caddy.upsert-route job for node %s: %v", nodeID, err)
-	} else if err := h.dispatcher.DispatchJobWithParams(nodeID, j.ID, "caddy.upsert-route", nodecommand.CommandTypeDefault, string(params)); err != nil {
+	} else if err := h.dispatcher.DispatchJobWithParams(nodeID, j.ID, "caddy.upsert-route", jobs.CommandTypeDefault, string(params)); err != nil {
 		log.Printf("[WARN] dispatch caddy.upsert-route to node %s: %v", nodeID, err)
 	}
 
@@ -172,7 +175,7 @@ func (h *CaddyRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.Delete(nodeID, domain); err != nil {
-		if errors.Is(err, caddyroute.ErrNotFound) {
+		if errors.Is(err, apps.ErrCaddyRouteNotFound) {
 			http.Error(w, "route not found", http.StatusNotFound)
 			return
 		}
@@ -183,10 +186,10 @@ func (h *CaddyRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	// Dispatch the caddy.delete-route job to the agent asynchronously.
 	params, _ := json.Marshal(map[string]string{"domain": domain})
-	j, err := h.jobService.Dispatch(nodeID, "caddy.delete-route", nodecommand.CommandTypeDefault)
+	j, err := h.jobService.Dispatch(nodeID, "caddy.delete-route", jobs.CommandTypeDefault)
 	if err != nil {
 		log.Printf("[WARN] create caddy.delete-route job for node %s: %v", nodeID, err)
-	} else if err := h.dispatcher.DispatchJobWithParams(nodeID, j.ID, "caddy.delete-route", nodecommand.CommandTypeDefault, string(params)); err != nil {
+	} else if err := h.dispatcher.DispatchJobWithParams(nodeID, j.ID, "caddy.delete-route", jobs.CommandTypeDefault, string(params)); err != nil {
 		log.Printf("[WARN] dispatch caddy.delete-route to node %s: %v", nodeID, err)
 	}
 

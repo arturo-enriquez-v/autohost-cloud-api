@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package postgres
 
 import (
@@ -8,7 +11,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	sm "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 )
 
 // ServiceMonitorRepository persists service monitors and health events.
@@ -22,7 +25,7 @@ func NewServiceMonitorRepository(db *sqlx.DB) *ServiceMonitorRepository {
 
 // ─── Service Monitors ────────────────────────────────────────────────────────
 
-func (r *ServiceMonitorRepository) Create(m *sm.ServiceMonitor) (*sm.ServiceMonitor, error) {
+func (r *ServiceMonitorRepository) Create(m *apps.ServiceMonitor) (*apps.ServiceMonitor, error) {
 	query := `
 		INSERT INTO service_monitors (
 			node_id, user_id, service_name, check_type,
@@ -48,14 +51,14 @@ func (r *ServiceMonitorRepository) Create(m *sm.ServiceMonitor) (*sm.ServiceMoni
 	if !rows.Next() {
 		return nil, errors.New("create service monitor returned no rows")
 	}
-	var result sm.ServiceMonitor
+	var result apps.ServiceMonitor
 	if err := rows.StructScan(&result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
-func (r *ServiceMonitorRepository) Update(m *sm.ServiceMonitor) (*sm.ServiceMonitor, error) {
+func (r *ServiceMonitorRepository) Update(m *apps.ServiceMonitor) (*apps.ServiceMonitor, error) {
 	query := `
 		UPDATE service_monitors SET
 			service_name        = :service_name,
@@ -81,9 +84,9 @@ func (r *ServiceMonitorRepository) Update(m *sm.ServiceMonitor) (*sm.ServiceMoni
 	defer rows.Close()
 
 	if !rows.Next() {
-		return nil, sm.ErrNotFound
+		return nil, apps.ErrServiceMonitorNotFound
 	}
-	var result sm.ServiceMonitor
+	var result apps.ServiceMonitor
 	if err := rows.StructScan(&result); err != nil {
 		return nil, err
 	}
@@ -97,25 +100,25 @@ func (r *ServiceMonitorRepository) Delete(id string) error {
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return sm.ErrNotFound
+		return apps.ErrServiceMonitorNotFound
 	}
 	return nil
 }
 
-func (r *ServiceMonitorRepository) FindByID(id string) (*sm.ServiceMonitor, error) {
-	var m sm.ServiceMonitor
+func (r *ServiceMonitorRepository) FindByID(id string) (*apps.ServiceMonitor, error) {
+	var m apps.ServiceMonitor
 	err := r.db.Get(&m, `SELECT * FROM service_monitors WHERE id = $1`, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, sm.ErrNotFound
+			return nil, apps.ErrServiceMonitorNotFound
 		}
 		return nil, err
 	}
 	return &m, nil
 }
 
-func (r *ServiceMonitorRepository) ListByNodeID(nodeID string) ([]*sm.ServiceMonitor, error) {
-	var monitors []*sm.ServiceMonitor
+func (r *ServiceMonitorRepository) ListByNodeID(nodeID string) ([]*apps.ServiceMonitor, error) {
+	var monitors []*apps.ServiceMonitor
 	err := r.db.Select(&monitors,
 		`SELECT * FROM service_monitors WHERE node_id = $1 ORDER BY created_at ASC`,
 		nodeID,
@@ -149,7 +152,7 @@ func (r *ServiceMonitorRepository) UpdateAutoHealState(id string, state json.Raw
 
 // ─── Health Events ───────────────────────────────────────────────────────────
 
-func (r *ServiceMonitorRepository) InsertEvent(e *sm.ServiceHealthEvent) error {
+func (r *ServiceMonitorRepository) InsertEvent(e *apps.ServiceHealthEvent) error {
 	_, err := r.db.NamedExec(`
 		INSERT INTO service_health_events (monitor_id, node_id, user_id, status, latency_ms, message, checked_at)
 		VALUES (:monitor_id, :node_id, :user_id, :status, :latency_ms, :message, :checked_at)`,
@@ -158,8 +161,8 @@ func (r *ServiceMonitorRepository) InsertEvent(e *sm.ServiceHealthEvent) error {
 	return err
 }
 
-func (r *ServiceMonitorRepository) ListEventsByMonitorID(monitorID string, limit int) ([]*sm.ServiceHealthEvent, error) {
-	var events []*sm.ServiceHealthEvent
+func (r *ServiceMonitorRepository) ListEventsByMonitorID(monitorID string, limit int) ([]*apps.ServiceHealthEvent, error) {
+	var events []*apps.ServiceHealthEvent
 	err := r.db.Select(&events, `
 		SELECT * FROM service_health_events
 		WHERE monitor_id = $1
@@ -173,10 +176,10 @@ func (r *ServiceMonitorRepository) ListEventsByMonitorID(monitorID string, limit
 	return events, nil
 }
 
-func (r *ServiceMonitorRepository) UptimeHistory24h(monitorID string) ([]*sm.UptimePoint, error) {
+func (r *ServiceMonitorRepository) UptimeHistory24h(monitorID string) ([]*apps.UptimePoint, error) {
 	// Generate 5-minute buckets for the last 24 hours and join with health events.
 	// Each bucket shows 'up' if all checks passed, 'down' if any failed, or 'no_data' if there are none.
-	var points []*sm.UptimePoint
+	var points []*apps.UptimePoint
 	err := r.db.Select(&points, `
 		WITH buckets AS (
 			SELECT generate_series(

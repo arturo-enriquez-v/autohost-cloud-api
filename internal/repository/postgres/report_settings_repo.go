@@ -1,10 +1,13 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package postgres
 
 import (
 	"database/sql"
 	"encoding/json"
 
-	reportsettings "github.com/arturo/autohost-cloud-api/internal/domain/report_settings"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -16,7 +19,7 @@ func NewReportSettingsRepository(db *sqlx.DB) *ReportSettingsRepository {
 	return &ReportSettingsRepository{db: db}
 }
 
-func (r *ReportSettingsRepository) Get(userID string) (*reportsettings.ReportSettings, error) {
+func (r *ReportSettingsRepository) Get(userID string) (*identity.ReportSettings, error) {
 	var row struct {
 		Enabled         bool   `db:"enabled"`
 		HourUTC         int    `db:"hour_utc"`
@@ -25,7 +28,7 @@ func (r *ReportSettingsRepository) Get(userID string) (*reportsettings.ReportSet
 	err := r.db.Get(&row,
 		`SELECT enabled, hour_utc, excluded_node_ids FROM user_report_settings WHERE user_id = $1`, userID)
 	if err == sql.ErrNoRows {
-		return &reportsettings.ReportSettings{UserID: userID, Enabled: false, HourUTC: 8, ExcludedNodeIDs: []string{}}, nil
+		return &identity.ReportSettings{UserID: userID, Enabled: false, HourUTC: 8, ExcludedNodeIDs: []string{}}, nil
 	}
 	if err != nil {
 		return nil, err
@@ -37,7 +40,7 @@ func (r *ReportSettingsRepository) Get(userID string) (*reportsettings.ReportSet
 	if excluded == nil {
 		excluded = []string{}
 	}
-	return &reportsettings.ReportSettings{
+	return &identity.ReportSettings{
 		UserID:          userID,
 		Enabled:         row.Enabled,
 		HourUTC:         row.HourUTC,
@@ -65,7 +68,7 @@ func (r *ReportSettingsRepository) Upsert(userID string, enabled bool, hourUTC i
 	return err
 }
 
-func (r *ReportSettingsRepository) ListEnabledAtHour(hourUTC int) ([]*reportsettings.ReportSettings, error) {
+func (r *ReportSettingsRepository) ListEnabledAtHour(hourUTC int) ([]*identity.ReportSettings, error) {
 	var rows []struct {
 		UserID  string `db:"user_id"`
 		HourUTC int    `db:"hour_utc"`
@@ -76,9 +79,9 @@ func (r *ReportSettingsRepository) ListEnabledAtHour(hourUTC int) ([]*reportsett
 	if err != nil {
 		return nil, err
 	}
-	out := make([]*reportsettings.ReportSettings, len(rows))
+	out := make([]*identity.ReportSettings, len(rows))
 	for i, row := range rows {
-		out[i] = &reportsettings.ReportSettings{UserID: row.UserID, Enabled: true, HourUTC: row.HourUTC}
+		out[i] = &identity.ReportSettings{UserID: row.UserID, Enabled: true, HourUTC: row.HourUTC}
 	}
 	return out, nil
 }

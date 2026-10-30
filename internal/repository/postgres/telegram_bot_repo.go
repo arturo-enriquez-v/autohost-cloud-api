@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package postgres
 
 import (
@@ -5,12 +8,11 @@ import (
 	"database/sql"
 	"errors"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/jmoiron/sqlx"
-
-	telegrambot "github.com/arturo/autohost-cloud-api/internal/domain/telegram_bot"
 )
 
-// TelegramBotRepository implements telegrambot.Repository using PostgreSQL.
+// TelegramBotRepository implements identity.TelegramBotRepository using PostgreSQL.
 type TelegramBotRepository struct {
 	db *sqlx.DB
 }
@@ -19,8 +21,8 @@ func NewTelegramBotRepository(db *sqlx.DB) *TelegramBotRepository {
 	return &TelegramBotRepository{db: db}
 }
 
-func (r *TelegramBotRepository) Create(bot *telegrambot.TelegramBot) (*telegrambot.TelegramBot, error) {
-	var result telegrambot.TelegramBot
+func (r *TelegramBotRepository) Create(bot *identity.TelegramBot) (*identity.TelegramBot, error) {
+	var result identity.TelegramBot
 	err := r.db.QueryRowContext(context.Background(), `
 		INSERT INTO telegram_bots (user_id, name, bot_token, chat_id)
 		VALUES ($1, $2, $3, $4)
@@ -33,8 +35,8 @@ func (r *TelegramBotRepository) Create(bot *telegrambot.TelegramBot) (*telegramb
 	return &result, nil
 }
 
-func (r *TelegramBotRepository) Update(bot *telegrambot.TelegramBot) (*telegrambot.TelegramBot, error) {
-	var result telegrambot.TelegramBot
+func (r *TelegramBotRepository) Update(bot *identity.TelegramBot) (*identity.TelegramBot, error) {
+	var result identity.TelegramBot
 	err := r.db.QueryRowContext(context.Background(), `
 		UPDATE telegram_bots
 		SET name = $1, bot_token = $2, chat_id = $3, updated_at = NOW()
@@ -44,7 +46,7 @@ func (r *TelegramBotRepository) Update(bot *telegrambot.TelegramBot) (*telegramb
 	).Scan(&result.ID, &result.UserID, &result.Name, &result.BotToken, &result.ChatID, &result.CreatedAt, &result.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, telegrambot.ErrNotFound
+			return nil, identity.ErrTelegramBotNotFound
 		}
 		return nil, err
 	}
@@ -62,28 +64,28 @@ func (r *TelegramBotRepository) Delete(id, userID string) error {
 		return err
 	}
 	if n == 0 {
-		return telegrambot.ErrNotFound
+		return identity.ErrTelegramBotNotFound
 	}
 	return nil
 }
 
-func (r *TelegramBotRepository) FindByID(id string) (*telegrambot.TelegramBot, error) {
-	var bot telegrambot.TelegramBot
+func (r *TelegramBotRepository) FindByID(id string) (*identity.TelegramBot, error) {
+	var bot identity.TelegramBot
 	err := r.db.GetContext(context.Background(), &bot, `
 		SELECT id, user_id, name, bot_token, chat_id, created_at, updated_at
 		FROM telegram_bots
 		WHERE id = $1`, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, telegrambot.ErrNotFound
+			return nil, identity.ErrTelegramBotNotFound
 		}
 		return nil, err
 	}
 	return &bot, nil
 }
 
-func (r *TelegramBotRepository) ListByUserID(userID string) ([]*telegrambot.TelegramBot, error) {
-	var bots []*telegrambot.TelegramBot
+func (r *TelegramBotRepository) ListByUserID(userID string) ([]*identity.TelegramBot, error) {
+	var bots []*identity.TelegramBot
 	err := r.db.SelectContext(context.Background(), &bots, `
 		SELECT id, user_id, name, bot_token, chat_id, created_at, updated_at
 		FROM telegram_bots
@@ -93,7 +95,7 @@ func (r *TelegramBotRepository) ListByUserID(userID string) ([]*telegrambot.Tele
 		return nil, err
 	}
 	if bots == nil {
-		bots = []*telegrambot.TelegramBot{}
+		bots = []*identity.TelegramBot{}
 	}
 	return bots, nil
 }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package postgres
 
 import (
@@ -5,11 +8,11 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/marketplace"
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 	"github.com/jmoiron/sqlx"
 )
 
-// MarketplaceRepository implements marketplace.Repository using PostgreSQL.
+// MarketplaceRepository implements apps.MarketplaceRepository using PostgreSQL.
 type MarketplaceRepository struct {
 	db *sqlx.DB
 }
@@ -28,7 +31,7 @@ type marketplaceAppModel struct {
 	UpdatedAt time.Time      `db:"updated_at"`
 }
 
-func (r *MarketplaceRepository) Create(app *marketplace.MarketplaceApp) (*marketplace.MarketplaceApp, error) {
+func (r *MarketplaceRepository) Create(app *apps.MarketplaceApp) (*apps.MarketplaceApp, error) {
 	var m marketplaceAppModel
 	err := r.db.QueryRowContext(context.Background(), `
 		INSERT INTO marketplace_apps (node_id, app_name, status)
@@ -44,7 +47,7 @@ func (r *MarketplaceRepository) Create(app *marketplace.MarketplaceApp) (*market
 	return modelToMarketplaceApp(m), nil
 }
 
-func (r *MarketplaceRepository) FindByNodeID(nodeID string) ([]*marketplace.MarketplaceApp, error) {
+func (r *MarketplaceRepository) FindByNodeID(nodeID string) ([]*apps.MarketplaceApp, error) {
 	var models []marketplaceAppModel
 	err := r.db.SelectContext(context.Background(), &models,
 		`SELECT id, node_id, app_name, job_id, status, created_at, updated_at
@@ -52,14 +55,14 @@ func (r *MarketplaceRepository) FindByNodeID(nodeID string) ([]*marketplace.Mark
 	if err != nil {
 		return nil, err
 	}
-	result := make([]*marketplace.MarketplaceApp, len(models))
+	result := make([]*apps.MarketplaceApp, len(models))
 	for i, m := range models {
 		result[i] = modelToMarketplaceApp(m)
 	}
 	return result, nil
 }
 
-func (r *MarketplaceRepository) FindByJobID(jobID string) (*marketplace.MarketplaceApp, error) {
+func (r *MarketplaceRepository) FindByJobID(jobID string) (*apps.MarketplaceApp, error) {
 	var m marketplaceAppModel
 	err := r.db.GetContext(context.Background(), &m,
 		`SELECT id, node_id, app_name, job_id, status, created_at, updated_at
@@ -70,7 +73,7 @@ func (r *MarketplaceRepository) FindByJobID(jobID string) (*marketplace.Marketpl
 	return modelToMarketplaceApp(m), nil
 }
 
-func (r *MarketplaceRepository) UpdateStatus(id string, status marketplace.AppStatus) error {
+func (r *MarketplaceRepository) UpdateStatus(id string, status apps.AppStatus) error {
 	_, err := r.db.ExecContext(context.Background(),
 		`UPDATE marketplace_apps SET status = $1, updated_at = NOW() WHERE id = $2`, status, id)
 	return err
@@ -82,12 +85,12 @@ func (r *MarketplaceRepository) UpdateJobID(id, jobID string) error {
 	return err
 }
 
-func modelToMarketplaceApp(m marketplaceAppModel) *marketplace.MarketplaceApp {
-	app := &marketplace.MarketplaceApp{
+func modelToMarketplaceApp(m marketplaceAppModel) *apps.MarketplaceApp {
+	app := &apps.MarketplaceApp{
 		ID:        m.ID,
 		NodeID:    m.NodeID,
 		AppName:   m.AppName,
-		Status:    marketplace.AppStatus(m.Status),
+		Status:    apps.AppStatus(m.Status),
 		CreatedAt: m.CreatedAt,
 		UpdatedAt: m.UpdatedAt,
 	}

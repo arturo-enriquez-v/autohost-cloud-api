@@ -1,10 +1,13 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package postgres
 
 import (
 	"fmt"
 	"time"
 
-	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -16,8 +19,8 @@ func NewNodeMetricRepository(db *sqlx.DB) *NodeMetricRepo {
 	return &NodeMetricRepo{DB: db}
 }
 
-func (r *NodeMetricRepo) StoreNodeMetric(req *nodemetric.CreateNodeMetricRequest) (*nodemetric.NodeMetric, error) {
-	var metric nodemetric.NodeMetric
+func (r *NodeMetricRepo) StoreNodeMetric(req *node.CreateNodeMetricRequest) (*node.NodeMetric, error) {
+	var metric node.NodeMetric
 	err := r.DB.QueryRowx(`
 		INSERT INTO node_metrics (
 			node_id, cpu_usage_percent, memory_total_bytes, memory_used_bytes,
@@ -45,7 +48,7 @@ var allowedBuckets = map[string]bool{
 	"day":    true,
 }
 
-func (r *NodeMetricRepo) GetHistoryByNodeID(params nodemetric.HistoryParams) ([]*nodemetric.NodeMetricHistoryPoint, error) {
+func (r *NodeMetricRepo) GetHistoryByNodeID(params node.HistoryParams) ([]*node.NodeMetricHistoryPoint, error) {
 	bucket := params.Bucket
 	if !allowedBuckets[bucket] {
 		bucket = "hour"
@@ -65,15 +68,15 @@ func (r *NodeMetricRepo) GetHistoryByNodeID(params nodemetric.HistoryParams) ([]
 		ORDER BY bucket ASC
 	`, bucket)
 
-	var points []*nodemetric.NodeMetricHistoryPoint
+	var points []*node.NodeMetricHistoryPoint
 	if err := r.DB.Select(&points, query, params.NodeID, params.From, params.To); err != nil {
 		return nil, err
 	}
 	return points, nil
 }
 
-// func (r *NodeMetricRepo) GetLatestMetricByNodeID(nodeID string) (*nodemetric.NodeMetric, error) {
-// 	var model nodemetric.NodeMetric
+// func (r *NodeMetricRepo) GetLatestMetricByNodeID(nodeID string) (*node.NodeMetric, error) {
+// 	var model node.NodeMetric
 // 	err := r.DB.Get(&model, `
 // 		SELECT id, node_id, cpu_usage_percent, memory_total_bytes, memory_used_bytes,
 // 		       memory_usage_percent, disk_total_bytes, disk_used_bytes,
@@ -89,8 +92,8 @@ func (r *NodeMetricRepo) GetHistoryByNodeID(params nodemetric.HistoryParams) ([]
 // 	return &model, nil
 // }
 
-// func (r *NodeMetricRepo) GetMetricsByNodeID(nodeID string, limit, offset int) ([]*nodemetric.NodeMetric, error) {
-// 	var models []*nodemetric.NodeMetric
+// func (r *NodeMetricRepo) GetMetricsByNodeID(nodeID string, limit, offset int) ([]*node.NodeMetric, error) {
+// 	var models []*node.NodeMetric
 // 	err := r.DB.Select(&models, `
 // 		SELECT id, node_id, cpu_usage_percent, memory_total_bytes, memory_used_bytes,
 // 		       memory_usage_percent, disk_total_bytes, disk_used_bytes,
@@ -108,8 +111,8 @@ func (r *NodeMetricRepo) GetHistoryByNodeID(params nodemetric.HistoryParams) ([]
 
 // GetNodePeriodStatsByOwnerID returns AVG and MAX metrics per node for all nodes
 // owned by ownerID, computed over [since, now].
-func (r *NodeMetricRepo) GetNodePeriodStatsByOwnerID(ownerID string, since time.Time) ([]*nodemetric.NodePeriodStats, error) {
-	var stats []*nodemetric.NodePeriodStats
+func (r *NodeMetricRepo) GetNodePeriodStatsByOwnerID(ownerID string, since time.Time) ([]*node.NodePeriodStats, error) {
+	var stats []*node.NodePeriodStats
 	err := r.DB.Select(&stats, `
 		SELECT
 			n.id                                            AS node_id,

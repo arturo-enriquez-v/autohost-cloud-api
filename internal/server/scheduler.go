@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package server
 
 import (
@@ -95,4 +98,3 @@ func StartAutoscalerScheduler(lc fx.Lifecycle, sched *scheduler.AutoscalerSchedu
 		},
 	})
 }
-

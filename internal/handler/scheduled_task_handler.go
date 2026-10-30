@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package handler
 
 import (
@@ -6,16 +9,16 @@ import (
 	"log"
 	"net/http"
 
-	scheduledtask "github.com/arturo/autohost-cloud-api/internal/domain/scheduled_task"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
 )
 
 type ScheduledTaskHandler struct {
-	service *scheduledtask.Service
+	service *jobs.ScheduledTaskService
 }
 
-func NewScheduledTaskHandler(service *scheduledtask.Service) *ScheduledTaskHandler {
+func NewScheduledTaskHandler(service *jobs.ScheduledTaskService) *ScheduledTaskHandler {
 	return &ScheduledTaskHandler{service: service}
 }
 
@@ -50,13 +53,13 @@ func (h *ScheduledTaskHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 type createTaskRequest struct {
-	NodeID          string                     `json:"node_id"`
-	CommandID       string                     `json:"command_id"`
-	CommandName     string                     `json:"command_name"`
-	ScheduleType    scheduledtask.ScheduleType `json:"schedule_type"`
-	IntervalSeconds *int                       `json:"interval_seconds"`
-	RunAtTime       *string                    `json:"run_at_time"`
-	Enabled         *bool                      `json:"enabled"`
+	NodeID          string            `json:"node_id"`
+	CommandID       string            `json:"command_id"`
+	CommandName     string            `json:"command_name"`
+	ScheduleType    jobs.ScheduleType `json:"schedule_type"`
+	IntervalSeconds *int              `json:"interval_seconds"`
+	RunAtTime       *string           `json:"run_at_time"`
+	Enabled         *bool             `json:"enabled"`
 }
 
 // Create registers a new scheduled task.
@@ -79,7 +82,7 @@ func (h *ScheduledTaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 		enabled = *req.Enabled
 	}
 
-	task := &scheduledtask.ScheduledTask{
+	task := &jobs.ScheduledTask{
 		UserID:          claims.UserID,
 		NodeID:          req.NodeID,
 		CommandID:       req.CommandID,
@@ -103,12 +106,12 @@ func (h *ScheduledTaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateTaskRequest struct {
-	CommandID       string                     `json:"command_id"`
-	CommandName     string                     `json:"command_name"`
-	ScheduleType    scheduledtask.ScheduleType `json:"schedule_type"`
-	IntervalSeconds *int                       `json:"interval_seconds"`
-	RunAtTime       *string                    `json:"run_at_time"`
-	Enabled         bool                       `json:"enabled"`
+	CommandID       string            `json:"command_id"`
+	CommandName     string            `json:"command_name"`
+	ScheduleType    jobs.ScheduleType `json:"schedule_type"`
+	IntervalSeconds *int              `json:"interval_seconds"`
+	RunAtTime       *string           `json:"run_at_time"`
+	Enabled         bool              `json:"enabled"`
 }
 
 // Update modifies an existing scheduled task.
@@ -124,7 +127,7 @@ func (h *ScheduledTaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	existing, err := h.service.FindByID(id)
 	if err != nil {
-		if errors.Is(err, scheduledtask.ErrNotFound) {
+		if errors.Is(err, jobs.ErrTaskNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -172,7 +175,7 @@ func (h *ScheduledTaskHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	task, err := h.service.FindByID(id)
 	if err != nil {
-		if errors.Is(err, scheduledtask.ErrNotFound) {
+		if errors.Is(err, jobs.ErrTaskNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -205,7 +208,7 @@ func (h *ScheduledTaskHandler) Toggle(w http.ResponseWriter, r *http.Request) {
 
 	task, err := h.service.FindByID(id)
 	if err != nil {
-		if errors.Is(err, scheduledtask.ErrNotFound) {
+		if errors.Is(err, jobs.ErrTaskNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package handler_test
 
 import (
@@ -8,8 +11,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	containersetting "github.com/arturo/autohost-cloud-api/internal/domain/container_setting"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 )
@@ -18,15 +21,15 @@ type mockSettingRepo struct {
 	locks map[string]bool
 }
 
-func (m *mockSettingRepo) GetByNodeID(ctx context.Context, nodeID string) (*containersetting.ContainerSetting, error) {
-	return &containersetting.ContainerSetting{
+func (m *mockSettingRepo) GetByNodeID(ctx context.Context, nodeID string) (*node.ContainerSetting, error) {
+	return &node.ContainerSetting{
 		NodeID:           nodeID,
 		SortOrder:        []string{},
 		LockedContainers: m.locks,
 	}, nil
 }
 
-func (m *mockSettingRepo) Upsert(ctx context.Context, s *containersetting.ContainerSetting) (*containersetting.ContainerSetting, error) {
+func (m *mockSettingRepo) Upsert(ctx context.Context, s *node.ContainerSetting) (*node.ContainerSetting, error) {
 	m.locks = s.LockedContainers
 	return s, nil
 }
@@ -37,7 +40,7 @@ func (m *mockSettingRepo) IsContainerLocked(ctx context.Context, nodeID, contain
 
 type dummyDispatcher struct{}
 
-func (d *dummyDispatcher) DispatchJob(nodeID, jobID, commandName string, commandType nodecommand.CommandType) error {
+func (d *dummyDispatcher) DispatchJob(nodeID, jobID, commandName string, commandType jobs.CommandType) error {
 	return nil
 }
 
@@ -47,7 +50,7 @@ func TestJobHandler_Dispatch_LockedContainer(t *testing.T) {
 			"production-db": true,
 		},
 	}
-	settingSvc := containersetting.NewService(repo)
+	settingSvc := node.NewContainerSettingService(repo)
 	h := handler.NewJobHandler(nil, &dummyDispatcher{}, settingSvc)
 
 	body, _ := json.Marshal(map[string]string{
@@ -80,7 +83,7 @@ func TestJobHandler_Dispatch_UnlockedContainer_NotForbidden(t *testing.T) {
 			"production-db": true,
 		},
 	}
-	settingSvc := containersetting.NewService(repo)
+	settingSvc := node.NewContainerSettingService(repo)
 	// jobService is nil so it would panic/fail when calling jobService.Dispatch, but it must pass the lock check first
 	h := handler.NewJobHandler(nil, &dummyDispatcher{}, settingSvc)
 

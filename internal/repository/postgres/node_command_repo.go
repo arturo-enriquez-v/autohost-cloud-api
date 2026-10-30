@@ -1,14 +1,17 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package postgres
 
 import (
 	"context"
 	"database/sql"
 
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/jmoiron/sqlx"
 )
 
-// NodeCommandRepository implements nodecommand.Repository using PostgreSQL.
+// NodeCommandRepository implements jobs.NodeCommandRepository using PostgreSQL.
 type NodeCommandRepository struct {
 	db *sqlx.DB
 }
@@ -18,7 +21,7 @@ func NewNodeCommandRepository(db *sqlx.DB) *NodeCommandRepository {
 }
 
 // Upsert inserts or updates a node command (matched on node_id + name).
-func (r *NodeCommandRepository) Upsert(cmd *nodecommand.NodeCommand) (*nodecommand.NodeCommand, error) {
+func (r *NodeCommandRepository) Upsert(cmd *jobs.NodeCommand) (*jobs.NodeCommand, error) {
 	var m NodeCommandModel
 	err := r.db.QueryRowContext(context.Background(), `
 		INSERT INTO node_commands (node_id, name, description, type, script_path)
@@ -37,7 +40,7 @@ func (r *NodeCommandRepository) Upsert(cmd *nodecommand.NodeCommand) (*nodecomma
 }
 
 // FindByNodeID returns all commands registered for a node.
-func (r *NodeCommandRepository) FindByNodeID(nodeID string) ([]*nodecommand.NodeCommand, error) {
+func (r *NodeCommandRepository) FindByNodeID(nodeID string) ([]*jobs.NodeCommand, error) {
 	var models []NodeCommandModel
 	err := r.db.SelectContext(context.Background(), &models,
 		`SELECT id, node_id, name, description, type, script_path, created_at
@@ -45,7 +48,7 @@ func (r *NodeCommandRepository) FindByNodeID(nodeID string) ([]*nodecommand.Node
 	if err != nil {
 		return nil, err
 	}
-	out := make([]*nodecommand.NodeCommand, len(models))
+	out := make([]*jobs.NodeCommand, len(models))
 	for i, m := range models {
 		out[i] = modelToNodeCommand(m)
 	}
@@ -53,13 +56,13 @@ func (r *NodeCommandRepository) FindByNodeID(nodeID string) ([]*nodecommand.Node
 }
 
 // FindByID returns a single command by its UUID.
-func (r *NodeCommandRepository) FindByID(id string) (*nodecommand.NodeCommand, error) {
+func (r *NodeCommandRepository) FindByID(id string) (*jobs.NodeCommand, error) {
 	var m NodeCommandModel
 	err := r.db.GetContext(context.Background(), &m,
 		`SELECT id, node_id, name, description, type, script_path, created_at
 		 FROM node_commands WHERE id = $1`, id)
 	if err == sql.ErrNoRows {
-		return nil, nodecommand.ErrCommandNotFound
+		return nil, jobs.ErrCommandNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -76,18 +79,18 @@ func (r *NodeCommandRepository) Delete(id string) error {
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return nodecommand.ErrCommandNotFound
+		return jobs.ErrCommandNotFound
 	}
 	return nil
 }
 
-func modelToNodeCommand(m NodeCommandModel) *nodecommand.NodeCommand {
-	return &nodecommand.NodeCommand{
+func modelToNodeCommand(m NodeCommandModel) *jobs.NodeCommand {
+	return &jobs.NodeCommand{
 		ID:          m.ID,
 		NodeID:      m.NodeID,
 		Name:        m.Name,
 		Description: m.Description.String,
-		Type:        nodecommand.CommandType(m.Type),
+		Type:        jobs.CommandType(m.Type),
 		ScriptPath:  m.ScriptPath.String,
 		CreatedAt:   m.CreatedAt,
 	}

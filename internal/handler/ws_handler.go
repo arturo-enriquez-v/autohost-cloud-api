@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package handler
 
 import (
@@ -7,8 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -27,11 +29,11 @@ var upgrader = websocket.Upgrader{
 type WSHandler struct {
 	clients        map[string]*Client
 	clientsMu      sync.RWMutex
-	jobService     *job.Service
-	commandService *nodecommand.Service
+	jobService     *jobs.JobService
+	commandService *jobs.NodeCommandService
 }
 
-func NewWSHandler(jobService *job.Service, commandService *nodecommand.Service) *WSHandler {
+func NewWSHandler(jobService *jobs.JobService, commandService *jobs.NodeCommandService) *WSHandler {
 	return &WSHandler{
 		clients:        make(map[string]*Client),
 		jobService:     jobService,
@@ -98,14 +100,14 @@ func (h *WSHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 // wsExecuteJobPayload is the JSON body inside a WebSocket "execute_job" message.
 type wsExecuteJobPayload struct {
-	JobID       string                  `json:"job_id"`
-	CommandName string                  `json:"command_name"`
-	CommandType nodecommand.CommandType `json:"command_type"`
+	JobID       string           `json:"job_id"`
+	CommandName string           `json:"command_name"`
+	CommandType jobs.CommandType `json:"command_type"`
 }
 
-// DispatchJob implements handler.NodeDispatcher: serializes an execute_job
+// DispatchJob implements dispatcher.NodeDispatcher: serializes an execute_job
 // WebSocket message and queues it for the target node.
-func (h *WSHandler) DispatchJob(nodeID, jobID, commandName string, commandType nodecommand.CommandType) error {
+func (h *WSHandler) DispatchJob(nodeID, jobID, commandName string, commandType jobs.CommandType) error {
 	payload, err := json.Marshal(wsExecuteJobPayload{
 		JobID:       jobID,
 		CommandName: commandName,
@@ -175,10 +177,10 @@ type jobResultPayload struct {
 
 // registerCommandPayload is sent by the node when it discovers commands.
 type registerCommandPayload struct {
-	Name        string                  `json:"name"`
-	Description string                  `json:"description"`
-	Type        nodecommand.CommandType `json:"type"`
-	ScriptPath  string                  `json:"script_path,omitempty"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	Type        jobs.CommandType `json:"type"`
+	ScriptPath  string           `json:"script_path,omitempty"`
 }
 
 func (h *WSHandler) handleMessage(c *Client, msg Message) {
@@ -194,7 +196,7 @@ func (h *WSHandler) handleMessage(c *Client, msg Message) {
 		}
 		if err := h.jobService.UpdateResult(
 			p.JobID,
-			job.JobStatus(p.Status),
+			jobs.JobStatus(p.Status),
 			p.Output,
 			p.Error,
 		); err != nil {
@@ -210,7 +212,7 @@ func (h *WSHandler) handleMessage(c *Client, msg Message) {
 			log.Printf("[WARN] invalid register_command payload from %s: %v", c.NodeID, err)
 			return
 		}
-		cmd := &nodecommand.NodeCommand{
+		cmd := &jobs.NodeCommand{
 			NodeID:      c.NodeID,
 			Name:        p.Name,
 			Description: p.Description,

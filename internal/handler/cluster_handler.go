@@ -1,19 +1,22 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package handler
 
 import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/cluster"
+	"github.com/arturo/autohost-cloud-api/internal/core/infra"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
 )
 
 type ClusterHandler struct {
-	service *cluster.Service
+	service *infra.ClusterManager
 }
 
-func NewClusterHandler(service *cluster.Service) *ClusterHandler {
+func NewClusterHandler(service *infra.ClusterManager) *ClusterHandler {
 	return &ClusterHandler{service: service}
 }
 
@@ -113,8 +116,8 @@ func (h *ClusterHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 type addNodeReq struct {
-	NodeID string              `json:"node_id"`
-	Role   cluster.ClusterRole `json:"role"`
+	NodeID string            `json:"node_id"`
+	Role   infra.ClusterRole `json:"role"`
 }
 
 func (h *ClusterHandler) AddNode(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +132,7 @@ func (h *ClusterHandler) AddNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Role == "" {
-		req.Role = cluster.RoleWorker
+		req.Role = infra.RoleWorker
 	}
 
 	if err := h.service.AddNodeToCluster(r.Context(), clusterID, req.NodeID, req.Role); err != nil {
@@ -230,7 +233,7 @@ func (h *ClusterHandler) GetAutoscaling(w http.ResponseWriter, r *http.Request) 
 
 func (h *ClusterHandler) ConfigureAutoscaling(w http.ResponseWriter, r *http.Request) {
 	serviceID := chi.URLParam(r, "serviceId")
-	var policy cluster.AutoscalePolicy
+	var policy infra.AutoscalePolicy
 	if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package postgres
 
 import (
@@ -6,7 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	externallog "github.com/arturo/autohost-cloud-api/internal/domain/external_log"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 )
@@ -19,8 +22,8 @@ func NewExternalLogRepository(db *sqlx.DB) *ExternalLogRepository {
 	return &ExternalLogRepository{db: db}
 }
 
-func (r *ExternalLogRepository) CreateToken(ctx context.Context, userID, name, tokenHash, tokenPrefix string, nodeID *string) (*externallog.ExternalLogToken, error) {
-	var token externallog.ExternalLogToken
+func (r *ExternalLogRepository) CreateToken(ctx context.Context, userID, name, tokenHash, tokenPrefix string, nodeID *string) (*node.ExternalLogToken, error) {
+	var token node.ExternalLogToken
 	query := `
 		INSERT INTO external_log_tokens (user_id, name, token_hash, token_prefix, node_id)
 		VALUES ($1, $2, $3, $4, $5)
@@ -33,8 +36,8 @@ func (r *ExternalLogRepository) CreateToken(ctx context.Context, userID, name, t
 	return &token, nil
 }
 
-func (r *ExternalLogRepository) GetTokenByHash(ctx context.Context, tokenHash string) (*externallog.ExternalLogToken, error) {
-	var token externallog.ExternalLogToken
+func (r *ExternalLogRepository) GetTokenByHash(ctx context.Context, tokenHash string) (*node.ExternalLogToken, error) {
+	var token node.ExternalLogToken
 	query := `
 		SELECT id, user_id, name, token_hash, token_prefix, node_id, created_at, last_seen_at, revoked_at
 		FROM external_log_tokens
@@ -53,8 +56,8 @@ func (r *ExternalLogRepository) UpdateTokenLastSeen(ctx context.Context, tokenID
 	return err
 }
 
-func (r *ExternalLogRepository) ListTokensByUserID(ctx context.Context, userID string) ([]*externallog.ExternalLogToken, error) {
-	var tokens []*externallog.ExternalLogToken
+func (r *ExternalLogRepository) ListTokensByUserID(ctx context.Context, userID string) ([]*node.ExternalLogToken, error) {
+	var tokens []*node.ExternalLogToken
 	query := `
 		SELECT id, user_id, name, token_hash, token_prefix, node_id, created_at, last_seen_at, revoked_at
 		FROM external_log_tokens
@@ -66,7 +69,7 @@ func (r *ExternalLogRepository) ListTokensByUserID(ctx context.Context, userID s
 		return nil, err
 	}
 	if tokens == nil {
-		tokens = []*externallog.ExternalLogToken{}
+		tokens = []*node.ExternalLogToken{}
 	}
 	return tokens, nil
 }
@@ -84,8 +87,8 @@ func (r *ExternalLogRepository) RevokeToken(ctx context.Context, userID, tokenID
 	return nil
 }
 
-func (r *ExternalLogRepository) InsertLog(ctx context.Context, log *externallog.ExternalLog) (*externallog.ExternalLog, error) {
-	var result externallog.ExternalLog
+func (r *ExternalLogRepository) InsertLog(ctx context.Context, log *node.ExternalLog) (*node.ExternalLog, error) {
+	var result node.ExternalLog
 	var tagsArray interface{} = pq.Array(log.Tags)
 	if len(log.Tags) == 0 {
 		tagsArray = pq.Array([]string{})
@@ -146,7 +149,7 @@ func (r *ExternalLogRepository) InsertLog(ctx context.Context, log *externallog.
 	return &result, nil
 }
 
-func (r *ExternalLogRepository) ListLogsFiltered(ctx context.Context, userID string, filter externallog.LogFilter, limit, offset int) ([]*externallog.ExternalLog, int, error) {
+func (r *ExternalLogRepository) ListLogsFiltered(ctx context.Context, userID string, filter node.LogFilter, limit, offset int) ([]*node.ExternalLog, int, error) {
 	conds := []string{"user_id = $1"}
 	args := []interface{}{userID}
 	n := 2
@@ -217,9 +220,9 @@ func (r *ExternalLogRepository) ListLogsFiltered(ctx context.Context, userID str
 	}
 	defer rows.Close()
 
-	var logs []*externallog.ExternalLog
+	var logs []*node.ExternalLog
 	for rows.Next() {
-		var l externallog.ExternalLog
+		var l node.ExternalLog
 		var tags pq.StringArray
 		var message sql.NullString
 		var nodeID sql.NullString
@@ -261,7 +264,7 @@ func (r *ExternalLogRepository) ListLogsFiltered(ctx context.Context, userID str
 	}
 
 	if logs == nil {
-		logs = []*externallog.ExternalLog{}
+		logs = []*node.ExternalLog{}
 	}
 
 	return logs, total, nil

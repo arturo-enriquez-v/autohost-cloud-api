@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package handler
 
 import (
@@ -5,17 +8,17 @@ import (
 	"errors"
 	"net/http"
 
-	telegrambot "github.com/arturo/autohost-cloud-api/internal/domain/telegram_bot"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 	"github.com/go-chi/chi/v5"
 )
 
 type TelegramBotHandler struct {
-	service *telegrambot.Service
+	service *identity.TelegramBotService
 }
 
-func NewTelegramBotHandler(service *telegrambot.Service) *TelegramBotHandler {
+func NewTelegramBotHandler(service *identity.TelegramBotService) *TelegramBotHandler {
 	return &TelegramBotHandler{service: service}
 }
 
@@ -66,7 +69,7 @@ func (h *TelegramBotHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bot := &telegrambot.TelegramBot{
+	bot := &identity.TelegramBot{
 		UserID:   claims.UserID,
 		Name:     req.Name,
 		BotToken: req.BotToken,
@@ -103,7 +106,7 @@ func (h *TelegramBotHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bot := &telegrambot.TelegramBot{
+	bot := &identity.TelegramBot{
 		ID:       botID,
 		UserID:   claims.UserID,
 		Name:     req.Name,
@@ -113,7 +116,7 @@ func (h *TelegramBotHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := h.service.Update(bot)
 	if err != nil {
-		if errors.Is(err, telegrambot.ErrNotFound) {
+		if errors.Is(err, identity.ErrNotFound) {
 			http.Error(w, "telegram bot not found", http.StatusNotFound)
 			return
 		}
@@ -140,7 +143,7 @@ func (h *TelegramBotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	err := h.service.Delete(botID, claims.UserID)
 	if err != nil {
-		if errors.Is(err, telegrambot.ErrNotFound) {
+		if errors.Is(err, identity.ErrNotFound) {
 			http.Error(w, "telegram bot not found", http.StatusNotFound)
 			return
 		}

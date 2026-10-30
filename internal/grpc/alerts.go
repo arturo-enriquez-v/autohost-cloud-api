@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package grpcserver
 
 import (
@@ -6,8 +9,7 @@ import (
 	"sync"
 	"time"
 
-	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
-	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 )
 
@@ -54,10 +56,10 @@ func (s *NodeAgentServer) sendOfflineAlert(nodeID string) {
 				userID = n.OwnerID
 			}
 		}
-		ev := &alertevent.AlertEvent{
+		ev := &node.AlertEvent{
 			UserID:    userID,
 			NodeID:    nodeID,
-			AlertType: alertevent.AlertEventTypeOffline,
+			AlertType: node.AlertEventTypeOffline,
 			Message:   msg,
 		}
 		if _, err := s.alertEventSvc.Create(ev); err != nil {
@@ -70,7 +72,7 @@ func (s *NodeAgentServer) sendOfflineAlert(nodeID string) {
 // config and fires Telegram + persists an alert event for each breached metric.
 // It is called at most once per persist-throttle window (≈1 min) from the
 // gRPC metric path.
-func (s *NodeAgentServer) checkThresholdAlerts(nodeID string, m *nodemetric.CreateNodeMetricRequest) {
+func (s *NodeAgentServer) checkThresholdAlerts(nodeID string, m *node.CreateNodeMetricRequest) {
 	if s.alertSvc == nil {
 		return
 	}
@@ -93,7 +95,7 @@ func (s *NodeAgentServer) checkThresholdAlerts(nodeID string, m *nodemetric.Crea
 		}
 	}
 
-	check := func(name string, value float64, threshold *float32, evType alertevent.AlertEventType) {
+	check := func(name string, value float64, threshold *float32, evType node.AlertEventType) {
 		if threshold == nil || value < float64(*threshold) {
 			return
 		}
@@ -112,7 +114,7 @@ func (s *NodeAgentServer) checkThresholdAlerts(nodeID string, m *nodemetric.Crea
 			log.Printf("[alert] telegram send for node %s (%s): %v", nodeID, name, err)
 		}
 		if s.alertEventSvc != nil {
-			ev := &alertevent.AlertEvent{
+			ev := &node.AlertEvent{
 				UserID:    userID,
 				NodeID:    nodeID,
 				AlertType: evType,
@@ -124,7 +126,7 @@ func (s *NodeAgentServer) checkThresholdAlerts(nodeID string, m *nodemetric.Crea
 		}
 	}
 
-	check("CPU", m.CPUUsagePercent, cfg.CPUThreshold, alertevent.AlertEventTypeCPU)
-	check("RAM", m.MemoryUsagePercent, cfg.RAMThreshold, alertevent.AlertEventTypeRAM)
-	check("Disk", m.DiskUsagePercent, cfg.DiskThreshold, alertevent.AlertEventTypeDisk)
+	check("CPU", m.CPUUsagePercent, cfg.CPUThreshold, node.AlertEventTypeCPU)
+	check("RAM", m.MemoryUsagePercent, cfg.RAMThreshold, node.AlertEventTypeRAM)
+	check("Disk", m.DiskUsagePercent, cfg.DiskThreshold, node.AlertEventTypeDisk)
 }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package handler
 
 import (
@@ -6,21 +9,19 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
-	"github.com/arturo/autohost-cloud-api/internal/domain/project"
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
 )
 
 type ProjectHandler struct {
-	projectService *project.Service
-	nodeService    *node.Service
-	planService    *plan.Service
+	projectService *apps.ProjectService
+	nodeService    *node.NodeService
 }
 
-func NewProjectHandler(projectService *project.Service, nodeService *node.Service, planService *plan.Service) *ProjectHandler {
-	return &ProjectHandler{projectService: projectService, nodeService: nodeService, planService: planService}
+func NewProjectHandler(projectService *apps.ProjectService, nodeService *node.NodeService) *ProjectHandler {
+	return &ProjectHandler{projectService: projectService, nodeService: nodeService}
 }
 
 func (h *ProjectHandler) Routes() chi.Router {
@@ -50,7 +51,7 @@ func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if projects == nil {
-		projects = []*project.Project{}
+		projects = []*apps.Project{}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(projects)
@@ -61,16 +62,6 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if claims == nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
-	}
-
-	if h.planService != nil {
-		projects, err := h.projectService.GetByUser(claims.UserID)
-		if err == nil {
-			if err := h.planService.CheckProjectLimit(claims.UserID, len(projects)); err != nil {
-				http.Error(w, err.Error(), http.StatusForbidden)
-				return
-			}
-		}
 	}
 
 	var req struct {
@@ -100,7 +91,7 @@ func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	p, err := h.projectService.GetByID(id)
 	if err != nil {
-		if errors.Is(err, project.ErrProjectNotFound) {
+		if errors.Is(err, apps.ErrProjectNotFound) {
 			http.Error(w, "project not found", http.StatusNotFound)
 			return
 		}
@@ -131,11 +122,11 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := h.projectService.Update(id, claims.UserID, req.Name)
 	if err != nil {
-		if errors.Is(err, project.ErrProjectNotFound) {
+		if errors.Is(err, apps.ErrProjectNotFound) {
 			http.Error(w, "project not found", http.StatusNotFound)
 			return
 		}
-		if errors.Is(err, project.ErrUnauthorized) {
+		if errors.Is(err, apps.ErrUnauthorized) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -155,11 +146,11 @@ func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	err := h.projectService.Delete(id, claims.UserID)
 	if err != nil {
-		if errors.Is(err, project.ErrProjectNotFound) {
+		if errors.Is(err, apps.ErrProjectNotFound) {
 			http.Error(w, "project not found", http.StatusNotFound)
 			return
 		}
-		if errors.Is(err, project.ErrUnauthorized) {
+		if errors.Is(err, apps.ErrUnauthorized) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -181,7 +172,7 @@ func (h *ProjectHandler) AssignNode(w http.ResponseWriter, r *http.Request) {
 	// Verify project belongs to this user
 	p, err := h.projectService.GetByID(projectID)
 	if err != nil {
-		if errors.Is(err, project.ErrProjectNotFound) {
+		if errors.Is(err, apps.ErrProjectNotFound) {
 			http.Error(w, "project not found", http.StatusNotFound)
 			return
 		}
@@ -213,7 +204,7 @@ func (h *ProjectHandler) RemoveNode(w http.ResponseWriter, r *http.Request) {
 	// Verify project belongs to this user
 	p, err := h.projectService.GetByID(projectID)
 	if err != nil {
-		if errors.Is(err, project.ErrProjectNotFound) {
+		if errors.Is(err, apps.ErrProjectNotFound) {
 			http.Error(w, "project not found", http.StatusNotFound)
 			return
 		}

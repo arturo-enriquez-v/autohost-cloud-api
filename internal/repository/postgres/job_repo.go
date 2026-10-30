@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package postgres
 
 import (
@@ -5,12 +8,11 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/jmoiron/sqlx"
 )
 
-// JobRepository implements job.Repository using PostgreSQL.
+// JobRepository implements jobs.JobRepository using PostgreSQL.
 type JobRepository struct {
 	db *sqlx.DB
 }
@@ -20,7 +22,7 @@ func NewJobRepository(db *sqlx.DB) *JobRepository {
 }
 
 // Create inserts a new job record with status=pending.
-func (r *JobRepository) Create(j *job.Job) (*job.Job, error) {
+func (r *JobRepository) Create(j *jobs.Job) (*jobs.Job, error) {
 	var m JobModel
 	err := r.db.QueryRowContext(context.Background(), `
 		INSERT INTO jobs (node_id, command_name, command_type, status, params)
@@ -38,13 +40,13 @@ func (r *JobRepository) Create(j *job.Job) (*job.Job, error) {
 }
 
 // FindByID returns a job by its UUID.
-func (r *JobRepository) FindByID(id string) (*job.Job, error) {
+func (r *JobRepository) FindByID(id string) (*jobs.Job, error) {
 	var m JobModel
 	err := r.db.GetContext(context.Background(), &m,
 		`SELECT id, node_id, command_name, command_type, status, params, output, error, created_at, started_at, finished_at
 		 FROM jobs WHERE id = $1`, id)
 	if err == sql.ErrNoRows {
-		return nil, job.ErrJobNotFound
+		return nil, jobs.ErrJobNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -53,7 +55,7 @@ func (r *JobRepository) FindByID(id string) (*job.Job, error) {
 }
 
 // FindByNodeID returns all jobs for a node ordered by creation time desc.
-func (r *JobRepository) FindByNodeID(nodeID string) ([]*job.Job, error) {
+func (r *JobRepository) FindByNodeID(nodeID string) ([]*jobs.Job, error) {
 	var models []JobModel
 	err := r.db.SelectContext(context.Background(), &models,
 		`SELECT id, node_id, command_name, command_type, status, params, output, error, created_at, started_at, finished_at
@@ -61,7 +63,7 @@ func (r *JobRepository) FindByNodeID(nodeID string) ([]*job.Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]*job.Job, len(models))
+	out := make([]*jobs.Job, len(models))
 	for i, m := range models {
 		out[i] = modelToJob(m)
 	}
@@ -69,7 +71,7 @@ func (r *JobRepository) FindByNodeID(nodeID string) ([]*job.Job, error) {
 }
 
 // FindPendingByNodeID returns pending jobs of a specific command type for a node.
-func (r *JobRepository) FindPendingByNodeID(nodeID string, commandType nodecommand.CommandType) ([]*job.Job, error) {
+func (r *JobRepository) FindPendingByNodeID(nodeID string, commandType jobs.CommandType) ([]*jobs.Job, error) {
 	var models []JobModel
 	err := r.db.SelectContext(context.Background(), &models,
 		`SELECT id, node_id, command_name, command_type, status, params, output, error, created_at, started_at, finished_at
@@ -78,7 +80,7 @@ func (r *JobRepository) FindPendingByNodeID(nodeID string, commandType nodecomma
 	if err != nil {
 		return nil, err
 	}
-	out := make([]*job.Job, len(models))
+	out := make([]*jobs.Job, len(models))
 	for i, m := range models {
 		out[i] = modelToJob(m)
 	}
@@ -87,18 +89,18 @@ func (r *JobRepository) FindPendingByNodeID(nodeID string, commandType nodecomma
 
 // UpdateStatus updates a job's status, output and error. It also sets
 // started_at / finished_at timestamps automatically from the status transition.
-func (r *JobRepository) UpdateStatus(id string, status job.JobStatus, output, errMsg string) error {
+func (r *JobRepository) UpdateStatus(id string, status jobs.JobStatus, output, errMsg string) error {
 	now := time.Now()
 	var query string
 	var args []interface{}
 
 	switch status {
-	case job.StatusRunning:
+	case jobs.StatusRunning:
 		query = `UPDATE jobs
 		         SET status = $1, output = $2, error = $3, started_at = $4
 		         WHERE id = $5`
 		args = []interface{}{status, output, errMsg, now, id}
-	case job.StatusCompleted, job.StatusFailed:
+	case jobs.StatusCompleted, jobs.StatusFailed:
 		query = `UPDATE jobs
 		         SET status = $1, output = $2, error = $3, finished_at = $4
 		         WHERE id = $5`
@@ -114,18 +116,18 @@ func (r *JobRepository) UpdateStatus(id string, status job.JobStatus, output, er
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return job.ErrJobNotFound
+		return jobs.ErrJobNotFound
 	}
 	return nil
 }
 
-func modelToJob(m JobModel) *job.Job {
-	return &job.Job{
+func modelToJob(m JobModel) *jobs.Job {
+	return &jobs.Job{
 		ID:          m.ID,
 		NodeID:      m.NodeID,
 		CommandName: m.CommandName,
-		CommandType: nodecommand.CommandType(m.CommandType),
-		Status:      job.JobStatus(m.Status),
+		CommandType: jobs.CommandType(m.CommandType),
+		Status:      jobs.JobStatus(m.Status),
 		Params:      m.Params,
 		Output:      m.Output.String,
 		Error:       m.Error.String,

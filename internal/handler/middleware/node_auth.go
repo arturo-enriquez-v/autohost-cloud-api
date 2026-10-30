@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package middleware
 
 import (
@@ -6,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 )
 
@@ -15,7 +18,7 @@ type nodeCtxKey int
 const nodeTokenKey nodeCtxKey = iota
 
 // NodeAuth middleware valida el node_token enviado por el agente
-func NodeAuth(nodeTokenService *nodetoken.Service) func(http.Handler) http.Handler {
+func NodeAuth(nodeTokenService *node.NodeTokenService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authz := r.Header.Get("Authorization")
@@ -57,9 +60,9 @@ func NodeAuth(nodeTokenService *nodetoken.Service) func(http.Handler) http.Handl
 }
 
 // GetNodeToken obtiene el node token del contexto
-func GetNodeToken(ctx context.Context) *nodetoken.NodeToken {
+func GetNodeToken(ctx context.Context) *node.NodeToken {
 	if v := ctx.Value(nodeTokenKey); v != nil {
-		if nt, ok := v.(*nodetoken.NodeToken); ok {
+		if nt, ok := v.(*node.NodeToken); ok {
 			return nt
 		}
 	}

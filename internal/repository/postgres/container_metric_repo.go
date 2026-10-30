@@ -1,10 +1,13 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package postgres
 
 import (
 	"fmt"
 	"time"
 
-	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -16,7 +19,7 @@ func NewContainerMetricRepository(db *sqlx.DB) *ContainerMetricRepo {
 	return &ContainerMetricRepo{DB: db}
 }
 
-func (r *ContainerMetricRepo) StoreBatch(metrics []*containermetric.CreateContainerMetricRequest) error {
+func (r *ContainerMetricRepo) StoreBatch(metrics []*node.CreateContainerMetricRequest) error {
 	if len(metrics) == 0 {
 		return nil
 	}
@@ -57,7 +60,7 @@ var allowedContainerBuckets = map[string]bool{
 	"day":    true,
 }
 
-func (r *ContainerMetricRepo) GetHistory(params containermetric.ContainerHistoryParams) ([]*containermetric.ContainerMetricHistoryPoint, error) {
+func (r *ContainerMetricRepo) GetHistory(params node.ContainerHistoryParams) ([]*node.ContainerMetricHistoryPoint, error) {
 	bucket := params.Bucket
 	if !allowedContainerBuckets[bucket] {
 		bucket = "hour"
@@ -98,7 +101,7 @@ func (r *ContainerMetricRepo) GetHistory(params containermetric.ContainerHistory
 		idOrName = params.ContainerName
 	}
 
-	var points []*containermetric.ContainerMetricHistoryPoint
+	var points []*node.ContainerMetricHistoryPoint
 	if err := r.DB.Select(&points, query, params.NodeID, nameOrID, idOrName, from, to); err != nil {
 		return nil, err
 	}
