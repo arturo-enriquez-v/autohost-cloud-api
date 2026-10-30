@@ -8,9 +8,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/jmoiron/sqlx"
-
-	scheduledtask "github.com/arturo/autohost-cloud-api/internal/domain/scheduled_task"
 )
 
 type ScheduledTaskRepository struct {
@@ -35,7 +34,7 @@ const taskJoin = `
 	FROM scheduled_tasks st
 	LEFT JOIN jobs j ON j.id = st.last_job_id`
 
-func (r *ScheduledTaskRepository) Create(task *scheduledtask.ScheduledTask) (*scheduledtask.ScheduledTask, error) {
+func (r *ScheduledTaskRepository) Create(task *jobs.ScheduledTask) (*jobs.ScheduledTask, error) {
 	query := `
 		INSERT INTO scheduled_tasks
 			(user_id, node_id, command_id, command_name, schedule_type, interval_seconds, run_at_time, enabled, next_run_at)
@@ -53,39 +52,39 @@ func (r *ScheduledTaskRepository) Create(task *scheduledtask.ScheduledTask) (*sc
 	if !rows.Next() {
 		return nil, errors.New("create returned no rows")
 	}
-	var result scheduledtask.ScheduledTask
+	var result jobs.ScheduledTask
 	if err := rows.StructScan(&result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
-func (r *ScheduledTaskRepository) List() ([]*scheduledtask.ScheduledTask, error) {
-	var tasks []*scheduledtask.ScheduledTask
+func (r *ScheduledTaskRepository) List() ([]*jobs.ScheduledTask, error) {
+	var tasks []*jobs.ScheduledTask
 	err := r.db.Select(&tasks, `SELECT`+taskCols+taskJoin+` ORDER BY st.created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
 	if tasks == nil {
-		tasks = []*scheduledtask.ScheduledTask{}
+		tasks = []*jobs.ScheduledTask{}
 	}
 	return tasks, nil
 }
 
-func (r *ScheduledTaskRepository) ListByUserID(userID string) ([]*scheduledtask.ScheduledTask, error) {
-	var tasks []*scheduledtask.ScheduledTask
+func (r *ScheduledTaskRepository) ListByUserID(userID string) ([]*jobs.ScheduledTask, error) {
+	var tasks []*jobs.ScheduledTask
 	err := r.db.Select(&tasks, `SELECT`+taskCols+taskJoin+` WHERE st.user_id = $1 ORDER BY st.created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
 	if tasks == nil {
-		tasks = []*scheduledtask.ScheduledTask{}
+		tasks = []*jobs.ScheduledTask{}
 	}
 	return tasks, nil
 }
 
-func (r *ScheduledTaskRepository) ListEnabled() ([]*scheduledtask.ScheduledTask, error) {
-	var tasks []*scheduledtask.ScheduledTask
+func (r *ScheduledTaskRepository) ListEnabled() ([]*jobs.ScheduledTask, error) {
+	var tasks []*jobs.ScheduledTask
 	err := r.db.Select(&tasks, `
 		SELECT id, node_id, command_id, command_name, schedule_type, interval_seconds, run_at_time,
 		       enabled, last_run_at, next_run_at, last_job_id, created_at, updated_at
@@ -98,8 +97,8 @@ func (r *ScheduledTaskRepository) ListEnabled() ([]*scheduledtask.ScheduledTask,
 	return tasks, nil
 }
 
-func (r *ScheduledTaskRepository) FindByID(id string) (*scheduledtask.ScheduledTask, error) {
-	var task scheduledtask.ScheduledTask
+func (r *ScheduledTaskRepository) FindByID(id string) (*jobs.ScheduledTask, error) {
+	var task jobs.ScheduledTask
 	err := r.db.Get(&task, `
 		SELECT id, user_id, node_id, command_id, command_name, schedule_type, interval_seconds, run_at_time,
 		       enabled, last_run_at, next_run_at, last_job_id, created_at, updated_at
@@ -107,14 +106,14 @@ func (r *ScheduledTaskRepository) FindByID(id string) (*scheduledtask.ScheduledT
 		WHERE id = $1`, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, scheduledtask.ErrNotFound
+			return nil, jobs.ErrTaskNotFound
 		}
 		return nil, err
 	}
 	return &task, nil
 }
 
-func (r *ScheduledTaskRepository) Update(task *scheduledtask.ScheduledTask) (*scheduledtask.ScheduledTask, error) {
+func (r *ScheduledTaskRepository) Update(task *jobs.ScheduledTask) (*jobs.ScheduledTask, error) {
 	query := `
 		UPDATE scheduled_tasks SET
 			command_id       = :command_id,
@@ -136,9 +135,9 @@ func (r *ScheduledTaskRepository) Update(task *scheduledtask.ScheduledTask) (*sc
 	}
 	defer rows.Close()
 	if !rows.Next() {
-		return nil, scheduledtask.ErrNotFound
+		return nil, jobs.ErrTaskNotFound
 	}
-	var result scheduledtask.ScheduledTask
+	var result jobs.ScheduledTask
 	if err := rows.StructScan(&result); err != nil {
 		return nil, err
 	}
@@ -152,7 +151,7 @@ func (r *ScheduledTaskRepository) Delete(id string) error {
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return scheduledtask.ErrNotFound
+		return jobs.ErrTaskNotFound
 	}
 	return nil
 }

@@ -9,7 +9,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 )
 
 type NodeAlertRepository struct {
@@ -20,7 +20,7 @@ func NewNodeAlertRepository(db *sqlx.DB) *NodeAlertRepository {
 	return &NodeAlertRepository{db: db}
 }
 
-func (r *NodeAlertRepository) Upsert(alert *nodealert.NodeAlert) (*nodealert.NodeAlert, error) {
+func (r *NodeAlertRepository) Upsert(alert *node.NodeAlert) (*node.NodeAlert, error) {
 	query := `
 		INSERT INTO node_alerts (node_id, telegram_bot_id, telegram_bot_token, telegram_chat_id, cpu_threshold, ram_threshold, disk_threshold, alert_on_offline)
 		VALUES (:node_id, :telegram_bot_id, :telegram_bot_token, :telegram_chat_id, :cpu_threshold, :ram_threshold, :disk_threshold, :alert_on_offline)
@@ -41,8 +41,8 @@ func (r *NodeAlertRepository) Upsert(alert *nodealert.NodeAlert) (*nodealert.Nod
 	return r.FindByNodeID(alert.NodeID)
 }
 
-func (r *NodeAlertRepository) FindByNodeID(nodeID string) (*nodealert.NodeAlert, error) {
-	var alert nodealert.NodeAlert
+func (r *NodeAlertRepository) FindByNodeID(nodeID string) (*node.NodeAlert, error) {
+	var alert node.NodeAlert
 	err := r.db.Get(&alert, `
 		SELECT na.id, na.node_id, na.telegram_bot_id,
 		       COALESCE(tb.bot_token, na.telegram_bot_token, '') AS telegram_bot_token,
@@ -54,15 +54,15 @@ func (r *NodeAlertRepository) FindByNodeID(nodeID string) (*nodealert.NodeAlert,
 		WHERE na.node_id = $1`, nodeID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nodealert.ErrNotFound
+			return nil, node.ErrNodeAlertNotFound
 		}
 		return nil, err
 	}
 	return &alert, nil
 }
 
-func (r *NodeAlertRepository) FindAllByOwnerID(ownerID string) ([]*nodealert.NodeAlert, error) {
-	var alerts []*nodealert.NodeAlert
+func (r *NodeAlertRepository) FindAllByOwnerID(ownerID string) ([]*node.NodeAlert, error) {
+	var alerts []*node.NodeAlert
 	err := r.db.Select(&alerts, `
 		SELECT na.id, na.node_id, na.telegram_bot_id,
 		       COALESCE(tb.bot_token, na.telegram_bot_token, '') AS telegram_bot_token,
@@ -77,7 +77,7 @@ func (r *NodeAlertRepository) FindAllByOwnerID(ownerID string) ([]*nodealert.Nod
 		return nil, err
 	}
 	if alerts == nil {
-		alerts = []*nodealert.NodeAlert{}
+		alerts = []*node.NodeAlert{}
 	}
 	return alerts, nil
 }

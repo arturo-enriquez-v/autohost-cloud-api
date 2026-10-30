@@ -9,14 +9,13 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
-	"github.com/arturo/autohost-cloud-api/internal/domain/marketplace"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
+	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 	"github.com/go-chi/chi/v5"
 )
-
 
 // InstallAppParams is the JSON payload the agent receives for marketplace installs.
 type InstallAppParams struct {
@@ -27,22 +26,22 @@ type InstallAppParams struct {
 
 // MarketplaceHandler handles marketplace app listing and deployment.
 type MarketplaceHandler struct {
-	jobService      *job.Service
-	marketplaceRepo marketplace.Repository
-	dispatcher      ParamDispatcher
+	jobService      *jobs.JobService
+	marketplaceRepo apps.MarketplaceRepository
+	dispatcher      dispatcher.ParamDispatcher
 	r2              *platform.R2Client
 }
 
 func NewMarketplaceHandler(
-	jobService *job.Service,
-	marketplaceRepo marketplace.Repository,
-	dispatcher ParamDispatcher,
+	jobService *jobs.JobService,
+	marketplaceRepo apps.MarketplaceRepository,
+	disp dispatcher.ParamDispatcher,
 	r2 *platform.R2Client,
 ) *MarketplaceHandler {
 	return &MarketplaceHandler{
 		jobService:      jobService,
 		marketplaceRepo: marketplaceRepo,
-		dispatcher:      dispatcher,
+		dispatcher:      disp,
 		r2:              r2,
 	}
 }
@@ -60,7 +59,7 @@ func (h *MarketplaceHandler) Routes() chi.Router {
 // GET /v1/marketplace/apps
 func (h *MarketplaceHandler) ListApps(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(marketplace.Catalog)
+	json.NewEncoder(w).Encode(apps.Catalog)
 }
 
 // deployAppRequest is the payload from the dashboard.
@@ -91,7 +90,7 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate the app is in the catalog.
-	if _, ok := marketplace.GetCatalogEntry(req.AppName); !ok {
+	if _, ok := apps.GetCatalogEntry(req.AppName); !ok {
 		http.Error(w, fmt.Sprintf("app %q not found in catalog", req.AppName), http.StatusBadRequest)
 		return
 	}
@@ -125,10 +124,10 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 	paramsJSON := string(paramsBytes)
 
 	// Create the tracking record.
-	mApp, err := h.marketplaceRepo.Create(&marketplace.MarketplaceApp{
+	mApp, err := h.marketplaceRepo.Create(&apps.MarketplaceApp{
 		NodeID:  req.NodeID,
 		AppName: req.AppName,
-		Status:  marketplace.StatusInstalling,
+		Status:  apps.StatusInstalling,
 	})
 	if err != nil {
 		log.Printf("[ERROR] marketplace: create app record: %v", err)
@@ -137,7 +136,7 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the job — params are persisted so the node can receive them on reconnect.
-	j, err := h.jobService.DispatchWithParams(req.NodeID, "marketplace.install", nodecommand.CommandTypeInstallApp, paramsJSON)
+	j, err := h.jobService.DispatchWithParams(req.NodeID, "marketplace.install", jobs.CommandTypeInstallApp, paramsJSON)
 	if err != nil {
 		log.Printf("[ERROR] marketplace: dispatch job: %v", err)
 		http.Error(w, "could not create job", http.StatusInternalServerError)
@@ -151,7 +150,7 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.dispatcher.DispatchJobWithParams(
 		req.NodeID, j.ID, "marketplace.install",
-		nodecommand.CommandTypeInstallApp, paramsJSON,
+		jobs.CommandTypeInstallApp, paramsJSON,
 	); err != nil {
 		log.Printf("[WARN] marketplace: node %s not connected, job %s will be dispatched on reconnect: %v", req.NodeID, j.ID, err)
 	}

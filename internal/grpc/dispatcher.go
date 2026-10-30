@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"log"
 
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
 )
 
@@ -33,10 +33,10 @@ func (s *NodeAgentServer) IsNodeConnected(nodeID string) bool {
 }
 
 // DispatchJob builds a gRPC ServerMessage and pushes it to the connected node.
-// Implements handler.NodeDispatcher.
+// Implements dispatcher.NodeDispatcher.
 func (s *NodeAgentServer) DispatchJob(
 	nodeID, jobID, commandName string,
-	commandType nodecommand.CommandType,
+	commandType jobs.CommandType,
 ) error {
 	return s.DispatchJobWithParams(nodeID, jobID, commandName, commandType, "")
 }
@@ -45,16 +45,16 @@ func (s *NodeAgentServer) DispatchJob(
 // params string that the agent passes to the command handler as payload.
 func (s *NodeAgentServer) DispatchJobWithParams(
 	nodeID, jobID, commandName string,
-	commandType nodecommand.CommandType,
+	commandType jobs.CommandType,
 	params string,
 ) error {
 	ct := pb.CommandType_COMMAND_TYPE_DEFAULT
 	switch commandType {
-	case nodecommand.CommandTypeCustom:
+	case jobs.CommandTypeCustom:
 		ct = pb.CommandType_COMMAND_TYPE_CUSTOM
-	case nodecommand.CommandTypeInstallApp:
+	case jobs.CommandTypeInstallApp:
 		ct = pb.CommandType_COMMAND_TYPE_INSTALL_APP
-	case nodecommand.CommandTypeSwarm:
+	case jobs.CommandTypeSwarm:
 		ct = pb.CommandType_COMMAND_TYPE_SWARM
 	}
 	msg := &pb.ServerMessage{

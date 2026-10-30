@@ -11,13 +11,9 @@ import (
 	"net/http"
 	"time"
 
-	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
-	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
-	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
-	"github.com/arturo/autohost-cloud-api/internal/domain/project"
-	reportsettings "github.com/arturo/autohost-cloud-api/internal/domain/report_settings"
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/handler/response"
 	"github.com/go-chi/chi/v5"
@@ -31,24 +27,24 @@ const (
 )
 
 type NodeReportHandler struct {
-	nodeService           *node.Service
-	authService           *auth.Service
-	metricService         *nodemetric.Service
-	alertEventService     *alertevent.Service
-	nodeAlertService      *nodealert.Service
-	reportSettingsService *reportsettings.Service
-	projectService        *project.Service
+	nodeService           *node.NodeService
+	authService           *identity.AuthService
+	metricService         *node.NodeMetricService
+	alertEventService     *node.AlertEventService
+	nodeAlertService      *node.NodeAlertService
+	reportSettingsService *identity.ReportSettingsService
+	projectService        *apps.ProjectService
 	redis                 *redis.Client
 }
 
 func NewNodeReportHandler(
-	nodeService *node.Service,
-	authService *auth.Service,
-	metricService *nodemetric.Service,
-	alertEventService *alertevent.Service,
-	nodeAlertService *nodealert.Service,
-	reportSettingsService *reportsettings.Service,
-	projectService *project.Service,
+	nodeService *node.NodeService,
+	authService *identity.AuthService,
+	metricService *node.NodeMetricService,
+	alertEventService *node.AlertEventService,
+	nodeAlertService *node.NodeAlertService,
+	reportSettingsService *identity.ReportSettingsService,
+	projectService *apps.ProjectService,
 	redis *redis.Client,
 ) *NodeReportHandler {
 	return &NodeReportHandler{
@@ -223,17 +219,17 @@ func (h *NodeReportHandler) BuildAndPushForUser(ctx context.Context, userID stri
 		log.Printf("[WARN] node report: alert configs: %v", err)
 	}
 
-	statsByID := make(map[string]*nodemetric.NodePeriodStats, len(periodStats))
+	statsByID := make(map[string]*node.NodePeriodStats, len(periodStats))
 	for _, s := range periodStats {
 		statsByID[s.NodeID] = s
 	}
 
-	alertSummaryByID := make(map[string]*alertevent.NodeAlertSummary, len(alertSummaries))
+	alertSummaryByID := make(map[string]*node.NodeAlertSummary, len(alertSummaries))
 	for _, a := range alertSummaries {
 		alertSummaryByID[a.NodeID] = a
 	}
 
-	alertConfigByID := make(map[string]*nodealert.NodeAlert, len(alertConfigs))
+	alertConfigByID := make(map[string]*node.NodeAlert, len(alertConfigs))
 	for _, c := range alertConfigs {
 		alertConfigByID[c.NodeID] = c
 	}

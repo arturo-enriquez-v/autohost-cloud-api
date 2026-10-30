@@ -10,10 +10,10 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	caddyroute "github.com/arturo/autohost-cloud-api/internal/domain/caddy_route"
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 )
 
-// CaddyRouteRepository implements caddyroute.Repository using PostgreSQL.
+// CaddyRouteRepository implements apps.CaddyRouteRepository using PostgreSQL.
 type CaddyRouteRepository struct {
 	db *sqlx.DB
 }
@@ -22,8 +22,8 @@ func NewCaddyRouteRepository(db *sqlx.DB) *CaddyRouteRepository {
 	return &CaddyRouteRepository{db: db}
 }
 
-func (r *CaddyRouteRepository) Upsert(cr *caddyroute.CaddyRoute) (*caddyroute.CaddyRoute, error) {
-	var result caddyroute.CaddyRoute
+func (r *CaddyRouteRepository) Upsert(cr *apps.CaddyRoute) (*apps.CaddyRoute, error) {
+	var result apps.CaddyRoute
 	err := r.db.QueryRowContext(context.Background(), `
 		INSERT INTO caddy_routes (node_id, user_id, domain, upstream)
 		VALUES ($1, $2, $3, $4)
@@ -39,8 +39,8 @@ func (r *CaddyRouteRepository) Upsert(cr *caddyroute.CaddyRoute) (*caddyroute.Ca
 	return &result, nil
 }
 
-func (r *CaddyRouteRepository) ListByNode(nodeID string) ([]*caddyroute.CaddyRoute, error) {
-	var routes []*caddyroute.CaddyRoute
+func (r *CaddyRouteRepository) ListByNode(nodeID string) ([]*apps.CaddyRoute, error) {
+	var routes []*apps.CaddyRoute
 	err := r.db.SelectContext(context.Background(), &routes, `
 		SELECT id, node_id, user_id, domain, upstream, created_at, updated_at
 		FROM caddy_routes
@@ -63,10 +63,10 @@ func (r *CaddyRouteRepository) Delete(nodeID, domain string) error {
 		return err
 	}
 	if n == 0 {
-		return caddyroute.ErrNotFound
+		return apps.ErrCaddyRouteNotFound
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		return caddyroute.ErrNotFound
+		return apps.ErrCaddyRouteNotFound
 	}
 	return nil
 }

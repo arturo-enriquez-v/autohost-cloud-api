@@ -15,23 +15,13 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
-	"github.com/arturo/autohost-cloud-api/internal/domain/marketplace"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
-	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
-	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
-	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
-	sm "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
-	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
-	networkstat "github.com/arturo/autohost-cloud-api/internal/domain/network_stat"
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
+	"github.com/arturo/autohost-cloud-api/internal/core/infra"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
+	"github.com/arturo/autohost-cloud-api/internal/core/network"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
-	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
-	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
-	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
-	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 )
 
@@ -39,32 +29,22 @@ import (
 type NodeAgentServer struct {
 	pb.UnimplementedNodeAgentServiceServer
 
-	authSvc            *auth.Service
-	notificationSvc    *notification.Service
-	sm                 *sm.Service
-	nodealert          *nodealert.Service
-	alertevent         *alertevent.Service
-	marketplace        marketplace.Repository
-	nodetoken          *nodetoken.Service
-	nodecommand        *nodecommand.Service
-	job                *job.Service
-	node               *node.Service
-	nodemetric         *nodemetric.Service
-	containermetric    *containermetric.Service
-	serviceMonitorSvc  *sm.Service
-	alertSvc           *nodealert.Service
-	alertEventSvc      *alertevent.Service
-	marketplaceRepo    marketplace.Repository
-	tokenSvc           *nodetoken.Service
-	commandSvc         *nodecommand.Service
-	jobSvc             *job.Service
-	nodeSvc            *node.Service
-	metricSvc          *nodemetric.Service
-	containerMetricSvc *containermetric.Service
-	backupSvc          *backup.Service
-	logDiagnosticSvc   *logdiagnostic.Service
-	networkStatSvc     *networkstat.Service
-	vmRepo             vm.Repository
+	authSvc            *identity.AuthService
+	notificationSvc    *identity.NotificationService
+	serviceMonitorSvc  *apps.ServiceMonitorService
+	alertSvc           *node.NodeAlertService
+	alertEventSvc      *node.AlertEventService
+	marketplaceRepo    apps.MarketplaceRepository
+	tokenSvc           *node.NodeTokenService
+	commandSvc         *jobs.NodeCommandService
+	jobSvc             *jobs.JobService
+	nodeSvc            *node.NodeService
+	metricSvc          *node.NodeMetricService
+	containerMetricSvc *node.ContainerMetricService
+	backupSvc          *apps.BackupService
+	logDiagnosticSvc   *node.LogDiagnosticService
+	networkStatSvc     *network.NetworkStatService
+	vmRepo             infra.VMRepository
 
 	registry        *streamRegistry
 	logs            *logBroker
@@ -86,23 +66,23 @@ type NodeAgentServer struct {
 
 // NewNodeAgentServer creates a ready-to-register gRPC server.
 func NewNodeAgentServer(
-	commandSvc *nodecommand.Service,
-	jobSvc *job.Service,
-	tokenSvc *nodetoken.Service,
-	alertSvc *nodealert.Service,
-	nodeSvc *node.Service,
-	metricSvc *nodemetric.Service,
-	containerMetricSvc *containermetric.Service,
-	marketplaceRepo marketplace.Repository,
-	alertEventSvc *alertevent.Service,
-	serviceMonitorSvc *sm.Service,
-	authSvc *auth.Service,
-	notificationSvc *notification.Service,
-	backupSvc *backup.Service,
-	logDiagnosticSvc *logdiagnostic.Service,
-	networkStatSvc *networkstat.Service,
+	commandSvc *jobs.NodeCommandService,
+	jobSvc *jobs.JobService,
+	tokenSvc *node.NodeTokenService,
+	alertSvc *node.NodeAlertService,
+	nodeSvc *node.NodeService,
+	metricSvc *node.NodeMetricService,
+	containerMetricSvc *node.ContainerMetricService,
+	marketplaceRepo apps.MarketplaceRepository,
+	alertEventSvc *node.AlertEventService,
+	serviceMonitorSvc *apps.ServiceMonitorService,
+	authSvc *identity.AuthService,
+	notificationSvc *identity.NotificationService,
+	backupSvc *apps.BackupService,
+	logDiagnosticSvc *node.LogDiagnosticService,
+	networkStatSvc *network.NetworkStatService,
 	redis *redis.Client,
-	vmRepo vm.Repository,
+	vmRepo infra.VMRepository,
 ) *NodeAgentServer {
 	reg := newStreamRegistry()
 	s := &NodeAgentServer{
@@ -136,11 +116,11 @@ func NewNodeAgentServer(
 	return s
 }
 
-func (s *NodeAgentServer) SetBackupService(svc *backup.Service) {
+func (s *NodeAgentServer) SetBackupService(svc *apps.BackupService) {
 	s.backupSvc = svc
 }
 
-func (s *NodeAgentServer) SetVMRepository(repo vm.Repository) {
+func (s *NodeAgentServer) SetVMRepository(repo infra.VMRepository) {
 	s.vmRepo = repo
 }
 
@@ -163,7 +143,7 @@ func (s *NodeAgentServer) RegisterCommands(
 		if recvErr != nil {
 			return recvErr // propagate as gRPC status error
 		}
-		cmd := &nodecommand.NodeCommand{
+		cmd := &jobs.NodeCommand{
 			NodeID:      nodeID,
 			Name:        req.GetName(),
 			Description: req.GetDescription(),
@@ -261,7 +241,7 @@ func (s *NodeAgentServer) Connect(
 
 	// Re-dispatch pending install_app jobs so the agent receives params it may
 	// have missed while it was offline.
-	if pendingJobs, err := s.jobSvc.FindPendingByNodeID(nodeID, nodecommand.CommandTypeInstallApp); err != nil {
+	if pendingJobs, err := s.jobSvc.FindPendingByNodeID(nodeID, jobs.CommandTypeInstallApp); err != nil {
 		log.Printf("[gRPC] list pending install_app jobs for node %s: %v", nodeID, err)
 	} else {
 		for _, j := range pendingJobs {
@@ -303,7 +283,7 @@ func (s *NodeAgentServer) Connect(
 		switch p := in.Payload.(type) {
 		case *pb.NodeMessage_JobResult:
 			r := p.JobResult
-			jobStatus := job.JobStatus(pbJobStatus(r.GetStatus()))
+			jobStatus := jobs.JobStatus(pbJobStatus(r.GetStatus()))
 			if err := s.jobSvc.UpdateResult(
 				r.GetJobId(),
 				jobStatus,
@@ -342,7 +322,7 @@ func (s *NodeAgentServer) Connect(
 					errMsg = &e
 				}
 				statusStr := "completed"
-				if jobStatus != job.StatusCompleted {
+				if jobStatus != jobs.StatusCompleted {
 					statusStr = "failed"
 				}
 				if err := s.backupSvc.UpdateRecordByJobID(r.GetJobId(), statusStr, outputData.S3Key, outputData.FileSizeBytes, errMsg); err != nil {
@@ -355,11 +335,11 @@ func (s *NodeAgentServer) Connect(
 			// Sync marketplace_apps status when an install job finishes.
 			if s.marketplaceRepo != nil {
 				if mApp, err := s.marketplaceRepo.FindByJobID(r.GetJobId()); err == nil {
-					var appStatus marketplace.AppStatus
-					if jobStatus == job.StatusCompleted {
-						appStatus = marketplace.StatusRunning
+					var appStatus apps.AppStatus
+					if jobStatus == jobs.StatusCompleted {
+						appStatus = apps.StatusRunning
 					} else {
-						appStatus = marketplace.StatusFailed
+						appStatus = apps.StatusFailed
 					}
 					if err := s.marketplaceRepo.UpdateStatus(mApp.ID, appStatus); err != nil {
 						log.Printf("[gRPC] update marketplace app %s status: %v", mApp.ID, err)
@@ -376,8 +356,8 @@ func (s *NodeAgentServer) Connect(
 						}
 						if err := json.Unmarshal([]byte(j.Params), &p); err == nil && p.VMID != "" {
 							if targetVM, err := s.vmRepo.GetByID(context.Background(), p.VMID); err == nil && targetVM != nil {
-								if jobStatus != job.StatusCompleted {
-									targetVM.Status = string(vm.StatusError)
+								if jobStatus != jobs.StatusCompleted {
+									targetVM.Status = string(infra.StatusError)
 									targetVM.ErrorMessage = r.GetError()
 									if _, err := s.vmRepo.Update(context.Background(), targetVM); err != nil {
 										log.Printf("[gRPC] update vm %s status to error: %v", targetVM.ID, err)
@@ -396,18 +376,18 @@ func (s *NodeAgentServer) Connect(
 							action := parts[1]
 							vmName := parts[2]
 							if targetVM, err := s.vmRepo.GetByHostAndName(context.Background(), nodeID, vmName); err == nil && targetVM != nil {
-								if jobStatus != job.StatusCompleted {
+								if jobStatus != jobs.StatusCompleted {
 									targetVM.ErrorMessage = r.GetError()
 									if action == "start" {
-										targetVM.Status = string(vm.StatusStopped)
+										targetVM.Status = string(infra.StatusStopped)
 									}
 									_, _ = s.vmRepo.Update(context.Background(), targetVM)
 								} else {
 									targetVM.ErrorMessage = ""
 									if action == "start" {
-										targetVM.Status = string(vm.StatusRunning)
+										targetVM.Status = string(infra.StatusRunning)
 									} else if action == "stop" {
-										targetVM.Status = string(vm.StatusStopped)
+										targetVM.Status = string(infra.StatusStopped)
 									}
 									_, _ = s.vmRepo.Update(context.Background(), targetVM)
 								}
@@ -457,7 +437,7 @@ func (s *NodeAgentServer) Connect(
 
 			// Persist to DB at most once per minute to keep write volume low.
 			if s.shouldPersistMetric(nodeID) {
-				req := &nodemetric.CreateNodeMetricRequest{
+				req := &node.CreateNodeMetricRequest{
 					NodeID:               nodeID,
 					CPUUsagePercent:      float64(m.GetCpuUsagePercent()),
 					MemoryTotalBytes:     int64(m.GetRamTotalBytes()),
@@ -536,9 +516,9 @@ func (s *NodeAgentServer) Connect(
 				}
 			}
 			if s.containerMetricSvc != nil && p.ContainerList != nil && len(p.ContainerList.Containers) > 0 {
-				var items []containermetric.ContainerSnapshotItem
+				var items []node.ContainerSnapshotItem
 				for _, c := range p.ContainerList.Containers {
-					items = append(items, containermetric.ContainerSnapshotItem{
+					items = append(items, node.ContainerSnapshotItem{
 						ID:      c.Id,
 						Name:    c.Name,
 						State:   c.State,
@@ -614,7 +594,7 @@ func (s *NodeAgentServer) SubscribeToNodeMetrics(nodeID string) (<-chan *pb.Metr
 // ---- Health Check helpers ---------------------------------------------------
 
 // SendHealthCheckConfig pushes a monitor configuration to a connected agent.
-func (s *NodeAgentServer) SendHealthCheckConfig(nodeID string, m *sm.ServiceMonitor) {
+func (s *NodeAgentServer) SendHealthCheckConfig(nodeID string, m *apps.ServiceMonitor) {
 	if s == nil || s.registry == nil {
 		return
 	}
@@ -671,12 +651,12 @@ func (s *NodeAgentServer) handleHealthCheckResult(nodeID string, r *pb.HealthChe
 	}
 
 	// Determine new aggregate status.
-	newStatus := sm.StatusHealthy
+	newStatus := apps.StatusHealthy
 	if r.GetStatus() == "down" {
 		if int(r.GetConsecutiveFailures()) >= monitor.FailureThreshold {
-			newStatus = sm.StatusDown
+			newStatus = apps.StatusDown
 		} else {
-			newStatus = sm.StatusDegraded
+			newStatus = apps.StatusDegraded
 		}
 	}
 
@@ -686,14 +666,14 @@ func (s *NodeAgentServer) handleHealthCheckResult(nodeID string, r *pb.HealthChe
 
 	if autoHealStateStr := r.GetAutoHealState(); autoHealStateStr != "" && autoHealStateStr != "{}" {
 		// Parse old and new state
-		var oldState notification.AutoHealState
+		var oldState identity.AutoHealState
 		if len(monitor.AutoHealState) > 0 && string(monitor.AutoHealState) != "{}" && string(monitor.AutoHealState) != "null" {
 			_ = json.Unmarshal(monitor.AutoHealState, &oldState)
 		}
 
-		var newState notification.AutoHealState
+		var newState identity.AutoHealState
 		if err := json.Unmarshal([]byte(autoHealStateStr), &newState); err == nil {
-			var cfg notification.AutoHealConfig
+			var cfg identity.AutoHealConfig
 			if len(monitor.AutoHealConfig) > 0 && string(monitor.AutoHealConfig) != "{}" && string(monitor.AutoHealConfig) != "null" {
 				_ = json.Unmarshal(monitor.AutoHealConfig, &cfg)
 			}
@@ -718,7 +698,7 @@ func (s *NodeAgentServer) handleHealthCheckResult(nodeID string, r *pb.HealthChe
 						}
 					}
 
-					s.notificationSvc.SendAutoHealTransitionAlert(context.Background(), notification.AutoHealAlertContext{
+					s.notificationSvc.SendAutoHealTransitionAlert(context.Background(), identity.AutoHealAlertContext{
 						Recipient:    recipient,
 						NodeID:       nodeID,
 						NodeHostname: nodeHostname,
@@ -741,7 +721,7 @@ func (s *NodeAgentServer) handleHealthCheckResult(nodeID string, r *pb.HealthChe
 		}
 	}
 
-	event := &sm.ServiceHealthEvent{
+	event := &apps.ServiceHealthEvent{
 		MonitorID: monitor.ID,
 		NodeID:    nodeID,
 		UserID:    monitor.UserID,
@@ -755,7 +735,7 @@ func (s *NodeAgentServer) handleHealthCheckResult(nodeID string, r *pb.HealthChe
 	}
 
 	// Send Telegram alert on state transition to down.
-	if newStatus == sm.StatusDown && monitor.NotifyTelegram {
+	if newStatus == apps.StatusDown && monitor.NotifyTelegram {
 		go s.sendServiceDownAlert(nodeID, monitor)
 	}
 
@@ -764,7 +744,7 @@ func (s *NodeAgentServer) handleHealthCheckResult(nodeID string, r *pb.HealthChe
 }
 
 // sendServiceDownAlert sends a Telegram notification when a service goes down.
-func (s *NodeAgentServer) sendServiceDownAlert(nodeID string, monitor *sm.ServiceMonitor) {
+func (s *NodeAgentServer) sendServiceDownAlert(nodeID string, monitor *apps.ServiceMonitor) {
 	alert, err := s.alertSvc.FindByNodeID(nodeID)
 	if err != nil || alert.TelegramBotToken == "" || alert.TelegramChatID == "" {
 		return
@@ -846,12 +826,12 @@ func (s *NodeAgentServer) listenContainerCommands() {
 				if err := json.Unmarshal([]byte(msg.Payload), &req); err == nil {
 					log.Printf("[gRPC] received remote job dispatch for node %s (%s) via Redis -> delivering to node", targetNodeID, req.CommandName)
 					ct := pb.CommandType_COMMAND_TYPE_DEFAULT
-					switch nodecommand.CommandType(req.CommandType) {
-					case nodecommand.CommandTypeCustom:
+					switch jobs.CommandType(req.CommandType) {
+					case jobs.CommandTypeCustom:
 						ct = pb.CommandType_COMMAND_TYPE_CUSTOM
-					case nodecommand.CommandTypeInstallApp:
+					case jobs.CommandTypeInstallApp:
 						ct = pb.CommandType_COMMAND_TYPE_INSTALL_APP
-					case nodecommand.CommandTypeSwarm:
+					case jobs.CommandTypeSwarm:
 						ct = pb.CommandType_COMMAND_TYPE_SWARM
 					}
 					serverMsg := &pb.ServerMessage{

@@ -8,18 +8,17 @@ import (
 	"errors"
 	"net/http"
 
-	node "github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
 )
 
 type NodeAlertHandler struct {
-	service     *nodealert.Service
-	nodeService *node.Service
+	service     *node.NodeAlertService
+	nodeService *node.NodeService
 }
 
-func NewNodeAlertHandler(service *nodealert.Service, nodeService *node.Service) *NodeAlertHandler {
+func NewNodeAlertHandler(service *node.NodeAlertService, nodeService *node.NodeService) *NodeAlertHandler {
 	return &NodeAlertHandler{service: service, nodeService: nodeService}
 }
 
@@ -48,10 +47,10 @@ func (h *NodeAlertHandler) GetByNode(w http.ResponseWriter, r *http.Request) {
 
 	alert, err := h.service.FindByNodeID(nodeID)
 	if err != nil {
-		if errors.Is(err, nodealert.ErrNotFound) {
+		if errors.Is(err, node.ErrNodeAlertNotFound) {
 			// Return empty config (node has no alerts configured yet)
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(&nodealert.NodeAlert{NodeID: nodeID})
+			json.NewEncoder(w).Encode(&node.NodeAlert{NodeID: nodeID})
 			return
 		}
 		http.Error(w, "could not fetch alert config", http.StatusInternalServerError)
@@ -94,7 +93,7 @@ func (h *NodeAlertHandler) UpsertByNode(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	alert := &nodealert.NodeAlert{
+	alert := &node.NodeAlert{
 		NodeID:           nodeID,
 		TelegramBotID:    req.TelegramBotID,
 		TelegramBotToken: req.TelegramBotToken,

@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/jmoiron/sqlx"
 )
 
-// LogDiagnosticRepository implements logdiagnostic.Repository with PostgreSQL.
+// LogDiagnosticRepository implements node.Repository with PostgreSQL.
 type LogDiagnosticRepository struct {
 	db *sqlx.DB
 }
@@ -24,8 +24,8 @@ func NewLogDiagnosticRepository(db *sqlx.DB) *LogDiagnosticRepository {
 	return &LogDiagnosticRepository{db: db}
 }
 
-func (r *LogDiagnosticRepository) Create(ctx context.Context, d *logdiagnostic.LogDiagnostic) (*logdiagnostic.LogDiagnostic, error) {
-	var result logdiagnostic.LogDiagnostic
+func (r *LogDiagnosticRepository) Create(ctx context.Context, d *node.LogDiagnostic) (*node.LogDiagnostic, error) {
+	var result node.LogDiagnostic
 	query := `
 		INSERT INTO log_diagnostics (user_id, node_id, request_id, status, created_at)
 		VALUES ($1, $2, $3, $4, $5)
@@ -40,8 +40,8 @@ func (r *LogDiagnosticRepository) Create(ctx context.Context, d *logdiagnostic.L
 	return &result, nil
 }
 
-func (r *LogDiagnosticRepository) GetByID(ctx context.Context, userID, id string) (*logdiagnostic.LogDiagnostic, error) {
-	var d logdiagnostic.LogDiagnostic
+func (r *LogDiagnosticRepository) GetByID(ctx context.Context, userID, id string) (*node.LogDiagnostic, error) {
+	var d node.LogDiagnostic
 	query := `
 		SELECT id, user_id, node_id, request_id, status, diagnostic_json, sources, system_health, created_at, approved_at
 		FROM log_diagnostics
@@ -57,8 +57,8 @@ func (r *LogDiagnosticRepository) GetByID(ctx context.Context, userID, id string
 	return &d, nil
 }
 
-func (r *LogDiagnosticRepository) GetByRequestID(ctx context.Context, requestID string) (*logdiagnostic.LogDiagnostic, error) {
-	var d logdiagnostic.LogDiagnostic
+func (r *LogDiagnosticRepository) GetByRequestID(ctx context.Context, requestID string) (*node.LogDiagnostic, error) {
+	var d node.LogDiagnostic
 	query := `
 		SELECT id, user_id, node_id, request_id, status, diagnostic_json, sources, system_health, created_at, approved_at
 		FROM log_diagnostics
@@ -80,7 +80,7 @@ func (r *LogDiagnosticRepository) UpdateStatus(ctx context.Context, id, status s
 	return err
 }
 
-func (r *LogDiagnosticRepository) UpdatePreview(ctx context.Context, requestID string, diagnosticJSON, sources logdiagnostic.JSONRawMessage, systemHealth string) error {
+func (r *LogDiagnosticRepository) UpdatePreview(ctx context.Context, requestID string, diagnosticJSON, sources node.JSONRawMessage, systemHealth string) error {
 	query := `
 		UPDATE log_diagnostics
 		SET status = 'preview', diagnostic_json = $1, sources = $2, system_health = $3
@@ -131,7 +131,7 @@ func (r *LogDiagnosticRepository) Reject(ctx context.Context, userID, id string)
 	return nil
 }
 
-func (r *LogDiagnosticRepository) List(ctx context.Context, userID string, filter logdiagnostic.ListFilter, limit, offset int) ([]*logdiagnostic.LogDiagnostic, int, error) {
+func (r *LogDiagnosticRepository) List(ctx context.Context, userID string, filter node.ListFilter, limit, offset int) ([]*node.LogDiagnostic, int, error) {
 	var conditions []string
 	var args []interface{}
 	argIdx := 1
@@ -174,7 +174,7 @@ func (r *LogDiagnosticRepository) List(ctx context.Context, userID string, filte
 		LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
 	args = append(args, limit, offset)
 
-	var diagnostics []*logdiagnostic.LogDiagnostic
+	var diagnostics []*node.LogDiagnostic
 	if err := r.db.SelectContext(ctx, &diagnostics, dataQuery, args...); err != nil {
 		return nil, 0, fmt.Errorf("failed to list diagnostics: %w", err)
 	}

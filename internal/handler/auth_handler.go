@@ -10,19 +10,18 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
-	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/handler/response"
 	"github.com/go-chi/chi/v5"
 )
 
 type AuthHandler struct {
-	service         *auth.Service
-	notificationSvc *notification.Service
+	service         *identity.AuthService
+	notificationSvc *identity.NotificationService
 }
 
-func NewAuthHandler(service *auth.Service, notificationSvc *notification.Service) *AuthHandler {
+func NewAuthHandler(service *identity.AuthService, notificationSvc *identity.NotificationService) *AuthHandler {
 	return &AuthHandler{
 		service:         service,
 		notificationSvc: notificationSvc,
@@ -63,7 +62,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pair, err := h.service.RegisterAndIssue(in.Email, in.Name, in.Password, r.UserAgent(), clientIP(r))
-	if errors.Is(err, auth.ErrUserAlreadyExists) {
+	if errors.Is(err, identity.ErrUserAlreadyExists) {
 		http.Error(w, "email already exists", http.StatusConflict)
 		return
 	}
@@ -87,7 +86,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pair, err := h.service.LoginAndIssue(in.Email, in.Password, r.UserAgent(), clientIP(r))
-	if errors.Is(err, auth.ErrInvalidCredentials) {
+	if errors.Is(err, identity.ErrInvalidCredentials) {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
@@ -109,7 +108,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pair, err := h.service.RefreshTokens(body.RefreshToken, r.UserAgent(), clientIP(r))
-	if errors.Is(err, auth.ErrInvalidRefreshToken) {
+	if errors.Is(err, identity.ErrInvalidRefreshToken) {
 		http.Error(w, "invalid or expired refresh token", http.StatusUnauthorized)
 		return
 	}

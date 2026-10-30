@@ -6,7 +6,7 @@ package postgres
 import (
 	"time"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/enrollment"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -25,8 +25,8 @@ func (r *EnrollTokenRepo) CreateEnrollToken(token string, userID string, expires
 	return nil
 }
 
-func (r *EnrollTokenRepo) FindEnrollTokenByHash(token string) (*enrollment.EnrollToken, error) {
-	var model enrollment.EnrollToken
+func (r *EnrollTokenRepo) FindEnrollTokenByHash(token string) (*node.EnrollToken, error) {
+	var model node.EnrollToken
 	err := r.DB.Get(&model, `
 		SELECT id, token, user_id, expires_at, consumed_at, created_at
 		FROM enroll_tokens

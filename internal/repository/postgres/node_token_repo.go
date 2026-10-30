@@ -6,7 +6,7 @@ package postgres
 import (
 	"time"
 
-	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -25,8 +25,8 @@ func (r *NodeTokenRepo) CreateNodeToken(nodeID, tokenHash string) error {
 	return nil
 }
 
-func (r *NodeTokenRepo) FindNodeTokenByHash(tokenHash string) (*nodetoken.NodeToken, error) {
-	var model nodetoken.NodeToken
+func (r *NodeTokenRepo) FindNodeTokenByHash(tokenHash string) (*node.NodeToken, error) {
+	var model node.NodeToken
 	err := r.DB.Get(&model, `
 		SELECT id, node_id, token, created_at, last_seen_at, revoked_at
 		FROM node_tokens

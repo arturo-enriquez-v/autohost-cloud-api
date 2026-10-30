@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/cluster"
+	"github.com/arturo/autohost-cloud-api/internal/core/infra"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -21,8 +21,8 @@ func NewClusterRepository(db *sqlx.DB) *ClusterRepository {
 	return &ClusterRepository{db: db}
 }
 
-func (r *ClusterRepository) CreateCluster(ctx context.Context, c *cluster.Cluster) (*cluster.Cluster, error) {
-	var out cluster.Cluster
+func (r *ClusterRepository) CreateCluster(ctx context.Context, c *infra.Cluster) (*infra.Cluster, error) {
+	var out infra.Cluster
 	query := `
 		INSERT INTO clusters (user_id, name, status, overlay_network)
 		VALUES ($1, $2, $3, $4)
@@ -35,12 +35,12 @@ func (r *ClusterRepository) CreateCluster(ctx context.Context, c *cluster.Cluste
 	return &out, nil
 }
 
-func (r *ClusterRepository) GetClusterByID(ctx context.Context, id string) (*cluster.Cluster, error) {
-	var c cluster.Cluster
+func (r *ClusterRepository) GetClusterByID(ctx context.Context, id string) (*infra.Cluster, error) {
+	var c infra.Cluster
 	query := `SELECT id, user_id, name, status, overlay_network, created_at, updated_at FROM clusters WHERE id = $1`
 	err := r.db.GetContext(ctx, &c, query, id)
 	if err == sql.ErrNoRows {
-		return nil, cluster.ErrClusterNotFound
+		return nil, infra.ErrClusterNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -48,8 +48,8 @@ func (r *ClusterRepository) GetClusterByID(ctx context.Context, id string) (*clu
 	return &c, nil
 }
 
-func (r *ClusterRepository) ListClustersByUserID(ctx context.Context, userID string) ([]*cluster.Cluster, error) {
-	var list []*cluster.Cluster
+func (r *ClusterRepository) ListClustersByUserID(ctx context.Context, userID string) ([]*infra.Cluster, error) {
+	var list []*infra.Cluster
 	query := `SELECT id, user_id, name, status, overlay_network, created_at, updated_at FROM clusters WHERE user_id = $1 ORDER BY created_at DESC`
 	err := r.db.SelectContext(ctx, &list, query, userID)
 	if err != nil {
@@ -63,8 +63,8 @@ func (r *ClusterRepository) DeleteCluster(ctx context.Context, id string) error 
 	return err
 }
 
-func (r *ClusterRepository) AddClusterNode(ctx context.Context, cn *cluster.ClusterNode) (*cluster.ClusterNode, error) {
-	var out cluster.ClusterNode
+func (r *ClusterRepository) AddClusterNode(ctx context.Context, cn *infra.ClusterNode) (*infra.ClusterNode, error) {
+	var out infra.ClusterNode
 	query := `
 		INSERT INTO cluster_nodes (cluster_id, node_id, role, swarm_node_id, status)
 		VALUES ($1, $2, $3, $4, $5)
@@ -79,7 +79,7 @@ func (r *ClusterRepository) AddClusterNode(ctx context.Context, cn *cluster.Clus
 	return &out, nil
 }
 
-func (r *ClusterRepository) GetClusterNodes(ctx context.Context, clusterID string) ([]*cluster.ClusterNode, error) {
+func (r *ClusterRepository) GetClusterNodes(ctx context.Context, clusterID string) ([]*infra.ClusterNode, error) {
 	query := `
 		SELECT 
 			cn.id, cn.cluster_id, cn.node_id, cn.role, cn.swarm_node_id, cn.status, cn.joined_at,
@@ -88,7 +88,7 @@ func (r *ClusterRepository) GetClusterNodes(ctx context.Context, clusterID strin
 		JOIN nodes n ON cn.node_id = n.id
 		WHERE cn.cluster_id = $1
 		ORDER BY cn.role DESC, cn.joined_at ASC`
-	var list []*cluster.ClusterNode
+	var list []*infra.ClusterNode
 	err := r.db.SelectContext(ctx, &list, query, clusterID)
 	if err != nil {
 		return nil, err
@@ -101,13 +101,13 @@ func (r *ClusterRepository) RemoveClusterNode(ctx context.Context, clusterID, no
 	return err
 }
 
-func (r *ClusterRepository) CreateClusterService(ctx context.Context, s *cluster.ClusterService) (*cluster.ClusterService, error) {
+func (r *ClusterRepository) CreateClusterService(ctx context.Context, s *infra.ClusterService) (*infra.ClusterService, error) {
 	envJSON, err := json.Marshal(s.EnvVars)
 	if err != nil {
 		envJSON = []byte("{}")
 	}
 
-	var out cluster.ClusterService
+	var out infra.ClusterService
 	query := `
 		INSERT INTO cluster_services (cluster_id, name, image, ports, env_vars, replicas, swarm_service_id, status)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -121,12 +121,12 @@ func (r *ClusterRepository) CreateClusterService(ctx context.Context, s *cluster
 	return &out, nil
 }
 
-func (r *ClusterRepository) GetClusterServiceByID(ctx context.Context, id string) (*cluster.ClusterService, error) {
-	var s cluster.ClusterService
+func (r *ClusterRepository) GetClusterServiceByID(ctx context.Context, id string) (*infra.ClusterService, error) {
+	var s infra.ClusterService
 	query := `SELECT id, cluster_id, name, image, ports, env_vars, replicas, swarm_service_id, status, created_at, updated_at FROM cluster_services WHERE id = $1`
 	err := r.db.GetContext(ctx, &s, query, id)
 	if err == sql.ErrNoRows {
-		return nil, cluster.ErrServiceNotFound
+		return nil, infra.ErrServiceNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -135,8 +135,8 @@ func (r *ClusterRepository) GetClusterServiceByID(ctx context.Context, id string
 	return &s, nil
 }
 
-func (r *ClusterRepository) ListClusterServices(ctx context.Context, clusterID string) ([]*cluster.ClusterService, error) {
-	var list []*cluster.ClusterService
+func (r *ClusterRepository) ListClusterServices(ctx context.Context, clusterID string) ([]*infra.ClusterService, error) {
+	var list []*infra.ClusterService
 	query := `SELECT id, cluster_id, name, image, ports, env_vars, replicas, swarm_service_id, status, created_at, updated_at FROM cluster_services WHERE cluster_id = $1 ORDER BY created_at ASC`
 	err := r.db.SelectContext(ctx, &list, query, clusterID)
 	if err != nil {
@@ -158,8 +158,8 @@ func (r *ClusterRepository) DeleteClusterService(ctx context.Context, id string)
 	return err
 }
 
-func (r *ClusterRepository) UpsertAutoscalePolicy(ctx context.Context, p *cluster.AutoscalePolicy) (*cluster.AutoscalePolicy, error) {
-	var out cluster.AutoscalePolicy
+func (r *ClusterRepository) UpsertAutoscalePolicy(ctx context.Context, p *infra.AutoscalePolicy) (*infra.AutoscalePolicy, error) {
+	var out infra.AutoscalePolicy
 	query := `
 		INSERT INTO cluster_service_autoscaling (
 			cluster_service_id, enabled, metric_type, scale_up_threshold, scale_down_threshold,
@@ -194,8 +194,8 @@ func (r *ClusterRepository) UpsertAutoscalePolicy(ctx context.Context, p *cluste
 	return &out, nil
 }
 
-func (r *ClusterRepository) GetAutoscalePolicyByServiceID(ctx context.Context, serviceID string) (*cluster.AutoscalePolicy, error) {
-	var p cluster.AutoscalePolicy
+func (r *ClusterRepository) GetAutoscalePolicyByServiceID(ctx context.Context, serviceID string) (*infra.AutoscalePolicy, error) {
+	var p infra.AutoscalePolicy
 	query := `
 		SELECT id, cluster_service_id, enabled, metric_type, scale_up_threshold, scale_down_threshold,
 		       scale_up_duration_sec, scale_down_duration_sec, min_replicas, max_replicas,
@@ -227,14 +227,14 @@ type autoscalePolicyRow struct {
 	CreatedAt            time.Time  `db:"created_at"`
 	UpdatedAt            time.Time  `db:"updated_at"`
 
-	ServiceID            string     `db:"service_id"`
-	ServiceName          string     `db:"service_name"`
-	CurrentReplicas      int        `db:"current_replicas"`
-	ClusterID            string     `db:"cluster_id"`
-	ManagerNodeID        string     `db:"manager_node_id"`
+	ServiceID       string `db:"service_id"`
+	ServiceName     string `db:"service_name"`
+	CurrentReplicas int    `db:"current_replicas"`
+	ClusterID       string `db:"cluster_id"`
+	ManagerNodeID   string `db:"manager_node_id"`
 }
 
-func (r *ClusterRepository) ListAllActiveAutoscalePolicies(ctx context.Context) ([]*cluster.AutoscalePolicyWithContext, error) {
+func (r *ClusterRepository) ListAllActiveAutoscalePolicies(ctx context.Context) ([]*infra.AutoscalePolicyWithContext, error) {
 	query := `
 		SELECT 
 			csa.id, csa.cluster_service_id, csa.enabled, csa.metric_type,
@@ -256,10 +256,10 @@ func (r *ClusterRepository) ListAllActiveAutoscalePolicies(ctx context.Context) 
 		return nil, err
 	}
 
-	var out []*cluster.AutoscalePolicyWithContext
+	var out []*infra.AutoscalePolicyWithContext
 	for _, row := range rows {
-		out = append(out, &cluster.AutoscalePolicyWithContext{
-			Policy: cluster.AutoscalePolicy{
+		out = append(out, &infra.AutoscalePolicyWithContext{
+			Policy: infra.AutoscalePolicy{
 				ID:                   row.ID,
 				ClusterServiceID:     row.ClusterServiceID,
 				Enabled:              row.Enabled,
@@ -313,4 +313,3 @@ func (r *ClusterRepository) GetServiceAverageMetric(ctx context.Context, service
 	}
 	return res.AvgCPU, res.AvgRAM, res.SampleCount, nil
 }
-

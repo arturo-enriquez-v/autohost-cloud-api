@@ -10,25 +10,24 @@ import (
 	"os"
 	"time"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/cluster"
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/core/infra"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 )
 
 type AutoscalerDispatcher interface {
-	DispatchJobWithParams(nodeID, jobID, commandName string, commandType nodecommand.CommandType, params string) error
+	DispatchJobWithParams(nodeID, jobID, commandName string, commandType jobs.CommandType, params string) error
 	IsNodeConnected(nodeID string) bool
 }
 
 type AutoscalerScheduler struct {
-	clusterRepo cluster.Repository
-	jobSvc      *job.Service
+	clusterRepo infra.ClusterRepository
+	jobSvc      *jobs.JobService
 	dispatcher  AutoscalerDispatcher
 }
 
 func NewAutoscalerScheduler(
-	clusterRepo cluster.Repository,
-	jobSvc *job.Service,
+	clusterRepo infra.ClusterRepository,
+	jobSvc *jobs.JobService,
 	dispatcher AutoscalerDispatcher,
 ) *AutoscalerScheduler {
 	return &AutoscalerScheduler{
@@ -74,7 +73,7 @@ func (s *AutoscalerScheduler) evaluatePolicies(ctx context.Context) {
 	}
 }
 
-func (s *AutoscalerScheduler) evaluateSinglePolicy(ctx context.Context, item *cluster.AutoscalePolicyWithContext) {
+func (s *AutoscalerScheduler) evaluateSinglePolicy(ctx context.Context, item *infra.AutoscalePolicyWithContext) {
 	policy := item.Policy
 	now := time.Now()
 
@@ -152,7 +151,7 @@ func (s *AutoscalerScheduler) evaluateSinglePolicy(ctx context.Context, item *cl
 	}
 }
 
-func (s *AutoscalerScheduler) executeScaling(ctx context.Context, item *cluster.AutoscalePolicyWithContext, targetReplicas int) {
+func (s *AutoscalerScheduler) executeScaling(ctx context.Context, item *infra.AutoscalePolicyWithContext, targetReplicas int) {
 	// Update replicas in DB
 	_ = s.clusterRepo.UpdateClusterServiceReplicas(ctx, item.ServiceID, targetReplicas)
 	_ = s.clusterRepo.UpdateLastScaledAt(ctx, item.Policy.ID, time.Now())
@@ -168,9 +167,9 @@ func (s *AutoscalerScheduler) executeScaling(ctx context.Context, item *cluster.
 	})
 
 	if s.jobSvc != nil {
-		j, err := s.jobSvc.DispatchWithParams(item.ManagerNodeID, "swarm.service.scale", nodecommand.CommandTypeSwarm, string(params))
+		j, err := s.jobSvc.DispatchWithParams(item.ManagerNodeID, "swarm.service.scale", jobs.CommandTypeSwarm, string(params))
 		if err == nil && s.dispatcher != nil && s.dispatcher.IsNodeConnected(item.ManagerNodeID) {
-			_ = s.dispatcher.DispatchJobWithParams(item.ManagerNodeID, j.ID, "swarm.service.scale", nodecommand.CommandTypeSwarm, string(params))
+			_ = s.dispatcher.DispatchJobWithParams(item.ManagerNodeID, j.ID, "swarm.service.scale", jobs.CommandTypeSwarm, string(params))
 		}
 	}
 }

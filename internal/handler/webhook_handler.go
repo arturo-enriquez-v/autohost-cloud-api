@@ -14,21 +14,21 @@ import (
 	"os"
 	"strings"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
+	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/go-chi/chi/v5"
 )
 
 // WebhookHandler handles incoming webhooks from external services.
 type WebhookHandler struct {
-	jobService *job.Service
-	dispatcher NodeDispatcher
+	jobService *jobs.JobService
+	dispatcher dispatcher.NodeDispatcher
 }
 
-func NewWebhookHandler(jobService *job.Service, dispatcher NodeDispatcher) *WebhookHandler {
+func NewWebhookHandler(jobService *jobs.JobService, disp dispatcher.NodeDispatcher) *WebhookHandler {
 	return &WebhookHandler{
 		jobService: jobService,
-		dispatcher: dispatcher,
+		dispatcher: disp,
 	}
 }
 
@@ -107,7 +107,7 @@ func (h *WebhookHandler) GitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	j, err := h.jobService.Dispatch(nodeID, command, nodecommand.CommandTypeDefault)
+	j, err := h.jobService.Dispatch(nodeID, command, jobs.CommandTypeDefault)
 	if err != nil {
 		log.Printf("[ERROR] GitHub webhook: dispatch job: %v", err)
 		http.Error(w, "could not dispatch job", http.StatusInternalServerError)

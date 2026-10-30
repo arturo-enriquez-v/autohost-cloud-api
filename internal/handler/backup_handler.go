@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
+	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -25,22 +25,22 @@ import (
 )
 
 type BackupHandler struct {
-	backupSvc  *backup.Service
-	jobSvc     *job.Service
-	dispatcher ParamDispatcher
-	nodeSvc    *node.Service
+	backupSvc  *apps.BackupService
+	jobSvc     *jobs.JobService
+	dispatcher dispatcher.ParamDispatcher
+	nodeSvc    *node.NodeService
 }
 
 func NewBackupHandler(
-	backupSvc *backup.Service,
-	jobSvc *job.Service,
-	dispatcher ParamDispatcher,
-	nodeSvc *node.Service,
+	backupSvc *apps.BackupService,
+	jobSvc *jobs.JobService,
+	disp dispatcher.ParamDispatcher,
+	nodeSvc *node.NodeService,
 ) *BackupHandler {
 	return &BackupHandler{
 		backupSvc:  backupSvc,
 		jobSvc:     jobSvc,
-		dispatcher: dispatcher,
+		dispatcher: disp,
 		nodeSvc:    nodeSvc,
 	}
 }
@@ -64,7 +64,7 @@ func (h *BackupHandler) Routes() chi.Router {
 	return r
 }
 
-func getSystemR2Credential() *backup.StorageCredential {
+func getSystemR2Credential() *apps.StorageCredential {
 	accountID := os.Getenv("R2_ACCOUNT_ID")
 	accessKey := os.Getenv("R2_ACCESS_KEY_ID")
 	secretKey := os.Getenv("R2_SECRET_ACCESS_KEY")
@@ -77,7 +77,7 @@ func getSystemR2Credential() *backup.StorageCredential {
 	// Extract the actual root bucket name (before any slashes)
 	bucketName := strings.Split(strings.TrimSpace(bucketRaw), "/")[0]
 
-	return &backup.StorageCredential{
+	return &apps.StorageCredential{
 		ID:              "system-managed-r2",
 		Name:            "Autohost Cloud Storage (Incluido)",
 		Provider:        "r2",
@@ -98,7 +98,7 @@ func (h *BackupHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 
 	cfg, err := h.backupSvc.GetConfigByContainer(nodeID, containerName)
 	if err != nil {
-		if err == backup.ErrNotFound {
+		if err == apps.ErrBackupNotFound {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]any{
@@ -160,7 +160,7 @@ func (h *BackupHandler) UpsertConfig(w http.ResponseWriter, r *http.Request) {
 		pgUser = "postgres"
 	}
 
-	cfg, err := h.backupSvc.UpsertConfig(&backup.BackupConfig{
+	cfg, err := h.backupSvc.UpsertConfig(&apps.BackupConfig{
 		UserID:         claims.UserID,
 		NodeID:         nodeID,
 		ContainerName:  containerName,
@@ -225,7 +225,7 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 	cfg, err := h.backupSvc.GetConfigByContainer(nodeID, containerName)
 	if err != nil || cfg == nil {
 		volsRaw, _ := json.Marshal([]string{})
-		cfg, err = h.backupSvc.UpsertConfig(&backup.BackupConfig{
+		cfg, err = h.backupSvc.UpsertConfig(&apps.BackupConfig{
 			UserID:         claims.UserID,
 			NodeID:         nodeID,
 			ContainerName:  containerName,
@@ -261,7 +261,7 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 		s3Key = fmt.Sprintf("backups/users/%s/nodes/%s/apps/%s/%s/%s.tar.gz", claims.UserID, nodeID, containerName, nowStr, containerName)
 	}
 
-	rec, err := h.backupSvc.CreateRecord(&backup.BackupRecord{
+	rec, err := h.backupSvc.CreateRecord(&apps.BackupRecord{
 		BackupConfigID: cfg.ID,
 		NodeID:         nodeID,
 		UserID:         claims.UserID,
@@ -315,7 +315,7 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 
-	j, err := h.jobSvc.Dispatch(nodeID, commandName, nodecommand.CommandTypeDefault)
+	j, err := h.jobSvc.Dispatch(nodeID, commandName, jobs.CommandTypeDefault)
 	if err != nil {
 		_ = h.backupSvc.UpdateRecordStatus(rec.ID, "failed", "", 0, strPtr(err.Error()))
 		log.Printf("[ERROR] dispatch backup job failed: %v", err)
@@ -326,7 +326,7 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 	_ = h.backupSvc.UpdateRecordJobID(rec.ID, j.ID)
 	rec.JobID = &j.ID
 
-	_ = h.dispatcher.DispatchJobWithParams(nodeID, j.ID, commandName, nodecommand.CommandTypeDefault, string(params))
+	_ = h.dispatcher.DispatchJobWithParams(nodeID, j.ID, commandName, jobs.CommandTypeDefault, string(params))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(rec)
@@ -404,7 +404,7 @@ func (h *BackupHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	restoreRec, err := h.backupSvc.CreateRecord(&backup.BackupRecord{
+	restoreRec, err := h.backupSvc.CreateRecord(&apps.BackupRecord{
 		BackupConfigID: cfg.ID,
 		NodeID:         rec.NodeID,
 		UserID:         claims.UserID,
@@ -421,7 +421,7 @@ func (h *BackupHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	j, err := h.jobSvc.Dispatch(rec.NodeID, restoreCommandName, nodecommand.CommandTypeDefault)
+	j, err := h.jobSvc.Dispatch(rec.NodeID, restoreCommandName, jobs.CommandTypeDefault)
 	if err != nil {
 		_ = h.backupSvc.UpdateRecordStatus(restoreRec.ID, "failed", "", 0, strPtr(err.Error()))
 		writeJSONError(w, "failed to dispatch restore job", http.StatusInternalServerError)
@@ -430,7 +430,7 @@ func (h *BackupHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 
 	_ = h.backupSvc.UpdateRecordJobID(restoreRec.ID, j.ID)
 
-	_ = h.dispatcher.DispatchJobWithParams(rec.NodeID, j.ID, restoreCommandName, nodecommand.CommandTypeDefault, string(params))
+	_ = h.dispatcher.DispatchJobWithParams(rec.NodeID, j.ID, restoreCommandName, jobs.CommandTypeDefault, string(params))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
@@ -489,7 +489,7 @@ func (h *BackupHandler) DownloadBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Log the download event in backup_records for audit trail
-	_, _ = h.backupSvc.CreateRecord(&backup.BackupRecord{
+	_, _ = h.backupSvc.CreateRecord(&apps.BackupRecord{
 		BackupConfigID: rec.BackupConfigID,
 		NodeID:         rec.NodeID,
 		UserID:         claims.UserID,

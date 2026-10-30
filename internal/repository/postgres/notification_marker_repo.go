@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -21,7 +21,7 @@ func NewNotificationMarkerRepository(db *sqlx.DB) *NotificationMarkerRepo {
 	return &NotificationMarkerRepo{db: db}
 }
 
-func (r *NotificationMarkerRepo) GetSummary(ctx context.Context, userID string) (*notification.NotificationSummary, error) {
+func (r *NotificationMarkerRepo) GetSummary(ctx context.Context, userID string) (*identity.NotificationSummary, error) {
 	// 1. Get marker timestamps or fallback to user created_at
 	var markers struct {
 		LastSeenAlerts time.Time `db:"last_seen_alerts"`
@@ -96,9 +96,9 @@ func (r *NotificationMarkerRepo) GetSummary(ctx context.Context, userID string) 
 		return nil, fmt.Errorf("select recent alerts: %w", err)
 	}
 
-	recentAlerts := make([]*notification.NotificationAlertItem, len(alertRows))
+	recentAlerts := make([]*identity.NotificationAlertItem, len(alertRows))
 	for i, a := range alertRows {
-		recentAlerts[i] = &notification.NotificationAlertItem{
+		recentAlerts[i] = &identity.NotificationAlertItem{
 			ID:        a.ID,
 			NodeID:    a.NodeID,
 			NodeName:  a.NodeName,
@@ -138,9 +138,9 @@ func (r *NotificationMarkerRepo) GetSummary(ctx context.Context, userID string) 
 		return nil, fmt.Errorf("select recent logs: %w", err)
 	}
 
-	recentLogs := make([]*notification.NotificationLogItem, len(logRows))
+	recentLogs := make([]*identity.NotificationLogItem, len(logRows))
 	for i, l := range logRows {
-		recentLogs[i] = &notification.NotificationLogItem{
+		recentLogs[i] = &identity.NotificationLogItem{
 			ID:        l.ID,
 			NodeID:    l.NodeID,
 			NodeName:  l.NodeName,
@@ -151,7 +151,7 @@ func (r *NotificationMarkerRepo) GetSummary(ctx context.Context, userID string) 
 		}
 	}
 
-	return &notification.NotificationSummary{
+	return &identity.NotificationSummary{
 		UnreadAlertsCount: unreadAlerts,
 		UnreadLogsCount:   unreadLogs,
 		TotalUnread:       unreadAlerts + unreadLogs,

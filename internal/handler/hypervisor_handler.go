@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 )
@@ -18,10 +18,10 @@ import (
 // agent (KVM + libvirt). Only the node owner can read it.
 type HypervisorHandler struct {
 	grpc    *grpcserver.NodeAgentServer
-	nodeSvc *node.Service
+	nodeSvc *node.NodeService
 }
 
-func NewHypervisorHandler(grpc *grpcserver.NodeAgentServer, nodeSvc *node.Service) *HypervisorHandler {
+func NewHypervisorHandler(grpc *grpcserver.NodeAgentServer, nodeSvc *node.NodeService) *HypervisorHandler {
 	return &HypervisorHandler{grpc: grpc, nodeSvc: nodeSvc}
 }
 

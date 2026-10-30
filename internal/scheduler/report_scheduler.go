@@ -8,7 +8,7 @@ import (
 	"log"
 	"time"
 
-	reportsettings "github.com/arturo/autohost-cloud-api/internal/domain/report_settings"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 )
 
 // ReportTrigger can build and push a node status report for a given user.
@@ -19,11 +19,11 @@ type ReportTrigger interface {
 // ReportScheduler checks every minute whether any users have a scheduled report
 // for the current UTC hour and triggers it via ReportTrigger.
 type ReportScheduler struct {
-	settingsSvc *reportsettings.Service
+	settingsSvc *identity.ReportSettingsService
 	trigger     ReportTrigger
 }
 
-func NewReportScheduler(settingsSvc *reportsettings.Service, trigger ReportTrigger) *ReportScheduler {
+func NewReportScheduler(settingsSvc *identity.ReportSettingsService, trigger ReportTrigger) *ReportScheduler {
 	return &ReportScheduler{
 		settingsSvc: settingsSvc,
 		trigger:     trigger,

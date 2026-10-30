@@ -14,8 +14,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	networkstat "github.com/arturo/autohost-cloud-api/internal/domain/network_stat"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	"github.com/arturo/autohost-cloud-api/internal/core/network"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 )
@@ -23,12 +23,12 @@ import (
 // NodeNetworkHandler handles agent ingestion and frontend reads of
 // network stats (interface counters + listening ports).
 type NodeNetworkHandler struct {
-	svc     *networkstat.Service
-	nodeSvc *node.Service
+	svc     *network.NetworkStatService
+	nodeSvc *node.NodeService
 	grpc    *grpcserver.NodeAgentServer
 }
 
-func NewNodeNetworkHandler(svc *networkstat.Service, nodeSvc *node.Service, grpc *grpcserver.NodeAgentServer) *NodeNetworkHandler {
+func NewNodeNetworkHandler(svc *network.NetworkStatService, nodeSvc *node.NodeService, grpc *grpcserver.NodeAgentServer) *NodeNetworkHandler {
 	return &NodeNetworkHandler{svc: svc, nodeSvc: nodeSvc, grpc: grpc}
 }
 
@@ -63,7 +63,7 @@ func (h *NodeNetworkHandler) IngestStats(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var payload networkstat.IngestPayload
+	var payload network.IngestPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
@@ -122,7 +122,7 @@ func (h *NodeNetworkHandler) GetLatest(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, sql.ErrNoRows) {
 			// Return empty payload when no data yet
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(&networkstat.NodeNetworkStats{NodeID: nodeID})
+			json.NewEncoder(w).Encode(&network.NodeNetworkStats{NodeID: nodeID})
 			return
 		}
 		log.Printf("[ERROR] get network stats for node %s: %v", nodeID, err)

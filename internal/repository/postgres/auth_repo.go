@@ -9,11 +9,11 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/jmoiron/sqlx"
 )
 
-// AuthRepository implementa auth.Repository usando PostgreSQL
+// AuthRepository implementa identity.AuthRepository usando PostgreSQL
 type AuthRepository struct {
 	db *sqlx.DB
 }
@@ -38,7 +38,7 @@ func (r *AuthRepository) CreateUser(email, name, passwordHash string) (string, e
 }
 
 // FindUserByEmail busca un usuario por email
-func (r *AuthRepository) FindUserByEmail(email string) (*auth.User, error) {
+func (r *AuthRepository) FindUserByEmail(email string) (*identity.User, error) {
 	var model UserModel
 	err := r.db.Get(&model, `
 		SELECT id, email, name, avatar_url, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at 
@@ -78,7 +78,7 @@ func (r *AuthRepository) RevokeRefreshToken(userID, tokenHash string) error {
 }
 
 // FindUserByID busca un usuario por ID
-func (r *AuthRepository) FindUserByID(id string) (*auth.User, error) {
+func (r *AuthRepository) FindUserByID(id string) (*identity.User, error) {
 	var model UserModel
 	err := r.db.Get(&model, `
 		SELECT id, email, name, avatar_url, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at 
@@ -96,7 +96,7 @@ func (r *AuthRepository) FindUserByID(id string) (*auth.User, error) {
 }
 
 // UpdateUserProfile actualiza el nombre y avatar_url del usuario
-func (r *AuthRepository) UpdateUserProfile(userID string, name, avatarURL *string) (*auth.User, error) {
+func (r *AuthRepository) UpdateUserProfile(userID string, name, avatarURL *string) (*identity.User, error) {
 	var model UserModel
 	err := r.db.Get(&model, `
 		UPDATE users
@@ -118,7 +118,7 @@ func (r *AuthRepository) UpdateUserProfile(userID string, name, avatarURL *strin
 }
 
 // FindOrCreateOAuthUser busca un usuario por proveedor OAuth o lo crea
-func (r *AuthRepository) FindOrCreateOAuthUser(email, name, provider, providerID string) (*auth.User, error) {
+func (r *AuthRepository) FindOrCreateOAuthUser(email, name, provider, providerID string) (*identity.User, error) {
 	// 1. Buscar por provider + provider_id
 	var model UserModel
 	err := r.db.Get(&model, `
@@ -157,7 +157,7 @@ func (r *AuthRepository) FindOrCreateOAuthUser(email, name, provider, providerID
 		return nil, fmt.Errorf("auth_repo.FindOrCreateOAuthUser: %w", err)
 	}
 
-	return &auth.User{
+	return &identity.User{
 		ID:              id,
 		Email:           email,
 		Name:            &name,
@@ -183,8 +183,8 @@ func (r *AuthRepository) FindRefreshToken(tokenHash string) (string, error) {
 	return userID, nil
 }
 
-func userModelToDomain(m *UserModel) *auth.User {
-	return &auth.User{
+func userModelToDomain(m *UserModel) *identity.User {
+	return &identity.User{
 		ID:              m.ID,
 		Email:           m.Email,
 		Name:            m.Name,

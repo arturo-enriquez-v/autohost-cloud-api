@@ -6,33 +6,13 @@ package app
 import (
 	"log"
 
-	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
-	"github.com/arturo/autohost-cloud-api/internal/domain/auth"
-	"github.com/arturo/autohost-cloud-api/internal/domain/backup"
-	caddyroute "github.com/arturo/autohost-cloud-api/internal/domain/caddy_route"
-	clusterdomain "github.com/arturo/autohost-cloud-api/internal/domain/cluster"
-	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
-	containersetting "github.com/arturo/autohost-cloud-api/internal/domain/container_setting"
-	"github.com/arturo/autohost-cloud-api/internal/domain/enrollment"
-	externallog "github.com/arturo/autohost-cloud-api/internal/domain/external_log"
-	"github.com/arturo/autohost-cloud-api/internal/domain/job"
-	logdiagnostic "github.com/arturo/autohost-cloud-api/internal/domain/log_diagnostic"
-	"github.com/arturo/autohost-cloud-api/internal/domain/marketplace"
-	networkstat "github.com/arturo/autohost-cloud-api/internal/domain/network_stat"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
-	nodecommand "github.com/arturo/autohost-cloud-api/internal/domain/node_command"
-	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
-	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
-	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
-	"github.com/arturo/autohost-cloud-api/internal/domain/plan"
-	projectdomain "github.com/arturo/autohost-cloud-api/internal/domain/project"
-	reportsettings "github.com/arturo/autohost-cloud-api/internal/domain/report_settings"
-	scheduledtask "github.com/arturo/autohost-cloud-api/internal/domain/scheduled_task"
-	servicemonitor "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
-	telegrambot "github.com/arturo/autohost-cloud-api/internal/domain/telegram_bot"
-	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
-	"github.com/arturo/autohost-cloud-api/internal/domain/vpn"
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
+	"github.com/arturo/autohost-cloud-api/internal/core/infra"
+	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
+	"github.com/arturo/autohost-cloud-api/internal/core/network"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
+	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
@@ -44,67 +24,67 @@ import (
 )
 
 var RepositoryModule = fx.Provide(
-	fx.Annotate(postgres.NewAuthRepository, fx.As(new(auth.Repository))),
-	fx.Annotate(postgres.NewNodeRepository, fx.As(new(node.Repository))),
-	fx.Annotate(postgres.NewNodeMetricRepository, fx.As(new(nodemetric.Repository))),
-	fx.Annotate(postgres.NewContainerMetricRepository, fx.As(new(containermetric.Repository))),
-	fx.Annotate(postgres.NewEnrollmentRepository, fx.As(new(enrollment.Repository))),
-	fx.Annotate(postgres.NewNodeTokenRepository, fx.As(new(nodetoken.Repository))),
-	fx.Annotate(postgres.NewNodeCommandRepository, fx.As(new(nodecommand.Repository))),
-	fx.Annotate(postgres.NewJobRepository, fx.As(new(job.Repository))),
-	fx.Annotate(postgres.NewNodeAlertRepository, fx.As(new(nodealert.Repository))),
-	fx.Annotate(postgres.NewScheduledTaskRepository, fx.As(new(scheduledtask.Repository))),
-	fx.Annotate(postgres.NewMarketplaceRepository, fx.As(new(marketplace.Repository))),
-	fx.Annotate(postgres.NewAlertEventRepository, fx.As(new(alertevent.Repository))),
-	fx.Annotate(postgres.NewPlanRepository, fx.As(new(plan.Repository))),
-	fx.Annotate(postgres.NewProjectRepository, fx.As(new(projectdomain.Repository))),
-	fx.Annotate(postgres.NewServiceMonitorRepository, fx.As(new(servicemonitor.Repository))),
-	fx.Annotate(postgres.NewCaddyRouteRepository, fx.As(new(caddyroute.Repository))),
-	fx.Annotate(postgres.NewReportSettingsRepository, fx.As(new(reportsettings.Repository))),
-	fx.Annotate(postgres.NewTelegramBotRepository, fx.As(new(telegrambot.Repository))),
-	fx.Annotate(postgres.NewNetworkStatRepository, fx.As(new(networkstat.Repository))),
-	fx.Annotate(postgres.NewExternalLogRepository, fx.As(new(externallog.Repository))),
-	fx.Annotate(postgres.NewBackupRepository, fx.As(new(backup.Repository))),
-	fx.Annotate(postgres.NewLogDiagnosticRepository, fx.As(new(logdiagnostic.Repository))),
-	fx.Annotate(postgres.NewClusterRepository, fx.As(new(clusterdomain.Repository))),
-	fx.Annotate(postgres.NewContainerSettingRepository, fx.As(new(containersetting.Repository))),
-	fx.Annotate(postgres.NewNotificationMarkerRepository, fx.As(new(notification.MarkerRepository))),
-	fx.Annotate(postgres.NewVMRepository, fx.As(new(vm.Repository))),
+	fx.Annotate(postgres.NewAuthRepository, fx.As(new(identity.AuthRepository))),
+	fx.Annotate(postgres.NewNodeRepository, fx.As(new(node.NodeRepository))),
+	fx.Annotate(postgres.NewNodeMetricRepository, fx.As(new(node.NodeMetricRepository))),
+	fx.Annotate(postgres.NewContainerMetricRepository, fx.As(new(node.ContainerMetricRepository))),
+	fx.Annotate(postgres.NewEnrollmentRepository, fx.As(new(node.EnrollmentRepository))),
+	fx.Annotate(postgres.NewNodeTokenRepository, fx.As(new(node.NodeTokenRepository))),
+	fx.Annotate(postgres.NewNodeCommandRepository, fx.As(new(jobs.NodeCommandRepository))),
+	fx.Annotate(postgres.NewJobRepository, fx.As(new(jobs.JobRepository))),
+	fx.Annotate(postgres.NewNodeAlertRepository, fx.As(new(node.NodeAlertRepository))),
+	fx.Annotate(postgres.NewScheduledTaskRepository, fx.As(new(jobs.ScheduledTaskRepository))),
+	fx.Annotate(postgres.NewMarketplaceRepository, fx.As(new(apps.MarketplaceRepository))),
+	fx.Annotate(postgres.NewAlertEventRepository, fx.As(new(node.AlertEventRepository))),
+	fx.Annotate(postgres.NewPlanRepository, fx.As(new(identity.PlanRepository))),
+	fx.Annotate(postgres.NewProjectRepository, fx.As(new(apps.ProjectRepository))),
+	fx.Annotate(postgres.NewServiceMonitorRepository, fx.As(new(apps.ServiceMonitorRepository))),
+	fx.Annotate(postgres.NewCaddyRouteRepository, fx.As(new(apps.CaddyRouteRepository))),
+	fx.Annotate(postgres.NewReportSettingsRepository, fx.As(new(identity.ReportSettingsRepository))),
+	fx.Annotate(postgres.NewTelegramBotRepository, fx.As(new(identity.TelegramBotRepository))),
+	fx.Annotate(postgres.NewNetworkStatRepository, fx.As(new(network.NetworkStatRepository))),
+	fx.Annotate(postgres.NewExternalLogRepository, fx.As(new(node.ExternalLogRepository))),
+	fx.Annotate(postgres.NewBackupRepository, fx.As(new(apps.BackupRepository))),
+	fx.Annotate(postgres.NewLogDiagnosticRepository, fx.As(new(node.LogDiagnosticRepository))),
+	fx.Annotate(postgres.NewClusterRepository, fx.As(new(infra.ClusterRepository))),
+	fx.Annotate(postgres.NewContainerSettingRepository, fx.As(new(node.ContainerSettingRepository))),
+	fx.Annotate(postgres.NewNotificationMarkerRepository, fx.As(new(identity.NotificationMarkerRepository))),
+	fx.Annotate(postgres.NewVMRepository, fx.As(new(infra.VMRepository))),
 )
 
 var ServiceModule = fx.Provide(
-	auth.NewService,
-	node.NewService,
-	nodemetric.NewService,
-	containermetric.NewService,
-	containersetting.NewService,
-	enrollment.NewService,
-	nodetoken.NewService,
-	nodecommand.NewService,
-	job.NewService,
-	nodealert.NewService,
-	scheduledtask.NewService,
-	alertevent.NewService,
-	plan.NewService,
-	projectdomain.NewService,
-	servicemonitor.NewService,
-	caddyroute.NewService,
-	reportsettings.NewService,
-	telegrambot.NewService,
-	externallog.NewService,
-	networkstat.NewService,
-	vpn.NewService,
-	notification.NewService,
-	backup.NewService,
-	logdiagnostic.NewService,
+	identity.NewAuthService,
+	node.NewNodeService,
+	node.NewNodeMetricService,
+	node.NewContainerMetricService,
+	node.NewContainerSettingService,
+	node.NewEnrollmentService,
+	node.NewNodeTokenService,
+	jobs.NewNodeCommandService,
+	jobs.NewJobService,
+	node.NewNodeAlertService,
+	jobs.NewScheduledTaskService,
+	node.NewAlertEventService,
+	identity.NewPlanService,
+	apps.NewProjectService,
+	apps.NewServiceMonitorService,
+	apps.NewCaddyRouteService,
+	identity.NewReportSettingsService,
+	identity.NewTelegramBotService,
+	node.NewExternalLogService,
+	network.NewNetworkStatService,
+	network.NewVPNService,
+	identity.NewNotificationService,
+	apps.NewBackupService,
+	node.NewLogDiagnosticService,
 	fx.Annotate(
-		func(repo clusterdomain.Repository, nodeRepo node.Repository, jobService *job.Service, grpc *grpcserver.NodeAgentServer) *clusterdomain.Service {
-			return clusterdomain.NewService(repo, nodeRepo, jobService, grpc)
+		func(repo infra.ClusterRepository, nodeRepo node.NodeRepository, jobService *jobs.JobService, grpc *grpcserver.NodeAgentServer) *infra.ClusterManager {
+			return infra.NewClusterManager(repo, nodeRepo, jobService, grpc)
 		},
 	),
 	fx.Annotate(
-		func(repo vm.Repository, nodeRepo node.Repository, enrollSvc *enrollment.Service, jobService *job.Service, grpc *grpcserver.NodeAgentServer) *vm.Service {
-			return vm.NewService(repo, nodeRepo, enrollSvc, jobService, grpc)
+		func(repo infra.VMRepository, nodeRepo node.NodeRepository, enrollSvc *node.EnrollmentService, jobService *jobs.JobService, grpc *grpcserver.NodeAgentServer) *infra.VMService {
+			return infra.NewVMService(repo, nodeRepo, enrollSvc, jobService, grpc)
 		},
 	),
 )
@@ -148,15 +128,15 @@ var InfraModule = fx.Provide(
 	headscale.NewClient,
 	// NodeAgentServer also satisfies ParamDispatcher (used by CaddyRoute and Marketplace handlers).
 	fx.Annotate(
-		func(s *grpcserver.NodeAgentServer) handler.ParamDispatcher { return s },
+		func(s *grpcserver.NodeAgentServer) dispatcher.ParamDispatcher { return s },
 	),
 	// Non-variadic wrapper: wire grpc + ws into MultiDispatcher.
-	// Exposed as handler.NodeDispatcher (JobHandler) and scheduler.Dispatcher (Scheduler).
+	// Exposed as dispatcher.NodeDispatcher (JobHandler) and scheduler.Dispatcher (Scheduler).
 	fx.Annotate(
-		func(grpc *grpcserver.NodeAgentServer, ws *handler.WSHandler) *handler.MultiDispatcher {
-			return handler.NewMultiDispatcher(grpc, ws)
+		func(grpc *grpcserver.NodeAgentServer, ws *handler.WSHandler) *dispatcher.MultiDispatcher {
+			return dispatcher.NewMultiDispatcher(grpc, ws)
 		},
-		fx.As(new(handler.NodeDispatcher)),
+		fx.As(new(dispatcher.NodeDispatcher)),
 		fx.As(new(scheduler.Dispatcher)),
 	),
 	handler.NewJobHandler,
@@ -164,7 +144,7 @@ var InfraModule = fx.Provide(
 	scheduler.NewReportScheduler,
 	scheduler.NewDiagnosticCleanupScheduler,
 	fx.Annotate(
-		func(repo clusterdomain.Repository, jobSvc *job.Service, grpc *grpcserver.NodeAgentServer) *scheduler.AutoscalerScheduler {
+		func(repo infra.ClusterRepository, jobSvc *jobs.JobService, grpc *grpcserver.NodeAgentServer) *scheduler.AutoscalerScheduler {
 			return scheduler.NewAutoscalerScheduler(repo, jobSvc, grpc)
 		},
 	),

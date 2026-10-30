@@ -108,15 +108,26 @@ La API REST estará en `http://localhost:8080` y el servidor gRPC en `localhost:
 ```
 .
 ├── cmd/
-│   ├── api/              # Entry point principal
-│   └── migrate/          # Runner de migraciones
+│   ├── api/              # Entry point principal (servidores REST y gRPC)
+│   └── migrate/          # Runner de migraciones de base de datos
 ├── internal/
-│   ├── domain/           # Lógica de negocio y entidades
-│   ├── repository/       # Implementaciones de base de datos (postgres/)
-│   ├── handler/          # HTTP handlers y middleware
-│   └── platform/         # Utilidades de infraestructura (JWT, hashing…)
-├── migrations/           # Archivos SQL de migraciones
-├── request/              # Ejemplos de peticiones HTTP (.http)
+│   ├── app/              # Composición de módulos de inyección de dependencias (Uber Fx)
+│   ├── core/             # Dominio y casos de uso organizados en Bounded Contexts
+│   │   ├── apps/         # Proyectos, marketplace, Caddy reverse proxy, backups, monitores
+│   │   ├── identity/     # Autenticación, usuarios, planes, settings, bots, notificaciones
+│   │   ├── infra/        # Clusters de nodos, máquinas virtuales KVM/QEMU
+│   │   ├── jobs/         # Despacho de jobs remotos, comandos de nodo y tareas programadas
+│   │   ├── network/      # Red mesh VPN (WireGuard) y estadísticas de tráfico
+│   │   └── node/         # Ciclo de vida del nodo, tokens, métricas, logs, diagnósticos y alertas
+│   ├── dispatcher/       # Orquestador desacoplado para despacho y enrutamiento de jobs (HTTP/gRPC/Scheduler)
+│   ├── grpc/             # Servidor y servicios gRPC para comunicación con agentes remotos
+│   ├── handler/          # Controladores HTTP REST y middlewares (Chi v5)
+│   ├── repository/       # Implementaciones de persistencia en PostgreSQL (`internal/repository/postgres/`)
+│   ├── scheduler/        # Programadores de tareas en background y limpieza periódica
+│   ├── server/           # Configuración del servidor HTTP, enrutador y ciclo de vida Fx
+│   └── platform/         # Infraestructura transversal (JWT, hashing, R2/S3 storage, email, logging)
+├── migrations/           # Archivos SQL de migraciones (golang-migrate)
+├── request/              # Colección de peticiones HTTP de prueba (.http)
 ├── compose.yml
 └── Makefile
 ```
@@ -206,19 +217,28 @@ Conexión:
 
 ## Arquitectura
 
-El proyecto sigue Clean Architecture:
+El proyecto sigue los principios de **Clean Architecture** combinados con **Bounded Contexts (DDD)** y **Consumer-Driven Interfaces**:
 
-1. **Domain** (`internal/domain/`): entidades, servicios e interfaces de repositorio
-2. **Repository** (`internal/repository/postgres/`): implementaciones de base de datos
-3. **Handler** (`internal/handler/`): HTTP handlers y middleware
-4. **Platform** (`internal/platform/`): JWT, hashing de contraseñas, etc.
+1. **Core Domain (`internal/core/`)**:
+   - Totalmente desacoplado de frameworks web y librerías externas de persistencia.
+   - Organizado en Bounded Contexts cohesivos: `apps`, `identity`, `infra`, `jobs`, `network`, y `node`.
+   - Contiene entidades de dominio, DTOs, interfaces de repositorio y servicios de negocio.
+2. **Dispatcher (`internal/dispatcher/`)**:
+   - Capa desacoplada para el despacho de jobs y comandos hacia agentes conectados (vía gRPC o persistencia reactiva).
+   - Invocable indistintamente por controladores REST, tareas del scheduler o servicios internos.
+3. **Repository (`internal/repository/postgres/`)**:
+   - Implementaciones concretas de acceso a datos sobre PostgreSQL utilizando `pgx`.
+4. **Primary Adapters (`internal/handler/` & `internal/grpc/`)**:
+   - Handlers REST bajo Chi v5 y servicios gRPC para agentes remotos.
+5. **Platform (`internal/platform/`)**:
+   - Utilidades técnicas e infraestructura transversal (JWT, Argon2/Bcrypt, Cloudflare R2, clientes SMTP).
 
 Para agregar una funcionalidad nueva:
-1. Definir entidad y servicio en `internal/domain/`
-2. Implementar repositorio en `internal/repository/postgres/`
-3. Crear handler HTTP en `internal/handler/`
-4. Registrar rutas en `internal/handler/router.go`
-5. Crear migración si hay cambios en el esquema
+1. Definir entidad, interfaces de repositorio y servicio dentro del subpaquete correspondiente en `internal/core/<bounded-context>/`.
+2. Implementar los métodos de persistencia en `internal/repository/postgres/`.
+3. Exponer los endpoints en `internal/handler/` o `internal/grpc/`.
+4. Registrar los constructores en los módulos Uber Fx (`internal/app/modules.go`).
+5. Crear la migración SQL correspondiente si hay cambios de esquema (`make migrate-create`).
 
 
 ## Licencia / License

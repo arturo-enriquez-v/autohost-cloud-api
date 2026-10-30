@@ -14,9 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
 
-	containermetric "github.com/arturo/autohost-cloud-api/internal/domain/container_metric"
-	containersetting "github.com/arturo/autohost-cloud-api/internal/domain/container_setting"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 )
@@ -25,17 +23,17 @@ import (
 // node to the browser via Server-Sent Events (SSE) and serves metric history.
 type NodeContainerHandler struct {
 	grpc               *grpcserver.NodeAgentServer
-	nodeSvc            *node.Service
-	containerMetricSvc *containermetric.Service
-	settingSvc         *containersetting.Service
+	nodeSvc            *node.NodeService
+	containerMetricSvc *node.ContainerMetricService
+	settingSvc         *node.ContainerSettingService
 	redis              *redis.Client
 }
 
 func NewNodeContainerHandler(
 	grpc *grpcserver.NodeAgentServer,
-	nodeSvc *node.Service,
-	containerMetricSvc *containermetric.Service,
-	settingSvc *containersetting.Service,
+	nodeSvc *node.NodeService,
+	containerMetricSvc *node.ContainerMetricService,
+	settingSvc *node.ContainerSettingService,
 	redis *redis.Client,
 ) *NodeContainerHandler {
 	return &NodeContainerHandler{
@@ -286,7 +284,7 @@ func (h *NodeContainerHandler) getContainerMetrics(w http.ResponseWriter, r *htt
 		bucket = "hour"
 	}
 
-	points, err := h.containerMetricSvc.GetHistory(containermetric.ContainerHistoryParams{
+	points, err := h.containerMetricSvc.GetHistory(node.ContainerHistoryParams{
 		NodeID:        nodeID,
 		ContainerName: containerName,
 		ContainerID:   containerID,
@@ -301,7 +299,7 @@ func (h *NodeContainerHandler) getContainerMetrics(w http.ResponseWriter, r *htt
 	}
 
 	if points == nil {
-		points = []*containermetric.ContainerMetricHistoryPoint{}
+		points = []*node.ContainerMetricHistoryPoint{}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -390,4 +388,3 @@ func (h *NodeContainerHandler) updateContainerSettings(w http.ResponseWriter, r 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(saved)
 }
-

@@ -13,23 +13,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/enrollment"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodetoken "github.com/arturo/autohost-cloud-api/internal/domain/node_token"
-	"github.com/arturo/autohost-cloud-api/internal/domain/vm"
+	"github.com/arturo/autohost-cloud-api/internal/core/infra"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 	"github.com/go-chi/chi/v5"
 )
 
 type EnrollmentHandler struct {
-	service          *enrollment.Service
-	nodeService      *node.Service
-	nodeTokenService *nodetoken.Service
-	vmRepo           vm.Repository
+	service          *node.EnrollmentService
+	nodeService      *node.NodeService
+	nodeTokenService *node.NodeTokenService
+	vmRepo           infra.VMRepository
 }
 
-func NewEnrollmentHandler(service *enrollment.Service, nodeService *node.Service, nodeTokenService *nodetoken.Service, vmRepo vm.Repository) *EnrollmentHandler {
+func NewEnrollmentHandler(service *node.EnrollmentService, nodeService *node.NodeService, nodeTokenService *node.NodeTokenService, vmRepo infra.VMRepository) *EnrollmentHandler {
 	return &EnrollmentHandler{service: service, nodeService: nodeService, nodeTokenService: nodeTokenService, vmRepo: vmRepo}
 }
 
@@ -71,7 +69,7 @@ func (h *EnrollmentHandler) CreateEnrollToken(w http.ResponseWriter, r *http.Req
 
 	// Guardar en BD (guardamos el hash, no el token plano)
 	if err := h.service.CreateEnrollToken(hash, claims.UserID, expiresAt); err != nil {
-		if err == enrollment.ErrInvalidEnrollTokenData {
+		if err == node.ErrInvalidEnrollTokenData {
 			http.Error(w, "invalid token data", http.StatusBadRequest)
 			return
 		}

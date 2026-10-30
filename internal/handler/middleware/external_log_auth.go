@@ -8,14 +8,14 @@ import (
 	"net/http"
 	"strings"
 
-	externallog "github.com/arturo/autohost-cloud-api/internal/domain/external_log"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 )
 
 type externalLogCtxKey int
 
 const tokenKey externalLogCtxKey = iota
 
-func ExternalLogAuth(service *externallog.Service) func(http.Handler) http.Handler {
+func ExternalLogAuth(service *node.ExternalLogService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var raw string
@@ -50,9 +50,9 @@ func ExternalLogAuth(service *externallog.Service) func(http.Handler) http.Handl
 	}
 }
 
-func GetExternalLogToken(ctx context.Context) *externallog.ExternalLogToken {
+func GetExternalLogToken(ctx context.Context) *node.ExternalLogToken {
 	if v := ctx.Value(tokenKey); v != nil {
-		if t, ok := v.(*externallog.ExternalLogToken); ok {
+		if t, ok := v.(*node.ExternalLogToken); ok {
 			return t
 		}
 	}

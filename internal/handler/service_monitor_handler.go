@@ -14,16 +14,16 @@ import (
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 
-	sm "github.com/arturo/autohost-cloud-api/internal/domain/service_monitor"
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 )
 
 // ServiceMonitorHandler handles CRUD for service monitors and exposes health event history.
 type ServiceMonitorHandler struct {
-	service *sm.Service
+	service *apps.ServiceMonitorService
 	grpc    *grpcserver.NodeAgentServer
 }
 
-func NewServiceMonitorHandler(service *sm.Service, grpc *grpcserver.NodeAgentServer) *ServiceMonitorHandler {
+func NewServiceMonitorHandler(service *apps.ServiceMonitorService, grpc *grpcserver.NodeAgentServer) *ServiceMonitorHandler {
 	return &ServiceMonitorHandler{service: service, grpc: grpc}
 }
 
@@ -96,7 +96,7 @@ func (h *ServiceMonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	monitor := &sm.ServiceMonitor{
+	monitor := &apps.ServiceMonitor{
 		NodeID:             req.NodeID,
 		UserID:             claims.UserID,
 		ServiceName:        req.ServiceName,
@@ -141,7 +141,7 @@ func (h *ServiceMonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	existing, err := h.service.FindByID(id)
 	if err != nil {
-		if errors.Is(err, sm.ErrNotFound) {
+		if errors.Is(err, apps.ErrServiceMonitorNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -205,7 +205,7 @@ func (h *ServiceMonitorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// Fetch before deleting so we have the nodeID to notify the agent.
 	monitor, err := h.service.FindByID(id)
 	if err != nil {
-		if errors.Is(err, sm.ErrNotFound) {
+		if errors.Is(err, apps.ErrServiceMonitorNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -218,7 +218,7 @@ func (h *ServiceMonitorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.Delete(id); err != nil {
-		if errors.Is(err, sm.ErrNotFound) {
+		if errors.Is(err, apps.ErrServiceMonitorNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}

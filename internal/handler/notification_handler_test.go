@@ -12,17 +12,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/arturo/autohost-cloud-api/internal/domain/notification"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 )
 
 type mockNotificationMarkerRepo struct {
-	summary  *notification.NotificationSummary
+	summary  *identity.NotificationSummary
 	ackCalls []string
 }
 
-func (m *mockNotificationMarkerRepo) GetSummary(ctx context.Context, userID string) (*notification.NotificationSummary, error) {
+func (m *mockNotificationMarkerRepo) GetSummary(ctx context.Context, userID string) (*identity.NotificationSummary, error) {
 	return m.summary, nil
 }
 
@@ -40,13 +40,13 @@ func (m *mockNotificationMarkerRepo) Acknowledge(ctx context.Context, userID, sc
 
 func TestNotificationHandler_GetSummary(t *testing.T) {
 	repo := &mockNotificationMarkerRepo{
-		summary: &notification.NotificationSummary{
+		summary: &identity.NotificationSummary{
 			UnreadAlertsCount: 2,
 			UnreadLogsCount:   5,
 			TotalUnread:       7,
 			LastSeenAlertsAt:  time.Now().Add(-1 * time.Hour),
 			LastSeenLogsAt:    time.Now().Add(-2 * time.Hour),
-			RecentAlerts: []*notification.NotificationAlertItem{
+			RecentAlerts: []*identity.NotificationAlertItem{
 				{
 					ID:        "a1",
 					NodeID:    "n1",
@@ -56,7 +56,7 @@ func TestNotificationHandler_GetSummary(t *testing.T) {
 					CreatedAt: time.Now(),
 				},
 			},
-			RecentLogs: []*notification.NotificationLogItem{
+			RecentLogs: []*identity.NotificationLogItem{
 				{
 					ID:        "l1",
 					Title:     "nginx-error",
@@ -80,7 +80,7 @@ func TestNotificationHandler_GetSummary(t *testing.T) {
 		t.Fatalf("expected 200 OK, got %d", rec.Code)
 	}
 
-	var res notification.NotificationSummary
+	var res identity.NotificationSummary
 	if err := json.NewDecoder(rec.Body).Decode(&res); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestNotificationHandler_GetSummary(t *testing.T) {
 
 func TestNotificationHandler_Acknowledge(t *testing.T) {
 	repo := &mockNotificationMarkerRepo{
-		summary: &notification.NotificationSummary{
+		summary: &identity.NotificationSummary{
 			UnreadAlertsCount: 3,
 			UnreadLogsCount:   4,
 			TotalUnread:       7,

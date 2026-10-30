@@ -98,4 +98,3 @@ func StartAutoscalerScheduler(lc fx.Lifecycle, sched *scheduler.AutoscalerSchedu
 		},
 	})
 }
-

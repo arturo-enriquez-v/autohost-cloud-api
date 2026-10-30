@@ -11,10 +11,7 @@ import (
 	"sync"
 	"time"
 
-	alertevent "github.com/arturo/autohost-cloud-api/internal/domain/alert_event"
-	"github.com/arturo/autohost-cloud-api/internal/domain/node"
-	nodealert "github.com/arturo/autohost-cloud-api/internal/domain/node_alert"
-	nodemetric "github.com/arturo/autohost-cloud-api/internal/domain/node_metric"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
@@ -27,11 +24,11 @@ import (
 const alertCooldown = 10 * time.Minute
 
 type NodeMetricHandler struct {
-	service       *nodemetric.Service
-	alertService  *nodealert.Service
-	nodeService   *node.Service
+	service       *node.NodeMetricService
+	alertService  *node.NodeAlertService
+	nodeService   *node.NodeService
 	grpc          *grpcserver.NodeAgentServer
-	alertEventSvc *alertevent.Service
+	alertEventSvc *node.AlertEventService
 	redis         *redis.Client
 
 	cooldownMu sync.Mutex
@@ -39,11 +36,11 @@ type NodeMetricHandler struct {
 }
 
 func NewNodeMetricHandler(
-	service *nodemetric.Service,
-	alertService *nodealert.Service,
-	nodeService *node.Service,
+	service *node.NodeMetricService,
+	alertService *node.NodeAlertService,
+	nodeService *node.NodeService,
 	grpc *grpcserver.NodeAgentServer,
-	alertEventSvc *alertevent.Service,
+	alertEventSvc *node.AlertEventService,
 	redis *redis.Client,
 ) *NodeMetricHandler {
 	return &NodeMetricHandler{
@@ -81,7 +78,7 @@ func (h *NodeMetricHandler) PostMetrics(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	var nodeMetrics nodemetric.CreateNodeMetricRequest
+	var nodeMetrics node.CreateNodeMetricRequest
 	if err := json.NewDecoder(r.Body).Decode(&nodeMetrics); err != nil {
 		fmt.Println("Error decoding JSON:", &nodeMetrics)
 		http.Error(w, "bad json", http.StatusBadRequest)
@@ -108,7 +105,7 @@ func (h *NodeMetricHandler) PostMetrics(w http.ResponseWriter, r *http.Request) 
 // checkThresholdAlerts looks up the alert config for the node and sends a
 // Telegram notification for each metric that exceeds its configured threshold.
 // Repeated alerts for the same metric are suppressed for alertCooldown duration.
-func (h *NodeMetricHandler) checkThresholdAlerts(nodeID string, m *nodemetric.CreateNodeMetricRequest) {
+func (h *NodeMetricHandler) checkThresholdAlerts(nodeID string, m *node.CreateNodeMetricRequest) {
 	cfg, err := h.alertService.FindByNodeID(nodeID)
 	if err != nil {
 		return // no config or DB error — silently skip
@@ -125,7 +122,7 @@ func (h *NodeMetricHandler) checkThresholdAlerts(nodeID string, m *nodemetric.Cr
 		}
 	}
 
-	check := func(name string, value float64, threshold *float32, evType alertevent.AlertEventType) {
+	check := func(name string, value float64, threshold *float32, evType node.AlertEventType) {
 		if threshold == nil {
 			return
 		}
@@ -155,7 +152,7 @@ func (h *NodeMetricHandler) checkThresholdAlerts(nodeID string, m *nodemetric.Cr
 			if n, err := h.nodeService.GetByID(nodeID); err == nil && n.OwnerID != nil {
 				userID = n.OwnerID
 			}
-			ev := &alertevent.AlertEvent{
+			ev := &node.AlertEvent{
 				UserID:    userID,
 				NodeID:    nodeID,
 				AlertType: evType,
@@ -167,9 +164,9 @@ func (h *NodeMetricHandler) checkThresholdAlerts(nodeID string, m *nodemetric.Cr
 		}
 	}
 
-	check("CPU", m.CPUUsagePercent, cfg.CPUThreshold, alertevent.AlertEventTypeCPU)
-	check("RAM", m.MemoryUsagePercent, cfg.RAMThreshold, alertevent.AlertEventTypeRAM)
-	check("Disk", m.DiskUsagePercent, cfg.DiskThreshold, alertevent.AlertEventTypeDisk)
+	check("CPU", m.CPUUsagePercent, cfg.CPUThreshold, node.AlertEventTypeCPU)
+	check("RAM", m.MemoryUsagePercent, cfg.RAMThreshold, node.AlertEventTypeRAM)
+	check("Disk", m.DiskUsagePercent, cfg.DiskThreshold, node.AlertEventTypeDisk)
 }
 
 // GetHistory returns time-bucketed metric history for a node.
@@ -215,7 +212,7 @@ func (h *NodeMetricHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		bucket = "hour"
 	}
 
-	points, err := h.service.GetHistory(nodemetric.HistoryParams{
+	points, err := h.service.GetHistory(node.HistoryParams{
 		NodeID: nodeID,
 		From:   fromTime,
 		To:     toTime,
@@ -309,51 +306,51 @@ func (h *NodeMetricHandler) StreamLiveMetrics(w http.ResponseWriter, r *http.Req
 		ch, cancel := h.grpc.SubscribeToNodeMetrics(nodeID)
 		defer cancel()
 
-	type liveMetric struct {
-		CPUUsagePercent    float32 `json:"cpu_usage_percent"`
-		RAMTotalBytes      uint64  `json:"ram_total_bytes"`
-		RAMUsedBytes       uint64  `json:"ram_used_bytes"`
-		RAMAvailableBytes  uint64  `json:"ram_available_bytes"`
-		RAMUsagePercent    float32 `json:"ram_usage_percent"`
-		DiskTotalBytes     uint64  `json:"disk_total_bytes"`
-		DiskUsedBytes      uint64  `json:"disk_used_bytes"`
-		DiskAvailableBytes uint64  `json:"disk_available_bytes"`
-		DiskUsagePercent   float32 `json:"disk_usage_percent"`
-		UptimeSeconds      int64   `json:"uptime_seconds"`
-		CollectedAt        string  `json:"collected_at"`
-	}
-
-	for {
-		select {
-		case <-r.Context().Done():
-			log.Printf("[SSE] live metrics stream closed for node %s", nodeID)
-			return
-
-		case <-keepalive.C:
-			fmt.Fprintf(w, ": keepalive\n\n")
-			flusher.Flush()
-
-		case m, ok := <-ch:
-			if !ok {
-				return
-			}
-			payload := liveMetric{
-				CPUUsagePercent:    m.GetCpuUsagePercent(),
-				RAMTotalBytes:      m.GetRamTotalBytes(),
-				RAMUsedBytes:       m.GetRamUsedBytes(),
-				RAMAvailableBytes:  m.GetRamAvailableBytes(),
-				RAMUsagePercent:    m.GetRamUsagePercent(),
-				DiskTotalBytes:     m.GetDiskTotalBytes(),
-				DiskUsedBytes:      m.GetDiskUsedBytes(),
-				DiskAvailableBytes: m.GetDiskAvailableBytes(),
-				DiskUsagePercent:   m.GetDiskUsagePercent(),
-				UptimeSeconds:      m.GetUptimeSeconds(),
-				CollectedAt:        time.Now().UTC().Format(time.RFC3339),
-			}
-			data, _ := json.Marshal(payload)
-			fmt.Fprintf(w, "event: metric\ndata: %s\n\n", data)
-			flusher.Flush()
+		type liveMetric struct {
+			CPUUsagePercent    float32 `json:"cpu_usage_percent"`
+			RAMTotalBytes      uint64  `json:"ram_total_bytes"`
+			RAMUsedBytes       uint64  `json:"ram_used_bytes"`
+			RAMAvailableBytes  uint64  `json:"ram_available_bytes"`
+			RAMUsagePercent    float32 `json:"ram_usage_percent"`
+			DiskTotalBytes     uint64  `json:"disk_total_bytes"`
+			DiskUsedBytes      uint64  `json:"disk_used_bytes"`
+			DiskAvailableBytes uint64  `json:"disk_available_bytes"`
+			DiskUsagePercent   float32 `json:"disk_usage_percent"`
+			UptimeSeconds      int64   `json:"uptime_seconds"`
+			CollectedAt        string  `json:"collected_at"`
 		}
-	}
+
+		for {
+			select {
+			case <-r.Context().Done():
+				log.Printf("[SSE] live metrics stream closed for node %s", nodeID)
+				return
+
+			case <-keepalive.C:
+				fmt.Fprintf(w, ": keepalive\n\n")
+				flusher.Flush()
+
+			case m, ok := <-ch:
+				if !ok {
+					return
+				}
+				payload := liveMetric{
+					CPUUsagePercent:    m.GetCpuUsagePercent(),
+					RAMTotalBytes:      m.GetRamTotalBytes(),
+					RAMUsedBytes:       m.GetRamUsedBytes(),
+					RAMAvailableBytes:  m.GetRamAvailableBytes(),
+					RAMUsagePercent:    m.GetRamUsagePercent(),
+					DiskTotalBytes:     m.GetDiskTotalBytes(),
+					DiskUsedBytes:      m.GetDiskUsedBytes(),
+					DiskAvailableBytes: m.GetDiskAvailableBytes(),
+					DiskUsagePercent:   m.GetDiskUsagePercent(),
+					UptimeSeconds:      m.GetUptimeSeconds(),
+					CollectedAt:        time.Now().UTC().Format(time.RFC3339),
+				}
+				data, _ := json.Marshal(payload)
+				fmt.Fprintf(w, "event: metric\ndata: %s\n\n", data)
+				flusher.Flush()
+			}
+		}
 	}
 }
