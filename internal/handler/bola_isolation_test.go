@@ -52,7 +52,7 @@ func (m *MockNodeRepo) FindByID(id string) (*node.Node, error) {
 	return n, nil
 }
 func (m *MockNodeRepo) Update(n *node.Node) (*node.Node, error) { return n, nil }
-func (m *MockNodeRepo) Delete(id string) error                 { return nil }
+func (m *MockNodeRepo) Delete(id string) error                  { return nil }
 func (m *MockNodeRepo) FindByOwnerID(ownerID string) ([]*node.Node, error) {
 	var res []*node.Node
 	for _, n := range m.nodes {
@@ -65,11 +65,13 @@ func (m *MockNodeRepo) FindByOwnerID(ownerID string) ([]*node.Node, error) {
 func (m *MockNodeRepo) FindByOwnerIDWithMetrics(ownerID string) ([]*node.NodeWithMetrics, error) {
 	return nil, nil
 }
-func (m *MockNodeRepo) UpdateLastSeen(nodeID string) error                                  { return nil }
-func (m *MockNodeRepo) UpdateLastSeenAndIPs(nodeID string, ipLocal string, ipVPN string) error { return nil }
-func (m *MockNodeRepo) UpdateVPNIP(nodeID string, ipVPN string) error                        { return nil }
-func (m *MockNodeRepo) UpdateVersionAgent(nodeID, version string) error                      { return nil }
-func (m *MockNodeRepo) AssignProject(nodeID string, projectID *string) error                 { return nil }
+func (m *MockNodeRepo) UpdateLastSeen(nodeID string) error { return nil }
+func (m *MockNodeRepo) UpdateLastSeenAndIPs(nodeID string, ipLocal string, ipVPN string) error {
+	return nil
+}
+func (m *MockNodeRepo) UpdateVPNIP(nodeID string, ipVPN string) error        { return nil }
+func (m *MockNodeRepo) UpdateVersionAgent(nodeID, version string) error      { return nil }
+func (m *MockNodeRepo) AssignProject(nodeID string, projectID *string) error { return nil }
 
 // MockProjectRepo implements apps.ProjectRepository for testing
 type MockProjectRepo struct {
@@ -85,15 +87,17 @@ func (m *MockProjectRepo) FindByID(id string) (*apps.Project, error) {
 	return p, nil
 }
 func (m *MockProjectRepo) FindByUserID(userID string) ([]*apps.Project, error) { return nil, nil }
-func (m *MockProjectRepo) Update(p *apps.Project) (*apps.Project, error)     { return p, nil }
-func (m *MockProjectRepo) Delete(id string) error                                  { return nil }
+func (m *MockProjectRepo) Update(p *apps.Project) (*apps.Project, error)       { return p, nil }
+func (m *MockProjectRepo) Delete(id string) error                              { return nil }
 
 // MockNodeTokenRepo implements node.Repository for testing
 type MockNodeTokenRepo struct{}
 
-func (m *MockNodeTokenRepo) CreateNodeToken(nodeID, token string) error               { return nil }
-func (m *MockNodeTokenRepo) FindNodeTokenByHash(tokenHash string) (*node.NodeToken, error) { return nil, nil }
-func (m *MockNodeTokenRepo) UpdateLastSeen(tokenID string, lastSeenAt time.Time) error  { return nil }
+func (m *MockNodeTokenRepo) CreateNodeToken(nodeID, token string) error { return nil }
+func (m *MockNodeTokenRepo) FindNodeTokenByHash(tokenHash string) (*node.NodeToken, error) {
+	return nil, nil
+}
+func (m *MockNodeTokenRepo) UpdateLastSeen(tokenID string, lastSeenAt time.Time) error { return nil }
 func (m *MockNodeTokenRepo) RevokeByNodeID(nodeID string) error                        { return nil }
 
 // MockCaddyRouteRepo implements apps.CaddyRouteRepository

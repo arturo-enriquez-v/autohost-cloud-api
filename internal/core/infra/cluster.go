@@ -203,7 +203,7 @@ func (s *ClusterManager) CreateCluster(ctx context.Context, userID, name string,
 	// 4. Dispatch swarm.init to manager node via gRPC
 	initPayload, _ := json.Marshal(map[string]any{
 		"advertise_vpn_ip": *managerNode.IPVPN,
-		"overlay_mtu":     1200,
+		"overlay_mtu":      1200,
 	})
 	s.dispatchSwarmJob(managerNodeID, "swarm.init", string(initPayload))
 
@@ -469,7 +469,7 @@ func (s *ClusterManager) orchestrateCluster(clusterID, managerNodeID, managerVPN
 	// 1. Dispatch swarm.init to manager
 	initPayload, _ := json.Marshal(map[string]any{
 		"advertise_vpn_ip": managerVPNIP,
-		"overlay_mtu":     1200,
+		"overlay_mtu":      1200,
 	})
 	initJob, err := s.dispatchAndAwaitJob(ctx, managerNodeID, "swarm.init", string(initPayload))
 	if err != nil || initJob == nil {
@@ -506,7 +506,7 @@ func (s *ClusterManager) orchestrateCluster(clusterID, managerNodeID, managerVPN
 		log.Printf("🔗 Dispatching swarm.join to worker %s (%s)...", workerID, *workerNode.IPVPN)
 		joinPayload, _ := json.Marshal(map[string]any{
 			"manager_vpn_ip":   managerVPNIP,
-			"join_token":      tokens.WorkerToken,
+			"join_token":       tokens.WorkerToken,
 			"advertise_vpn_ip": *workerNode.IPVPN,
 		})
 		joinJob, err := s.dispatchAndAwaitJob(ctx, workerID, "swarm.join", string(joinPayload))

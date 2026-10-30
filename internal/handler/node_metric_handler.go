@@ -306,51 +306,51 @@ func (h *NodeMetricHandler) StreamLiveMetrics(w http.ResponseWriter, r *http.Req
 		ch, cancel := h.grpc.SubscribeToNodeMetrics(nodeID)
 		defer cancel()
 
-	type liveMetric struct {
-		CPUUsagePercent    float32 `json:"cpu_usage_percent"`
-		RAMTotalBytes      uint64  `json:"ram_total_bytes"`
-		RAMUsedBytes       uint64  `json:"ram_used_bytes"`
-		RAMAvailableBytes  uint64  `json:"ram_available_bytes"`
-		RAMUsagePercent    float32 `json:"ram_usage_percent"`
-		DiskTotalBytes     uint64  `json:"disk_total_bytes"`
-		DiskUsedBytes      uint64  `json:"disk_used_bytes"`
-		DiskAvailableBytes uint64  `json:"disk_available_bytes"`
-		DiskUsagePercent   float32 `json:"disk_usage_percent"`
-		UptimeSeconds      int64   `json:"uptime_seconds"`
-		CollectedAt        string  `json:"collected_at"`
-	}
-
-	for {
-		select {
-		case <-r.Context().Done():
-			log.Printf("[SSE] live metrics stream closed for node %s", nodeID)
-			return
-
-		case <-keepalive.C:
-			fmt.Fprintf(w, ": keepalive\n\n")
-			flusher.Flush()
-
-		case m, ok := <-ch:
-			if !ok {
-				return
-			}
-			payload := liveMetric{
-				CPUUsagePercent:    m.GetCpuUsagePercent(),
-				RAMTotalBytes:      m.GetRamTotalBytes(),
-				RAMUsedBytes:       m.GetRamUsedBytes(),
-				RAMAvailableBytes:  m.GetRamAvailableBytes(),
-				RAMUsagePercent:    m.GetRamUsagePercent(),
-				DiskTotalBytes:     m.GetDiskTotalBytes(),
-				DiskUsedBytes:      m.GetDiskUsedBytes(),
-				DiskAvailableBytes: m.GetDiskAvailableBytes(),
-				DiskUsagePercent:   m.GetDiskUsagePercent(),
-				UptimeSeconds:      m.GetUptimeSeconds(),
-				CollectedAt:        time.Now().UTC().Format(time.RFC3339),
-			}
-			data, _ := json.Marshal(payload)
-			fmt.Fprintf(w, "event: metric\ndata: %s\n\n", data)
-			flusher.Flush()
+		type liveMetric struct {
+			CPUUsagePercent    float32 `json:"cpu_usage_percent"`
+			RAMTotalBytes      uint64  `json:"ram_total_bytes"`
+			RAMUsedBytes       uint64  `json:"ram_used_bytes"`
+			RAMAvailableBytes  uint64  `json:"ram_available_bytes"`
+			RAMUsagePercent    float32 `json:"ram_usage_percent"`
+			DiskTotalBytes     uint64  `json:"disk_total_bytes"`
+			DiskUsedBytes      uint64  `json:"disk_used_bytes"`
+			DiskAvailableBytes uint64  `json:"disk_available_bytes"`
+			DiskUsagePercent   float32 `json:"disk_usage_percent"`
+			UptimeSeconds      int64   `json:"uptime_seconds"`
+			CollectedAt        string  `json:"collected_at"`
 		}
-	}
+
+		for {
+			select {
+			case <-r.Context().Done():
+				log.Printf("[SSE] live metrics stream closed for node %s", nodeID)
+				return
+
+			case <-keepalive.C:
+				fmt.Fprintf(w, ": keepalive\n\n")
+				flusher.Flush()
+
+			case m, ok := <-ch:
+				if !ok {
+					return
+				}
+				payload := liveMetric{
+					CPUUsagePercent:    m.GetCpuUsagePercent(),
+					RAMTotalBytes:      m.GetRamTotalBytes(),
+					RAMUsedBytes:       m.GetRamUsedBytes(),
+					RAMAvailableBytes:  m.GetRamAvailableBytes(),
+					RAMUsagePercent:    m.GetRamUsagePercent(),
+					DiskTotalBytes:     m.GetDiskTotalBytes(),
+					DiskUsedBytes:      m.GetDiskUsedBytes(),
+					DiskAvailableBytes: m.GetDiskAvailableBytes(),
+					DiskUsagePercent:   m.GetDiskUsagePercent(),
+					UptimeSeconds:      m.GetUptimeSeconds(),
+					CollectedAt:        time.Now().UTC().Format(time.RFC3339),
+				}
+				data, _ := json.Marshal(payload)
+				fmt.Fprintf(w, "event: metric\ndata: %s\n\n", data)
+				flusher.Flush()
+			}
+		}
 	}
 }

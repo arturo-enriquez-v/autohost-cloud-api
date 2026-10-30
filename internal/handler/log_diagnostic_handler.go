@@ -225,4 +225,3 @@ func (h *LogDiagnosticHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	response.RespondJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
-

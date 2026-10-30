@@ -17,7 +17,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-
 // InstallAppParams is the JSON payload the agent receives for marketplace installs.
 type InstallAppParams struct {
 	AppName string            `json:"app_name"`

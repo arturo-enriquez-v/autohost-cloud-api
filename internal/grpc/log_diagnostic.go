@@ -34,7 +34,7 @@ func (s *NodeAgentServer) handleLogDiagnosticResult(nodeID string, payload *pb.L
 		for _, s := range sources {
 			bundles = append(bundles, node.SourceBundle{
 				Source:    s.GetSource(),
-				RawLogs:  s.GetRawLogs(),
+				RawLogs:   s.GetRawLogs(),
 				LineCount: s.GetLineCount(),
 			})
 		}

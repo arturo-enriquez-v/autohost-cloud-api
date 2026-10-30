@@ -43,10 +43,10 @@ func (h *NodeCommandHandler) Routes(nodeAuthMiddleware func(http.Handler) http.H
 
 // registerCommandRequest is the payload sent by the node agent.
 type registerCommandRequest struct {
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
-	Type        jobs.CommandType  `json:"type"` // "default" | "custom"
-	ScriptPath  string            `json:"script_path,omitempty"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	Type        jobs.CommandType `json:"type"` // "default" | "custom"
+	ScriptPath  string           `json:"script_path,omitempty"`
 }
 
 // Register upserts a command for the authenticated node.

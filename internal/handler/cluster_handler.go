@@ -116,7 +116,7 @@ func (h *ClusterHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 type addNodeReq struct {
-	NodeID string              `json:"node_id"`
+	NodeID string            `json:"node_id"`
 	Role   infra.ClusterRole `json:"role"`
 }
 

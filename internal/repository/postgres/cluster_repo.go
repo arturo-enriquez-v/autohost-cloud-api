@@ -227,11 +227,11 @@ type autoscalePolicyRow struct {
 	CreatedAt            time.Time  `db:"created_at"`
 	UpdatedAt            time.Time  `db:"updated_at"`
 
-	ServiceID            string     `db:"service_id"`
-	ServiceName          string     `db:"service_name"`
-	CurrentReplicas      int        `db:"current_replicas"`
-	ClusterID            string     `db:"cluster_id"`
-	ManagerNodeID        string     `db:"manager_node_id"`
+	ServiceID       string `db:"service_id"`
+	ServiceName     string `db:"service_name"`
+	CurrentReplicas int    `db:"current_replicas"`
+	ClusterID       string `db:"cluster_id"`
+	ManagerNodeID   string `db:"manager_node_id"`
 }
 
 func (r *ClusterRepository) ListAllActiveAutoscalePolicies(ctx context.Context) ([]*infra.AutoscalePolicyWithContext, error) {
@@ -313,4 +313,3 @@ func (r *ClusterRepository) GetServiceAverageMetric(ctx context.Context, service
 	}
 	return res.AvgCPU, res.AvgRAM, res.SampleCount, nil
 }
-

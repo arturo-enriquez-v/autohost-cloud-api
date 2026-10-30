@@ -164,4 +164,3 @@ func (r *VMRepository) LinkNodeByHostname(ctx context.Context, ownerID, hostname
 	_, err := r.db.ExecContext(ctx, query, nodeID, ipLocal, ownerID, hostname)
 	return err
 }
-
