@@ -40,6 +40,7 @@ type BackupConfig struct {
 	RetentionCount      int             `db:"retention_count"       json:"retention_count"`
 	PauseContainer      bool            `db:"pause_container"       json:"pause_container"`
 	BackupMethod        string          `db:"backup_method"         json:"backup_method"`
+	StorageDestination  string          `db:"storage_destination"  json:"storage_destination"`
 	PgUser              string          `db:"pg_user"               json:"pg_user"`
 	StorageCredentialID *string         `db:"storage_credential_id" json:"storage_credential_id,omitempty"`
 	Enabled             bool            `db:"enabled"               json:"enabled"`
@@ -48,21 +49,24 @@ type BackupConfig struct {
 }
 
 type BackupRecord struct {
-	ID             string     `db:"id"               json:"id"`
-	BackupConfigID string     `db:"backup_config_id" json:"backup_config_id"`
-	NodeID         string     `db:"node_id"          json:"node_id"`
-	UserID         string     `db:"user_id"          json:"user_id"`
-	JobID          *string    `db:"job_id"           json:"job_id,omitempty"`
-	ContainerName  string     `db:"container_name"   json:"container_name"`
-	S3Key          string     `db:"s3_key"           json:"s3_key"`
-	FileSizeBytes  int64      `db:"file_size_bytes"  json:"file_size_bytes"`
-	BackupMethod   string     `db:"backup_method"    json:"backup_method"`
-	TriggerType    string     `db:"trigger_type"     json:"trigger_type"`
-	Status         string     `db:"status"           json:"status"`
-	ErrorMessage   *string    `db:"error_message"    json:"error_message,omitempty"`
-	UserEmail      *string    `db:"user_email"       json:"user_email,omitempty"`
-	StartedAt      time.Time  `db:"started_at"       json:"started_at"`
-	CompletedAt    *time.Time `db:"completed_at"     json:"completed_at,omitempty"`
+	ID                 string     `db:"id"                  json:"id"`
+	BackupConfigID     string     `db:"backup_config_id"    json:"backup_config_id"`
+	NodeID             string     `db:"node_id"             json:"node_id"`
+	UserID             string     `db:"user_id"             json:"user_id"`
+	JobID              *string    `db:"job_id"              json:"job_id,omitempty"`
+	ContainerName      string     `db:"container_name"      json:"container_name"`
+	StorageDestination string     `db:"storage_destination" json:"storage_destination"`
+	LocalPath          *string    `db:"local_path"          json:"local_path,omitempty"`
+	ParentPath         *string    `db:"parent_path"         json:"parent_path,omitempty"`
+	S3Key              *string    `db:"s3_key"              json:"s3_key,omitempty"`
+	FileSizeBytes      int64      `db:"file_size_bytes"     json:"file_size_bytes"`
+	BackupMethod       string     `db:"backup_method"       json:"backup_method"`
+	TriggerType        string     `db:"trigger_type"        json:"trigger_type"`
+	Status             string     `db:"status"              json:"status"`
+	ErrorMessage       *string    `db:"error_message"       json:"error_message,omitempty"`
+	UserEmail          *string    `db:"user_email"          json:"user_email,omitempty"`
+	StartedAt          time.Time  `db:"started_at"          json:"started_at"`
+	CompletedAt        *time.Time `db:"completed_at"        json:"completed_at,omitempty"`
 }
 
 type BackupRepository interface {
@@ -79,8 +83,9 @@ type BackupRepository interface {
 
 	// Backup Records
 	CreateRecord(rec *BackupRecord) (*BackupRecord, error)
-	UpdateRecordStatus(id string, status string, s3Key string, fileSize int64, errMsg *string) error
-	UpdateRecordByJobID(jobID string, status string, s3Key string, fileSize int64, errMsg *string) error
+	UpdateRecordStatus(id string, status string, s3Key, localPath, parentPath string, fileSize int64, errMsg *string) error
+	UpdateRecordByJobID(jobID string, status string, s3Key, localPath, parentPath string, fileSize int64, errMsg *string) error
+	UpdateRecordParentPath(id string, parentPath string, fileSize int64) error
 	UpdateRecordJobID(id string, jobID string) error
 	ListRecordsByContainer(nodeID, containerName string) ([]*BackupRecord, error)
 	GetRecordByID(id string) (*BackupRecord, error)
@@ -126,12 +131,16 @@ func (s *BackupService) CreateRecord(rec *BackupRecord) (*BackupRecord, error) {
 	return s.repo.CreateRecord(rec)
 }
 
-func (s *BackupService) UpdateRecordStatus(id string, status string, s3Key string, fileSize int64, errMsg *string) error {
-	return s.repo.UpdateRecordStatus(id, status, s3Key, fileSize, errMsg)
+func (s *BackupService) UpdateRecordStatus(id string, status string, s3Key, localPath, parentPath string, fileSize int64, errMsg *string) error {
+	return s.repo.UpdateRecordStatus(id, status, s3Key, localPath, parentPath, fileSize, errMsg)
 }
 
-func (s *BackupService) UpdateRecordByJobID(jobID string, status string, s3Key string, fileSize int64, errMsg *string) error {
-	return s.repo.UpdateRecordByJobID(jobID, status, s3Key, fileSize, errMsg)
+func (s *BackupService) UpdateRecordByJobID(jobID string, status string, s3Key, localPath, parentPath string, fileSize int64, errMsg *string) error {
+	return s.repo.UpdateRecordByJobID(jobID, status, s3Key, localPath, parentPath, fileSize, errMsg)
+}
+
+func (s *BackupService) UpdateRecordParentPath(id string, parentPath string, fileSize int64) error {
+	return s.repo.UpdateRecordParentPath(id, parentPath, fileSize)
 }
 
 func (s *BackupService) UpdateRecordJobID(id string, jobID string) error {

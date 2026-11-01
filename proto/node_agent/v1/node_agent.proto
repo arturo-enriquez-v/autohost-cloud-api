@@ -93,6 +93,7 @@ message MetricPayload {
   uint64 disk_available_bytes = 8;
   float  disk_usage_percent   = 9;
   int64  uptime_seconds       = 10;
+  float  cpu_temp_celsius     = 11;
 }
 
 message ServerMessage {
@@ -237,6 +238,7 @@ message MetricRequest {
   uint64 disk_available_bytes = 8;
   float  disk_usage_percent   = 9;
   int64  uptime_seconds       = 10;
+  float  cpu_temp_celsius     = 11;
 }
 
 message MetricResponse {

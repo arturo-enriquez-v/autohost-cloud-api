@@ -20,6 +20,7 @@ type CaddyRoute struct {
 	UserID    string    `db:"user_id"    json:"user_id"`
 	Domain    string    `db:"domain"     json:"domain"`
 	Upstream  string    `db:"upstream"   json:"upstream"`
+	TLSMode   string    `db:"tls_mode"   json:"tls_mode"` // "auto", "internal", "http_only"
 	CreatedAt time.Time `db:"created_at" json:"created_at"`
 	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
 }

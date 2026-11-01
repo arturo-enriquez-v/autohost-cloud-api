@@ -5,16 +5,26 @@ package identity
 
 import (
 	"errors"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 )
 
 var (
-	ErrInvalidCredentials  = errors.New("invalid credentials")
-	ErrUserAlreadyExists   = errors.New("user already exists")
-	ErrInvalidRefreshToken = errors.New("invalid or expired refresh token")
+	ErrInvalidCredentials   = errors.New("invalid credentials")
+	ErrUserAlreadyExists    = errors.New("user already exists")
+	ErrInvalidRefreshToken  = errors.New("invalid or expired refresh token")
+	ErrRegistrationDisabled = errors.New("public registration is disabled")
 )
+
+// SetupStatus describes the onboarding and registration state of this self-hosted instance.
+type SetupStatus struct {
+	NeedsSetup         bool `json:"needs_setup"`
+	AllowRegistration  bool `json:"allow_registration"`
+	GoogleOAuthEnabled bool `json:"google_oauth_enabled"`
+}
 
 // TokenPair holds the access and refresh tokens issued after authentication.
 type TokenPair struct {
@@ -45,15 +55,47 @@ type AuthRepository interface {
 	StoreRefreshToken(userID, tokenHash, userAgent, ip string) error
 	RevokeRefreshToken(userID, tokenHash string) error
 	FindRefreshToken(tokenHash string) (userID string, err error)
+	CountUsers() (int, error)
+	FindFirstUser() (*User, error)
 }
 
 // AuthService encapsula la lógica de negocio de autenticación.
 type AuthService struct {
-	repo AuthRepository
+	repo               AuthRepository
+	onFirstUserCreated func(userID string)
 }
 
 func NewAuthService(repo AuthRepository) *AuthService {
 	return &AuthService{repo: repo}
+}
+
+// SetOnFirstUserCreated registers a callback invoked when the initial admin account is created.
+func (s *AuthService) SetOnFirstUserCreated(fn func(userID string)) {
+	s.onFirstUserCreated = fn
+}
+
+func isRegistrationExplicitlyAllowed() bool {
+	val := strings.ToLower(strings.TrimSpace(os.Getenv("ALLOW_REGISTRATION")))
+	return val == "true" || val == "1" || val == "yes"
+}
+
+// GetSetupStatus returns whether the instance requires initial admin setup and whether public signups are allowed.
+func (s *AuthService) GetSetupStatus() (*SetupStatus, error) {
+	count, err := s.repo.CountUsers()
+	if err != nil {
+		return nil, err
+	}
+	needsSetup := count == 0
+	return &SetupStatus{
+		NeedsSetup:         needsSetup,
+		AllowRegistration:  needsSetup || isRegistrationExplicitlyAllowed(),
+		GoogleOAuthEnabled: strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")) != "",
+	}, nil
+}
+
+// GetFirstUser returns the earliest registered user (typically the self-hosted admin).
+func (s *AuthService) GetFirstUser() (*User, error) {
+	return s.repo.FindFirstUser()
 }
 
 func (s *AuthService) issueTokenPair(user *User, ua, ip string) (TokenPair, error) {
@@ -73,7 +115,17 @@ func (s *AuthService) issueTokenPair(user *User, ua, ip string) (TokenPair, erro
 }
 
 // Register registra un nuevo usuario.
+// En modo self-hosted, permite el registro libre del primer usuario (Setup Wizard)
+// y bloquea registros posteriores a menos que ALLOW_REGISTRATION=true.
 func (s *AuthService) Register(email, name, password string) (userID string, err error) {
+	count, err := s.repo.CountUsers()
+	if err != nil {
+		return "", err
+	}
+	if count > 0 && !isRegistrationExplicitlyAllowed() {
+		return "", ErrRegistrationDisabled
+	}
+
 	existing, _ := s.repo.FindUserByEmail(email)
 	if existing != nil {
 		return "", ErrUserAlreadyExists
@@ -84,7 +136,16 @@ func (s *AuthService) Register(email, name, password string) (userID string, err
 		return "", err
 	}
 
-	return s.repo.CreateUser(email, name, hash)
+	id, err := s.repo.CreateUser(email, name, hash)
+	if err != nil {
+		return "", err
+	}
+
+	if count == 0 && s.onFirstUserCreated != nil {
+		s.onFirstUserCreated(id)
+	}
+
+	return id, nil
 }
 
 // RegisterAndIssue registra un nuevo usuario y emite tokens.
@@ -161,8 +222,32 @@ func (s *AuthService) RevokeToken(plainToken string) {
 }
 
 // LoginOAuth busca o crea un usuario mediante proveedor OAuth y emite tokens.
+// Si ya existe un usuario administrador y ALLOW_REGISTRATION no está activo,
+// permite iniciar sesión a cuentas existentes pero bloquea el alta de cuentas nuevas.
 func (s *AuthService) LoginOAuth(email, name, provider, providerID string) (*User, error) {
-	return s.repo.FindOrCreateOAuthUser(email, name, provider, providerID)
+	existing, _ := s.repo.FindUserByEmail(email)
+	if existing != nil {
+		return s.repo.FindOrCreateOAuthUser(email, name, provider, providerID)
+	}
+
+	count, err := s.repo.CountUsers()
+	if err != nil {
+		return nil, err
+	}
+	if count > 0 && !isRegistrationExplicitlyAllowed() {
+		return nil, ErrRegistrationDisabled
+	}
+
+	user, err := s.repo.FindOrCreateOAuthUser(email, name, provider, providerID)
+	if err != nil {
+		return nil, err
+	}
+
+	if count == 0 && user != nil && s.onFirstUserCreated != nil {
+		s.onFirstUserCreated(user.ID)
+	}
+
+	return user, nil
 }
 
 // OAuthLoginAndIssue verifica un ID token de Google y emite tokens.

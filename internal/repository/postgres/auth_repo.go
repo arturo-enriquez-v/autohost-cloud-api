@@ -183,6 +183,30 @@ func (r *AuthRepository) FindRefreshToken(tokenHash string) (string, error) {
 	return userID, nil
 }
 
+// CountUsers retorna el número total de usuarios registrados.
+func (r *AuthRepository) CountUsers() (int, error) {
+	var count int
+	err := r.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM users`).Scan(&count)
+	return count, err
+}
+
+// FindFirstUser retorna el primer usuario registrado en la instancia (administrador principal).
+func (r *AuthRepository) FindFirstUser() (*identity.User, error) {
+	var model UserModel
+	err := r.db.Get(&model, `
+		SELECT id, email, name, avatar_url, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at
+		FROM users
+		ORDER BY created_at ASC
+		LIMIT 1`)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return userModelToDomain(&model), nil
+}
+
 func userModelToDomain(m *UserModel) *identity.User {
 	return &identity.User{
 		ID:              m.ID,

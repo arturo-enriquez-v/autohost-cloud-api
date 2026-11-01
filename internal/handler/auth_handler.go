@@ -30,6 +30,7 @@ func NewAuthHandler(service *identity.AuthService, notificationSvc *identity.Not
 
 func (h *AuthHandler) Routes() chi.Router {
 	r := chi.NewRouter()
+	r.Get("/setup-status", h.GetSetupStatus)
 	r.Post("/register", h.Register)
 	r.Post("/login", h.Login)
 	r.Post("/refresh", h.Refresh)
@@ -41,6 +42,16 @@ func (h *AuthHandler) Routes() chi.Router {
 		pr.Put("/profile", h.UpdateProfile)
 	})
 	return r
+}
+
+func (h *AuthHandler) GetSetupStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := h.service.GetSetupStatus()
+	if err != nil {
+		log.Printf("[AUTH] GetSetupStatus error: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	response.RespondJSON(w, http.StatusOK, status)
 }
 
 type creds struct {
@@ -62,6 +73,10 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pair, err := h.service.RegisterAndIssue(in.Email, in.Name, in.Password, r.UserAgent(), clientIP(r))
+	if errors.Is(err, identity.ErrRegistrationDisabled) {
+		http.Error(w, "public registration is disabled on this server", http.StatusForbidden)
+		return
+	}
 	if errors.Is(err, identity.ErrUserAlreadyExists) {
 		http.Error(w, "email already exists", http.StatusConflict)
 		return
@@ -216,6 +231,10 @@ func (h *AuthHandler) OAuthGoogle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pair, err := h.service.OAuthLoginAndIssue(body.IDToken, r.UserAgent(), clientIP(r))
+	if errors.Is(err, identity.ErrRegistrationDisabled) {
+		http.Error(w, "public registration is disabled on this server", http.StatusForbidden)
+		return
+	}
 	if err != nil {
 		log.Printf("[AUTH] OAuthGoogle error: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

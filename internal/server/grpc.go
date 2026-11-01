@@ -16,14 +16,16 @@ import (
 	"go.uber.org/fx"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
+	"github.com/arturo/autohost-cloud-api/internal/platform"
 )
 
-func StartGRPCServer(lc fx.Lifecycle, agentServer *grpcserver.NodeAgentServer) {
+func StartGRPCServer(lc fx.Lifecycle, agentServer *grpcserver.NodeAgentServer, pki *platform.PKIManager) {
 	grpcPort := os.Getenv("GRPC_PORT")
 	if grpcPort == "" {
 		mode := strings.ToLower(strings.TrimSpace(os.Getenv("SERVICE_MODE")))
@@ -39,7 +41,7 @@ func StartGRPCServer(lc fx.Lifecycle, agentServer *grpcserver.NodeAgentServer) {
 		return status.Errorf(codes.Internal, "internal server error: %v", fmt.Sprintf("%v", p))
 	}
 
-	grpcSrv := grpc.NewServer(
+	opts := []grpc.ServerOption{
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			Time:    20 * time.Second, // send PING to client if idle for 20s
 			Timeout: 5 * time.Second,  // close connection if no PONG within 5s
@@ -50,7 +52,20 @@ func StartGRPCServer(lc fx.Lifecycle, agentServer *grpcserver.NodeAgentServer) {
 		}),
 		grpc.ChainStreamInterceptor(streamRecovery(recoveryInterceptor)),
 		grpc.ChainUnaryInterceptor(unaryRecovery(recoveryInterceptor)),
-	)
+	}
+
+	if platform.IsGRPCTLSEnabled() && pki != nil {
+		tlsCfg, err := pki.ServerTLSConfig()
+		if err != nil {
+			log.Fatalf("[gRPC] failed to configure mTLS: %v", err)
+		}
+		opts = append(opts, grpc.Creds(credentials.NewTLS(tlsCfg)))
+		log.Printf("[gRPC] mTLS enabled (ClientAuth mode: %v)", tlsCfg.ClientAuth)
+	} else {
+		log.Printf("[gRPC] WARNING: starting gRPC server without TLS (GRPC_TLS_ENABLED=false)")
+	}
+
+	grpcSrv := grpc.NewServer(opts...)
 
 	nodepb.RegisterNodeAgentServiceServer(grpcSrv, agentServer)
 

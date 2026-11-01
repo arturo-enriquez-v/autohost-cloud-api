@@ -25,6 +25,7 @@ type NodeMetric struct {
 	DiskUsedBytes        int64     `db:"disk_used_bytes" json:"disk_used_bytes"`
 	DiskAvailableBytes   int64     `db:"disk_available_bytes" json:"disk_available_bytes"`
 	DiskUsagePercent     float64   `db:"disk_usage_percent" json:"disk_usage_percent"`
+	CPUTempCelsius       *float64  `db:"cpu_temp_celsius" json:"cpu_temp_celsius,omitempty"`
 	CollectedAt          time.Time `db:"collected_at" json:"collected_at"`
 	CreatedAt            time.Time `db:"created_at" json:"created_at"`
 }
@@ -41,6 +42,7 @@ type CreateNodeMetricRequest struct {
 	DiskUsedBytes        int64     `json:"disk_used_bytes"`
 	DiskAvailableBytes   int64     `json:"disk_available_bytes"`
 	DiskUsagePercent     float64   `json:"disk_usage_percent"`
+	CPUTempCelsius       float64   `json:"cpu_temp_celsius,omitempty"`
 	CollectedAt          time.Time `json:"collected_at"`
 }
 
@@ -50,6 +52,7 @@ type NodeMetricHistoryPoint struct {
 	CPUUsagePercent    float64   `db:"cpu_usage_percent" json:"cpu_usage_percent"`
 	MemoryUsagePercent float64   `db:"memory_usage_percent" json:"memory_usage_percent"`
 	DiskUsagePercent   float64   `db:"disk_usage_percent" json:"disk_usage_percent"`
+	CPUTempCelsius     float64   `db:"cpu_temp_celsius" json:"cpu_temp_celsius,omitempty"`
 }
 
 // HistoryParams holds the validated parameters for a history query.

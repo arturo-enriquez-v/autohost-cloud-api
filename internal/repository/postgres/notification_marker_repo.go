@@ -82,7 +82,7 @@ func (r *NotificationMarkerRepo) GetSummary(ctx context.Context, userID string) 
 		SELECT
 			a.id,
 			a.node_id,
-			COALESCE(n.name, n.hostname, '') AS node_name,
+			COALESCE(n.hostname, '') AS node_name,
 			a.alert_type,
 			a.message,
 			a.created_at
@@ -123,7 +123,7 @@ func (r *NotificationMarkerRepo) GetSummary(ctx context.Context, userID string) 
 		SELECT
 			l.id,
 			l.node_id,
-			COALESCE(n.name, n.hostname, '') AS node_name,
+			COALESCE(n.hostname, '') AS node_name,
 			l.title,
 			l.level,
 			l.message,

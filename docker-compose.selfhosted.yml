@@ -1,0 +1,75 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: autohost-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-autohost}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-autohost_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-autohost}
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=128MB"
+      - "-c"
+      - "max_connections=50"
+    volumes:
+      - ${AUTOHOST_STORAGE_DIR:-/var/lib/autohost}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-autohost} -d ${POSTGRES_DB:-autohost}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    image: ghcr.io/mazapanuwu13/autohost-cloud-api:latest
+    container_name: autohost-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-autohost}:${POSTGRES_PASSWORD:-autohost_secret}@postgres:5432/${POSTGRES_DB:-autohost}?sslmode=disable
+    entrypoint: ["/usr/local/bin/autohost-migrate", "up"]
+    restart: "no"
+
+  api:
+    image: ghcr.io/mazapanuwu13/autohost-cloud-api:latest
+    container_name: autohost-api
+    restart: unless-stopped
+    user: "0:0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${API_PORT:-8080}:8080"
+      - "${GRPC_PORT:-9090}:9090"
+    environment:
+      SERVICE_MODE: "all"
+      PORT: "8080"
+      GRPC_PORT: "9090"
+      DATABASE_URL: postgres://${POSTGRES_USER:-autohost}:${POSTGRES_PASSWORD:-autohost_secret}@postgres:5432/${POSTGRES_DB:-autohost}?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production_autohost_selfhosted_secret_32b}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
+      AUTO_ENROLL_LOCAL_NODE: ${AUTO_ENROLL_LOCAL_NODE:-true}
+      AUTOHOST_STORAGE_DIR: /var/lib/autohost
+      AUTOHOST_LOCAL_AGENT_DIR: /etc/autohost
+      LOCAL_AGENT_GRPC_ADDRESS: ${LOCAL_AGENT_GRPC_ADDRESS:-127.0.0.1:9090}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+    volumes:
+      - ${AUTOHOST_STORAGE_DIR:-/var/lib/autohost}:/var/lib/autohost
+      - ${AUTOHOST_LOCAL_AGENT_DIR:-/etc/autohost}:/etc/autohost
+
+  web:
+    image: ghcr.io/mazapanuwu13/autohost-cloud-lite:latest
+    container_name: autohost-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}

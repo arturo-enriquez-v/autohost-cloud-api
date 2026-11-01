@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
@@ -87,6 +88,7 @@ func (h *CaddyRouteHandler) List(w http.ResponseWriter, r *http.Request) {
 type upsertCaddyRouteRequest struct {
 	Domain   string `json:"domain"`
 	Upstream string `json:"upstream"`
+	TLSMode  string `json:"tls_mode"` // "auto", "internal", "http_only"
 }
 
 // Upsert creates or updates a Caddy reverse-proxy route and dispatches it to the agent.
@@ -116,8 +118,18 @@ func (h *CaddyRouteHandler) Upsert(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
+	req.Domain = strings.ToLower(strings.TrimSpace(req.Domain))
+	req.Upstream = strings.TrimSpace(req.Upstream)
 	if req.Domain == "" || req.Upstream == "" {
 		http.Error(w, "domain and upstream are required", http.StatusBadRequest)
+		return
+	}
+	tlsMode := strings.ToLower(strings.TrimSpace(req.TLSMode))
+	if tlsMode == "" {
+		tlsMode = "auto"
+	}
+	if tlsMode != "auto" && tlsMode != "internal" && tlsMode != "http_only" {
+		http.Error(w, "invalid tls_mode: must be auto, internal, or http_only", http.StatusBadRequest)
 		return
 	}
 
@@ -127,6 +139,7 @@ func (h *CaddyRouteHandler) Upsert(w http.ResponseWriter, r *http.Request) {
 		UserID:   claims.UserID,
 		Domain:   req.Domain,
 		Upstream: req.Upstream,
+		TLSMode:  tlsMode,
 	})
 	if err != nil {
 		log.Printf("[ERROR] upsert caddy route for node %s: %v", nodeID, err)
@@ -138,12 +151,17 @@ func (h *CaddyRouteHandler) Upsert(w http.ResponseWriter, r *http.Request) {
 	params, _ := json.Marshal(map[string]string{
 		"domain":   req.Domain,
 		"upstream": req.Upstream,
+		"tls_mode": tlsMode,
 	})
-	j, err := h.jobService.Dispatch(nodeID, "caddy.upsert-route", jobs.CommandTypeDefault)
-	if err != nil {
-		log.Printf("[WARN] create caddy.upsert-route job for node %s: %v", nodeID, err)
-	} else if err := h.dispatcher.DispatchJobWithParams(nodeID, j.ID, "caddy.upsert-route", jobs.CommandTypeDefault, string(params)); err != nil {
-		log.Printf("[WARN] dispatch caddy.upsert-route to node %s: %v", nodeID, err)
+	if h.jobService != nil {
+		j, err := h.jobService.DispatchWithParams(nodeID, "caddy.upsert-route", jobs.CommandTypeDefault, string(params))
+		if err != nil {
+			log.Printf("[WARN] create caddy.upsert-route job for node %s: %v", nodeID, err)
+		} else if h.dispatcher != nil {
+			if err := h.dispatcher.DispatchJobWithParams(nodeID, j.ID, "caddy.upsert-route", jobs.CommandTypeDefault, string(params)); err != nil {
+				log.Printf("[WARN] dispatch caddy.upsert-route to node %s: %v", nodeID, err)
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

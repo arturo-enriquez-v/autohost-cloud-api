@@ -9,11 +9,18 @@ proto:
 build:
 	go build -o bin/autohost-cloud-lite ./cmd/api
 
+build-multiarch:
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-w -s" -o bin/autohost-cloud-api-linux-amd64 ./cmd/api
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-w -s" -o bin/autohost-cloud-api-linux-arm64 ./cmd/api
+
 test:
 	go test ./...
 
 docker:
 	docker build -t autohost-cloud-api .
+
+docker-multiarch:
+	docker buildx build --platform linux/amd64,linux/arm64 -t autohost-cloud-api:latest .
 
 # Modo monolítico (REST + gRPC juntos en un proceso)
 dev: 

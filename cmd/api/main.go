@@ -12,6 +12,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/arturo/autohost-cloud-api/internal/app"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/server"
 )
 
@@ -27,6 +28,7 @@ func main() {
 	}
 
 	var invocations []any
+	invocations = append(invocations, func(_ *node.LocalNodeBootstrapper) {})
 
 	switch mode {
 	case "http", "api":

@@ -23,16 +23,21 @@ func NewCaddyRouteRepository(db *sqlx.DB) *CaddyRouteRepository {
 }
 
 func (r *CaddyRouteRepository) Upsert(cr *apps.CaddyRoute) (*apps.CaddyRoute, error) {
+	tlsMode := cr.TLSMode
+	if tlsMode == "" {
+		tlsMode = "auto"
+	}
 	var result apps.CaddyRoute
 	err := r.db.QueryRowContext(context.Background(), `
-		INSERT INTO caddy_routes (node_id, user_id, domain, upstream)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO caddy_routes (node_id, user_id, domain, upstream, tls_mode)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (node_id, domain) DO UPDATE
 			SET upstream   = EXCLUDED.upstream,
+			    tls_mode   = EXCLUDED.tls_mode,
 			    updated_at = NOW()
-		RETURNING id, node_id, user_id, domain, upstream, created_at, updated_at`,
-		cr.NodeID, cr.UserID, cr.Domain, cr.Upstream,
-	).Scan(&result.ID, &result.NodeID, &result.UserID, &result.Domain, &result.Upstream, &result.CreatedAt, &result.UpdatedAt)
+		RETURNING id, node_id, user_id, domain, upstream, tls_mode, created_at, updated_at`,
+		cr.NodeID, cr.UserID, cr.Domain, cr.Upstream, tlsMode,
+	).Scan(&result.ID, &result.NodeID, &result.UserID, &result.Domain, &result.Upstream, &result.TLSMode, &result.CreatedAt, &result.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +47,7 @@ func (r *CaddyRouteRepository) Upsert(cr *apps.CaddyRoute) (*apps.CaddyRoute, er
 func (r *CaddyRouteRepository) ListByNode(nodeID string) ([]*apps.CaddyRoute, error) {
 	var routes []*apps.CaddyRoute
 	err := r.db.SelectContext(context.Background(), &routes, `
-		SELECT id, node_id, user_id, domain, upstream, created_at, updated_at
+		SELECT id, node_id, user_id, domain, upstream, tls_mode, created_at, updated_at
 		FROM caddy_routes
 		WHERE node_id = $1
 		ORDER BY domain ASC`, nodeID)
