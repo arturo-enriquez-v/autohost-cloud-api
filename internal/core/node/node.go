@@ -25,6 +25,7 @@ type Node struct {
 	VersionAgent string     `db:"version_agent" json:"version_agent"`
 	OwnerID      *string    `db:"owner_id" json:"owner_id"`
 	ProjectID    *string    `db:"project_id" json:"project_id"`
+	IsLocal      bool       `db:"is_local" json:"is_local"`
 	LastSeenAt   *time.Time `db:"last_seen_at" json:"last_seen_at"`
 	CreatedAt    time.Time  `db:"created_at" json:"created_at"`
 	UpdatedAt    time.Time  `db:"updated_at" json:"updated_at"`
@@ -41,6 +42,7 @@ type NodeWithMetrics struct {
 	VersionAgent string      `json:"version_agent"`
 	OwnerID      *string     `json:"owner_id"`
 	ProjectID    *string     `json:"project_id"`
+	IsLocal      bool        `json:"is_local"`
 	LastSeenAt   *time.Time  `json:"last_seen_at"`
 	CreatedAt    time.Time   `json:"created_at"`
 	UpdatedAt    time.Time   `json:"updated_at"`
@@ -52,6 +54,7 @@ type LastMetric struct {
 	CPUUsagePercent    float64   `json:"cpu_usage_percent"`
 	MemoryUsagePercent float64   `json:"memory_usage_percent"`
 	DiskUsagePercent   float64   `json:"disk_usage_percent"`
+	CPUTempCelsius     float64   `json:"cpu_temp_celsius,omitempty"`
 	CollectedAt        time.Time `json:"collected_at"`
 }
 
@@ -59,6 +62,8 @@ type LastMetric struct {
 type NodeRepository interface {
 	Register(node *Node) (*Node, error)
 	FindByID(id string) (*Node, error)
+	FindLocalNode() (*Node, error)
+	ClaimUnownedNodes(ownerID string) error
 	Update(node *Node) (*Node, error)
 	Delete(id string) error
 	FindByOwnerID(ownerID string) ([]*Node, error)
@@ -173,4 +178,15 @@ func (s *NodeService) RemoveFromProject(nodeID string) error {
 		return ErrInvalidNodeData
 	}
 	return s.repo.AssignProject(nodeID, nil)
+}
+
+func (s *NodeService) FindLocalNode() (*Node, error) {
+	return s.repo.FindLocalNode()
+}
+
+func (s *NodeService) ClaimUnownedNodes(ownerID string) error {
+	if ownerID == "" {
+		return ErrInvalidNodeData
+	}
+	return s.repo.ClaimUnownedNodes(ownerID)
 }

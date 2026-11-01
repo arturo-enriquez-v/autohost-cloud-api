@@ -129,4 +129,8 @@ func (s *NodeAgentServer) checkThresholdAlerts(nodeID string, m *node.CreateNode
 	check("CPU", m.CPUUsagePercent, cfg.CPUThreshold, node.AlertEventTypeCPU)
 	check("RAM", m.MemoryUsagePercent, cfg.RAMThreshold, node.AlertEventTypeRAM)
 	check("Disk", m.DiskUsagePercent, cfg.DiskThreshold, node.AlertEventTypeDisk)
+	if m.CPUTempCelsius >= 85.0 {
+		tempThreshold := float32(85.0)
+		check("Temperature (°C)", m.CPUTempCelsius, &tempThreshold, node.AlertEventTypeCPU)
+	}
 }

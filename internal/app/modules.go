@@ -60,6 +60,7 @@ var ServiceModule = fx.Provide(
 	node.NewContainerSettingService,
 	node.NewEnrollmentService,
 	node.NewNodeTokenService,
+	node.NewLocalNodeBootstrapper,
 	jobs.NewNodeCommandService,
 	jobs.NewJobService,
 	node.NewNodeAlertService,
@@ -122,6 +123,7 @@ var HandlerModule = fx.Provide(
 )
 
 var InfraModule = fx.Provide(
+	platform.NewPKIManager,
 	grpcserver.NewNodeAgentServer,
 	provideOptionalRedisClient,
 	platform.NewGeminiClient,

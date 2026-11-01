@@ -6,6 +6,7 @@ package server
 import (
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/go-chi/chi/middleware"
 	"github.com/go-chi/chi/v5"
@@ -99,7 +100,7 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/external-logs/ingest", p.ExternalLogHandler.IngestRoutes())
 		r.Mount("/external-log-tokens", p.ExternalLogHandler.UserTokenRoutes())
 		r.Mount("/vpn", p.VPNHandler.Routes(nodeAuthMiddleware))
-		r.Mount("/backups", p.BackupHandler.Routes())
+		r.Mount("/backups", p.BackupHandler.Routes(nodeAuthMiddleware))
 		r.Mount("/log-diagnostics", p.LogDiagnosticHandler.Routes())
 		r.Mount("/diagnostics", p.LogDiagnosticHandler.Routes())
 		r.Mount("/clusters", p.ClusterHandler.Routes())
@@ -142,13 +143,15 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// limitRequestBody caps every incoming request body at 2 MB to prevent memory
-// exhaustion attacks. Endpoints that legitimately need larger payloads (e.g.
-// file uploads) should replace r.Body with a new http.MaxBytesReader before
-// reading.
+// limitRequestBody caps incoming request bodies at 2 MB to prevent memory
+// exhaustion attacks, exempting large streaming uploads like backups.
 func limitRequestBody(next http.Handler) http.Handler {
 	const maxBytes = 2 << 20 // 2 MB
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/backups/upload/") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 		next.ServeHTTP(w, r)
 	})

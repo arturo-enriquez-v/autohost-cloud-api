@@ -312,6 +312,8 @@ func (s *NodeAgentServer) Connect(
 			if s.backupSvc != nil {
 				var outputData struct {
 					S3Key         string `json:"s3_key"`
+					LocalPath     string `json:"local_path"`
+					ParentPath    string `json:"parent_path"`
 					FileSizeBytes int64  `json:"file_size_bytes"`
 				}
 				_ = json.Unmarshal([]byte(r.GetOutput()), &outputData)
@@ -325,7 +327,7 @@ func (s *NodeAgentServer) Connect(
 				if jobStatus != jobs.StatusCompleted {
 					statusStr = "failed"
 				}
-				if err := s.backupSvc.UpdateRecordByJobID(r.GetJobId(), statusStr, outputData.S3Key, outputData.FileSizeBytes, errMsg); err != nil {
+				if err := s.backupSvc.UpdateRecordByJobID(r.GetJobId(), statusStr, outputData.S3Key, outputData.LocalPath, outputData.ParentPath, outputData.FileSizeBytes, errMsg); err != nil {
 					log.Printf("[gRPC] update backup record for job %s: %v", r.GetJobId(), err)
 				} else {
 					log.Printf("[gRPC] backup record updated for job %s -> %s", r.GetJobId(), statusStr)
@@ -428,6 +430,7 @@ func (s *NodeAgentServer) Connect(
 					"disk_available_bytes": m.GetDiskAvailableBytes(),
 					"disk_usage_percent":   m.GetDiskUsagePercent(),
 					"uptime_seconds":       m.GetUptimeSeconds(),
+					"cpu_temp_celsius":     m.GetCpuTempCelsius(),
 					"collected_at":         time.Now().UTC().Format(time.RFC3339),
 				}
 				if data, err := json.Marshal(payload); err == nil {
@@ -448,6 +451,7 @@ func (s *NodeAgentServer) Connect(
 					DiskUsedBytes:        int64(m.GetDiskUsedBytes()),
 					DiskAvailableBytes:   int64(m.GetDiskAvailableBytes()),
 					DiskUsagePercent:     float64(m.GetDiskUsagePercent()),
+					CPUTempCelsius:       float64(m.GetCpuTempCelsius()),
 					CollectedAt:          time.Now(),
 				}
 				if _, err := s.metricSvc.StoreNodeMetric(req); err != nil {

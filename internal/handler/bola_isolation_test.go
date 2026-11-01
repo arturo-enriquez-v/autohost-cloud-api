@@ -72,6 +72,8 @@ func (m *MockNodeRepo) UpdateLastSeenAndIPs(nodeID string, ipLocal string, ipVPN
 func (m *MockNodeRepo) UpdateVPNIP(nodeID string, ipVPN string) error        { return nil }
 func (m *MockNodeRepo) UpdateVersionAgent(nodeID, version string) error      { return nil }
 func (m *MockNodeRepo) AssignProject(nodeID string, projectID *string) error { return nil }
+func (m *MockNodeRepo) FindLocalNode() (*node.Node, error)                   { return nil, nil }
+func (m *MockNodeRepo) ClaimUnownedNodes(ownerID string) error               { return nil }
 
 // MockProjectRepo implements apps.ProjectRepository for testing
 type MockProjectRepo struct {

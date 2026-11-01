@@ -5,7 +5,6 @@ package handler
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -25,10 +24,17 @@ type EnrollmentHandler struct {
 	nodeService      *node.NodeService
 	nodeTokenService *node.NodeTokenService
 	vmRepo           infra.VMRepository
+	pki              *platform.PKIManager
 }
 
-func NewEnrollmentHandler(service *node.EnrollmentService, nodeService *node.NodeService, nodeTokenService *node.NodeTokenService, vmRepo infra.VMRepository) *EnrollmentHandler {
-	return &EnrollmentHandler{service: service, nodeService: nodeService, nodeTokenService: nodeTokenService, vmRepo: vmRepo}
+func NewEnrollmentHandler(service *node.EnrollmentService, nodeService *node.NodeService, nodeTokenService *node.NodeTokenService, vmRepo infra.VMRepository, pki *platform.PKIManager) *EnrollmentHandler {
+	return &EnrollmentHandler{
+		service:          service,
+		nodeService:      nodeService,
+		nodeTokenService: nodeTokenService,
+		vmRepo:           vmRepo,
+		pki:              pki,
+	}
 }
 
 func (h *EnrollmentHandler) Routes() chi.Router {
@@ -97,6 +103,7 @@ func (h *EnrollmentHandler) EnrollNode(w http.ResponseWriter, r *http.Request) {
 		OS           string `json:"os"`
 		Arch         string `json:"arch"`
 		VersionAgent string `json:"version_agent"`
+		CSRPEM       string `json:"csr_pem"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -105,7 +112,6 @@ func (h *EnrollmentHandler) EnrollNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.EnrollToken == "" {
-		fmt.Println("here", req.EnrollToken)
 		http.Error(w, "missing enroll_token", http.StatusBadRequest)
 		return
 	}
@@ -163,14 +169,60 @@ func (h *EnrollmentHandler) EnrollNode(w http.ResponseWriter, r *http.Request) {
 		_ = h.vmRepo.LinkNodeByHostname(r.Context(), enroll.UserID, req.Hostname, createdNode.ID, req.IPLocal)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{
+	grpcAddr := grpcAddressForRequest(r)
+
+	respPayload := map[string]string{
 		"node_id":      createdNode.ID,
 		"api_token":    plainToken,
-		"grpc_address": grpcAddress(),
-	})
+		"grpc_address": grpcAddr,
+	}
 
+	if h.pki != nil {
+		h.pki.EnsureServerSAN(r.Host)
+		h.pki.EnsureServerSAN(grpcAddr)
+
+		if strings.TrimSpace(req.CSRPEM) != "" {
+			clientCert, err := h.pki.SignClientCSR([]byte(req.CSRPEM), createdNode.ID)
+			if err != nil {
+				log.Printf("[ERROR] sign client CSR for node %s: %v", createdNode.ID, err)
+				http.Error(w, "failed to sign client certificate", http.StatusBadRequest)
+				return
+			}
+			respPayload["ca_cert"] = h.pki.CACertPEM()
+			respPayload["client_cert"] = string(clientCert)
+		} else {
+			clientCert, clientKey, err := h.pki.IssueClientCert(createdNode.ID)
+			if err != nil {
+				log.Printf("[ERROR] issue client cert for node %s: %v", createdNode.ID, err)
+				http.Error(w, "failed to issue client certificate", http.StatusInternalServerError)
+				return
+			}
+			respPayload["ca_cert"] = h.pki.CACertPEM()
+			respPayload["client_cert"] = string(clientCert)
+			respPayload["client_key"] = string(clientKey)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(respPayload)
+}
+
+// grpcAddressForRequest returns the gRPC address that agents should connect to.
+// If GRPC_ADDRESS is not set, it derives the host from the incoming HTTP request's Host header
+// so remote nodes get a routable host:port instead of a bare ":9090".
+func grpcAddressForRequest(r *http.Request) string {
+	addr := grpcAddress()
+	if strings.HasPrefix(addr, ":") && r != nil && r.Host != "" {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(r.Host); err == nil {
+			host = h
+		}
+		if host != "" {
+			return net.JoinHostPort(host, strings.TrimPrefix(addr, ":"))
+		}
+	}
+	return addr
 }
 
 // grpcAddress returns the gRPC address that agents should connect to.

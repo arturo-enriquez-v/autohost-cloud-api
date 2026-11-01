@@ -22,6 +22,10 @@ type InstallAppParams struct {
 	AppName string            `json:"app_name"`
 	Compose string            `json:"compose"`
 	Env     map[string]string `json:"env"`
+	Devices []string          `json:"devices,omitempty"`
+	CapAdd  []string          `json:"cap_add,omitempty"`
+	PUID    string            `json:"puid,omitempty"`
+	PGID    string            `json:"pgid,omitempty"`
 }
 
 // MarketplaceHandler handles marketplace app listing and deployment.
@@ -66,10 +70,15 @@ func (h *MarketplaceHandler) ListApps(w http.ResponseWriter, r *http.Request) {
 type deployAppRequest struct {
 	NodeID  string            `json:"node_id"`
 	AppName string            `json:"app_name"`
+	Compose string            `json:"compose,omitempty"`
 	EnvVars map[string]string `json:"env_vars"`
+	Devices []string          `json:"devices,omitempty"`
+	CapAdd  []string          `json:"cap_add,omitempty"`
+	PUID    string            `json:"puid,omitempty"`
+	PGID    string            `json:"pgid,omitempty"`
 }
 
-// DeployApp downloads the compose template from R2, injects env vars,
+// DeployApp downloads the compose template from R2 (or uses inline compose), injects env vars,
 // creates a job and dispatches it to the agent.
 // POST /v1/marketplace/apps/deploy
 func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
@@ -89,31 +98,41 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate the app is in the catalog.
-	if _, ok := apps.GetCatalogEntry(req.AppName); !ok {
-		http.Error(w, fmt.Sprintf("app %q not found in catalog", req.AppName), http.StatusBadRequest)
-		return
-	}
+	var composeStr string
+	if req.Compose != "" {
+		composeStr = req.Compose
+	} else {
+		// Validate the app is in the catalog.
+		if _, ok := apps.GetCatalogEntry(req.AppName); !ok {
+			http.Error(w, fmt.Sprintf("app %q not found in catalog", req.AppName), http.StatusBadRequest)
+			return
+		}
 
-	if h.r2 == nil {
-		http.Error(w, "marketplace storage (R2) is not configured on this server", http.StatusNotImplemented)
-		return
-	}
+		if h.r2 == nil {
+			http.Error(w, "marketplace storage (R2) is not configured on this server", http.StatusNotImplemented)
+			return
+		}
 
-	// Download compose template from R2.
-	composeKey := req.AppName + ".yml"
-	composeContent, err := h.r2.GetObject(r.Context(), composeKey)
-	if err != nil {
-		log.Printf("[ERROR] marketplace: fetch compose from R2 (%s): %v", composeKey, err)
-		http.Error(w, "could not fetch app template", http.StatusInternalServerError)
-		return
+		// Download compose template from R2.
+		composeKey := req.AppName + ".yml"
+		composeContent, err := h.r2.GetObject(r.Context(), composeKey)
+		if err != nil {
+			log.Printf("[ERROR] marketplace: fetch compose from R2 (%s): %v", composeKey, err)
+			http.Error(w, "could not fetch app template", http.StatusInternalServerError)
+			return
+		}
+		composeStr = string(composeContent)
 	}
 
 	// Build the JSON params to send to the agent (and persist in the DB).
 	installParams := InstallAppParams{
 		AppName: req.AppName,
-		Compose: string(composeContent),
+		Compose: composeStr,
 		Env:     req.EnvVars,
+		Devices: req.Devices,
+		CapAdd:  req.CapAdd,
+		PUID:    req.PUID,
+		PGID:    req.PGID,
 	}
 	paramsBytes, err := json.Marshal(installParams)
 	if err != nil {

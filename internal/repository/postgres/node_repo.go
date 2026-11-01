@@ -25,10 +25,10 @@ func NewNodeRepository(db *sqlx.DB) *NodeRepository {
 func (r *NodeRepository) Register(n *node.Node) (*node.Node, error) {
 	var model NodeModel
 	err := r.db.QueryRowContext(context.Background(), `
-		INSERT INTO nodes (hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id, last_seen_at, created_at, updated_at`,
-		n.Hostname, n.IPLocal, n.IPVPN, n.OS, n.Arch, n.VersionAgent, n.OwnerID).Scan(
+		INSERT INTO nodes (hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id, is_local)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id, is_local, last_seen_at, created_at, updated_at`,
+		n.Hostname, n.IPLocal, n.IPVPN, n.OS, n.Arch, n.VersionAgent, n.OwnerID, n.IsLocal).Scan(
 		&model.ID,
 		&model.Hostname,
 		&model.IPLocal,
@@ -38,6 +38,7 @@ func (r *NodeRepository) Register(n *node.Node) (*node.Node, error) {
 		&model.VersionAgent,
 		&model.OwnerID,
 		&model.ProjectID,
+		&model.IsLocal,
 		&model.LastSeenAt,
 		&model.CreatedAt,
 		&model.UpdatedAt,
@@ -49,6 +50,7 @@ func (r *NodeRepository) Register(n *node.Node) (*node.Node, error) {
 	// Actualizar el nodo con los datos devueltos
 	n.ID = model.ID
 	n.ProjectID = model.ProjectID
+	n.IsLocal = model.IsLocal
 	n.LastSeenAt = model.LastSeenAt
 	n.CreatedAt = model.CreatedAt
 	n.UpdatedAt = model.UpdatedAt
@@ -72,7 +74,7 @@ func (r *NodeRepository) FindByID(id string) (*node.Node, error) {
 	var model NodeModel
 
 	err := r.db.Get(&model, `
-        SELECT id, hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id,
+        SELECT id, hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id, is_local,
                last_seen_at, created_at, updated_at
         FROM nodes 
         WHERE id = $1`, id)
@@ -94,21 +96,62 @@ func (r *NodeRepository) FindByID(id string) (*node.Node, error) {
 		VersionAgent: model.VersionAgent,
 		OwnerID:      model.OwnerID,
 		ProjectID:    model.ProjectID,
+		IsLocal:      model.IsLocal,
 		LastSeenAt:   model.LastSeenAt,
 		CreatedAt:    model.CreatedAt,
 		UpdatedAt:    model.UpdatedAt,
 	}, nil
 }
 
+func (r *NodeRepository) FindLocalNode() (*node.Node, error) {
+	var model NodeModel
+	err := r.db.Get(&model, `
+		SELECT id, hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id, is_local,
+		       last_seen_at, created_at, updated_at
+		FROM nodes
+		WHERE is_local = true
+		ORDER BY created_at ASC
+		LIMIT 1`)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &node.Node{
+		ID:           model.ID,
+		Hostname:     model.Hostname,
+		IPLocal:      model.IPLocal,
+		IPVPN:        model.IPVPN,
+		OS:           model.OS,
+		Arch:         model.Arch,
+		VersionAgent: model.VersionAgent,
+		OwnerID:      model.OwnerID,
+		ProjectID:    model.ProjectID,
+		IsLocal:      model.IsLocal,
+		LastSeenAt:   model.LastSeenAt,
+		CreatedAt:    model.CreatedAt,
+		UpdatedAt:    model.UpdatedAt,
+	}, nil
+}
+
+func (r *NodeRepository) ClaimUnownedNodes(ownerID string) error {
+	_, err := r.db.ExecContext(context.Background(), `
+		UPDATE nodes
+		SET owner_id = $1, updated_at = now()
+		WHERE owner_id IS NULL`, ownerID)
+	return err
+}
+
 // FindByOwnerID busca todos los nodos de un propietario
 func (r *NodeRepository) FindByOwnerID(ownerID string) ([]*node.Node, error) {
 	var models []NodeModel
 	err := r.db.Select(&models, `
-		SELECT id, hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id,
+		SELECT id, hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id, is_local,
 		       last_seen_at, created_at, updated_at
 		FROM nodes 
 		WHERE owner_id = $1
-		ORDER BY created_at DESC`, ownerID)
+		ORDER BY is_local DESC, created_at DESC`, ownerID)
 
 	if err != nil {
 		return nil, err
@@ -126,6 +169,7 @@ func (r *NodeRepository) FindByOwnerID(ownerID string) ([]*node.Node, error) {
 			VersionAgent: model.VersionAgent,
 			OwnerID:      model.OwnerID,
 			ProjectID:    model.ProjectID,
+			IsLocal:      model.IsLocal,
 			LastSeenAt:   model.LastSeenAt,
 			CreatedAt:    model.CreatedAt,
 			UpdatedAt:    model.UpdatedAt,
@@ -177,18 +221,18 @@ func (r *NodeRepository) FindByOwnerIDWithMetrics(ownerID string) ([]*node.NodeW
 	query := `
 		SELECT 
 			n.id, n.hostname, n.ip_local, n.ip_vpn, n.os, n.arch, n.version_agent, 
-			n.owner_id, n.project_id, n.last_seen_at, n.created_at, n.updated_at,
-			m.cpu_usage_percent, m.memory_usage_percent, m.disk_usage_percent, m.collected_at
+			n.owner_id, n.project_id, n.is_local, n.last_seen_at, n.created_at, n.updated_at,
+			m.cpu_usage_percent, m.memory_usage_percent, m.disk_usage_percent, m.cpu_temp_celsius, m.collected_at
 		FROM nodes n
 		LEFT JOIN LATERAL (
-			SELECT cpu_usage_percent, memory_usage_percent, disk_usage_percent, collected_at
+			SELECT cpu_usage_percent, memory_usage_percent, disk_usage_percent, cpu_temp_celsius, collected_at
 			FROM node_metrics
 			WHERE node_id = n.id
 			ORDER BY collected_at DESC
 			LIMIT 1
 		) m ON true
 		WHERE n.owner_id = $1
-		ORDER BY n.created_at DESC
+		ORDER BY n.is_local DESC, n.created_at DESC
 	`
 
 	rows, err := r.db.Queryx(query, ownerID)
@@ -199,14 +243,14 @@ func (r *NodeRepository) FindByOwnerIDWithMetrics(ownerID string) ([]*node.NodeW
 
 	for rows.Next() {
 		var nwm node.NodeWithMetrics
-		var cpuUsage, memUsage, diskUsage sql.NullFloat64
+		var cpuUsage, memUsage, diskUsage, cpuTemp sql.NullFloat64
 		var collectedAt sql.NullTime
 
 		err := rows.Scan(
 			&nwm.ID, &nwm.Hostname, &nwm.IPLocal, &nwm.IPVPN, &nwm.OS, &nwm.Arch,
-			&nwm.VersionAgent, &nwm.OwnerID, &nwm.ProjectID, &nwm.LastSeenAt,
+			&nwm.VersionAgent, &nwm.OwnerID, &nwm.ProjectID, &nwm.IsLocal, &nwm.LastSeenAt,
 			&nwm.CreatedAt, &nwm.UpdatedAt,
-			&cpuUsage, &memUsage, &diskUsage, &collectedAt,
+			&cpuUsage, &memUsage, &diskUsage, &cpuTemp, &collectedAt,
 		)
 		if err != nil {
 			return nil, err
@@ -218,6 +262,7 @@ func (r *NodeRepository) FindByOwnerIDWithMetrics(ownerID string) ([]*node.NodeW
 				CPUUsagePercent:    cpuUsage.Float64,
 				MemoryUsagePercent: memUsage.Float64,
 				DiskUsagePercent:   diskUsage.Float64,
+				CPUTempCelsius:     cpuTemp.Float64,
 				CollectedAt:        collectedAt.Time,
 			}
 		}

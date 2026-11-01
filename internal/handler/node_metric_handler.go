@@ -317,6 +317,7 @@ func (h *NodeMetricHandler) StreamLiveMetrics(w http.ResponseWriter, r *http.Req
 			DiskAvailableBytes uint64  `json:"disk_available_bytes"`
 			DiskUsagePercent   float32 `json:"disk_usage_percent"`
 			UptimeSeconds      int64   `json:"uptime_seconds"`
+			CPUTempCelsius     float32 `json:"cpu_temp_celsius,omitempty"`
 			CollectedAt        string  `json:"collected_at"`
 		}
 
@@ -345,6 +346,7 @@ func (h *NodeMetricHandler) StreamLiveMetrics(w http.ResponseWriter, r *http.Req
 					DiskAvailableBytes: m.GetDiskAvailableBytes(),
 					DiskUsagePercent:   m.GetDiskUsagePercent(),
 					UptimeSeconds:      m.GetUptimeSeconds(),
+					CPUTempCelsius:     m.GetCpuTempCelsius(),
 					CollectedAt:        time.Now().UTC().Format(time.RFC3339),
 				}
 				data, _ := json.Marshal(payload)

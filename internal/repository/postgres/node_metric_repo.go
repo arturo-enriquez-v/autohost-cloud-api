@@ -21,19 +21,24 @@ func NewNodeMetricRepository(db *sqlx.DB) *NodeMetricRepo {
 
 func (r *NodeMetricRepo) StoreNodeMetric(req *node.CreateNodeMetricRequest) (*node.NodeMetric, error) {
 	var metric node.NodeMetric
+	var tempPtr *float64
+	if req.CPUTempCelsius > 0 {
+		t := req.CPUTempCelsius
+		tempPtr = &t
+	}
 	err := r.DB.QueryRowx(`
 		INSERT INTO node_metrics (
 			node_id, cpu_usage_percent, memory_total_bytes, memory_used_bytes,
 			memory_available_bytes, memory_usage_percent, disk_total_bytes, 
-			disk_used_bytes, disk_available_bytes, disk_usage_percent, collected_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			disk_used_bytes, disk_available_bytes, disk_usage_percent, cpu_temp_celsius, collected_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id, node_id, cpu_usage_percent, memory_total_bytes, memory_used_bytes,
 		          memory_available_bytes, memory_usage_percent, disk_total_bytes, disk_used_bytes,
-		          disk_available_bytes, disk_usage_percent, collected_at, created_at
+		          disk_available_bytes, disk_usage_percent, cpu_temp_celsius, collected_at, created_at
 	`, req.NodeID, req.CPUUsagePercent, req.MemoryTotalBytes,
 		req.MemoryUsedBytes, req.MemoryAvailableBytes, req.MemoryUsagePercent,
 		req.DiskTotalBytes, req.DiskUsedBytes, req.DiskAvailableBytes,
-		req.DiskUsagePercent, req.CollectedAt).StructScan(&metric)
+		req.DiskUsagePercent, tempPtr, req.CollectedAt).StructScan(&metric)
 	if err != nil {
 		return nil, err
 	}
@@ -56,10 +61,11 @@ func (r *NodeMetricRepo) GetHistoryByNodeID(params node.HistoryParams) ([]*node.
 
 	query := fmt.Sprintf(`
 		SELECT
-			date_trunc('%s', collected_at) AS bucket,
-			AVG(cpu_usage_percent)         AS cpu_usage_percent,
-			AVG(memory_usage_percent)      AS memory_usage_percent,
-			AVG(disk_usage_percent)        AS disk_usage_percent
+			date_trunc('%s', collected_at)      AS bucket,
+			AVG(cpu_usage_percent)              AS cpu_usage_percent,
+			AVG(memory_usage_percent)           AS memory_usage_percent,
+			AVG(disk_usage_percent)             AS disk_usage_percent,
+			COALESCE(AVG(cpu_temp_celsius), 0)  AS cpu_temp_celsius
 		FROM node_metrics
 		WHERE node_id = $1
 		  AND collected_at >= $2

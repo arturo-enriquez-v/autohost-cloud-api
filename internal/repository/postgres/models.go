@@ -58,6 +58,7 @@ type NodeModel struct {
 	VersionAgent string     `db:"version_agent"`
 	OwnerID      *string    `db:"owner_id"`
 	ProjectID    *string    `db:"project_id"`
+	IsLocal      bool       `db:"is_local"`
 	LastSeenAt   *time.Time `db:"last_seen_at"`
 	CreatedAt    time.Time  `db:"created_at"`
 	UpdatedAt    time.Time  `db:"updated_at"`
