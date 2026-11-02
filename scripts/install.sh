@@ -341,7 +341,7 @@ Wants=network.target
 
 [Service]
 Type=simple
-ExecStart=${agent_bin} --config ${AGENT_DIR}/agent.yaml
+ExecStart=${agent_bin} ${AGENT_DIR}/agent.yaml
 Restart=always
 RestartSec=5s
 KillMode=process
