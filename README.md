@@ -2,6 +2,18 @@
 
 REST API para gestión de nodos distribuidos y agentes, construida con Go y PostgreSQL.
 
+## 🚀 Despliegue Rápido Self-Hosted (1-Click)
+
+Para desplegar AutoHost en tu servidor o Raspberry Pi con un solo comando (incluye base de datos, backend, frontend y agente local con auto-conexión y systemd):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mazapanuwu13/autohost-cloud-api/develop/scripts/install.sh | sudo bash
+```
+
+Una vez finalizado, abre `http://<IP-DE-TU-SERVIDOR>:3000` para completar el asistente inicial y crear tu usuario administrador.
+
+---
+
 ## Stack
 
 - **Go** 1.25+

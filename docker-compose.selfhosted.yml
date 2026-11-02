@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -24,7 +22,7 @@ services:
       retries: 10
 
   migrate:
-    image: ghcr.io/mazapanuwu13/autohost-cloud-api:latest
+    image: ghcr.io/arturo-enriquez-v/autohost-cloud-api:latest
     container_name: autohost-migrate
     depends_on:
       postgres:
@@ -35,7 +33,7 @@ services:
     restart: "no"
 
   api:
-    image: ghcr.io/mazapanuwu13/autohost-cloud-api:latest
+    image: ghcr.io/arturo-enriquez-v/autohost-cloud-api:latest
     container_name: autohost-api
     restart: unless-stopped
     user: "0:0"
@@ -64,7 +62,7 @@ services:
       - ${AUTOHOST_LOCAL_AGENT_DIR:-/etc/autohost}:/etc/autohost
 
   web:
-    image: ghcr.io/mazapanuwu13/autohost-cloud-lite:latest
+    image: ghcr.io/arturo-enriquez-v/autohost-cloud-lite:latest
     container_name: autohost-web
     restart: unless-stopped
     depends_on:
@@ -72,4 +70,6 @@ services:
     ports:
       - "${WEB_PORT:-3000}:3000"
     environment:
+      API_URL: ${INTERNAL_API_URL:-http://api:8080}
+      INTERNAL_API_URL: ${INTERNAL_API_URL:-http://api:8080}
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
