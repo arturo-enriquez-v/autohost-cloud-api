@@ -48,7 +48,10 @@ func (s *NodeAgentServer) nodeIDFromCtx(ctx context.Context) (string, error) {
 
 	// When bearer token is provided, validate it and cross-check against the mTLS certificate CN.
 	if len(authValues) > 0 {
-		raw := strings.TrimPrefix(authValues[0], "Bearer ")
+		raw := strings.TrimSpace(authValues[0])
+		if strings.HasPrefix(strings.ToLower(raw), "bearer ") {
+			raw = strings.TrimSpace(raw[7:])
+		}
 		if !strings.HasPrefix(raw, platform.TokenApiPrefix) {
 			log.Printf("[gRPC] auth: invalid token format (prefix mismatch)")
 			return "", status.Error(codes.Unauthenticated, "invalid node token format")
