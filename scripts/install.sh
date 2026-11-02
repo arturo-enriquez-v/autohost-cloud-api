@@ -273,6 +273,13 @@ start_compose() {
     local max_attempts=30
     while [[ $attempts -lt $max_attempts ]]; do
         if [[ -f "$AGENT_DIR/agent.yaml" ]]; then
+            # Ensure agent.yaml has proper keys (agent_token and api_url)
+            if grep -q "^api_token:" "$AGENT_DIR/agent.yaml" && ! grep -q "^agent_token:" "$AGENT_DIR/agent.yaml"; then
+                sed -i 's/^api_token:/agent_token:/' "$AGENT_DIR/agent.yaml"
+            fi
+            if ! grep -q "^api_url:" "$AGENT_DIR/agent.yaml"; then
+                sed -i '/^grpc_address:/i api_url: "http://127.0.0.1:8080"' "$AGENT_DIR/agent.yaml"
+            fi
             success "Local node credentials and mTLS certificates verified in $AGENT_DIR/agent.yaml"
             return 0
         fi
