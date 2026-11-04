@@ -59,6 +59,9 @@ message NodeMessage {
     LogDiagnosticPayload     log_diagnostic   = 8;
     NetworkStatsPayload      network_stats    = 9;
     HypervisorInfoPayload    hypervisor_info  = 10;
+    TerminalOutputPayload        terminal_output   = 11;
+    TerminalClosedPayload        terminal_closed   = 12;
+    FileOperationResponsePayload file_op_response  = 13;
   }
 }
 
@@ -108,6 +111,11 @@ message ServerMessage {
     StopContainersPayload       stop_containers        = 8;
     CollectLogsPayload          collect_logs           = 9;
     RequestNetworkStatsPayload  request_network_stats  = 10;
+    StartTerminalPayload        start_terminal         = 11;
+    TerminalInputPayload        terminal_input         = 12;
+    TerminalResizePayload       terminal_resize        = 13;
+    CloseTerminalPayload        close_terminal         = 14;
+    FileOperationRequestPayload file_op_request        = 15;
   }
 }
 
@@ -280,6 +288,82 @@ message NetworkStatsPayload {
   string request_id = 1;
   string stats_json = 2;  // JSON-encoded IngestPayload
   string error      = 3;
+}
+
+// ─── Interactive Web Terminal (bidirectional via Connect stream) ─────────────
+
+// Server asks agent to spawn an interactive PTY shell session.
+message StartTerminalPayload {
+  string session_id = 1;  // UUID identifying this terminal session
+  uint32 cols       = 2;  // initial terminal columns (e.g. 80 or 120)
+  uint32 rows       = 3;  // initial terminal rows (e.g. 24 or 40)
+  string shell      = 4;  // optional preferred shell (e.g. "/bin/bash"), empty = auto-detect
+  string cwd        = 5;  // optional initial working directory
+}
+
+// Server forwards raw stdin keystrokes from the browser to the agent PTY.
+message TerminalInputPayload {
+  string session_id = 1;
+  bytes  data       = 2;
+}
+
+// Server notifies agent that the browser terminal window resized.
+message TerminalResizePayload {
+  string session_id = 1;
+  uint32 cols       = 2;
+  uint32 rows       = 3;
+}
+
+// Server asks agent to terminate the PTY session.
+message CloseTerminalPayload {
+  string session_id = 1;
+}
+
+// Agent streams raw stdout/stderr bytes from the PTY back to the server.
+message TerminalOutputPayload {
+  string session_id = 1;
+  bytes  data       = 2;
+}
+
+// Agent notifies server that the PTY process exited or failed to start.
+message TerminalClosedPayload {
+  string session_id = 1;
+  int32  exit_code  = 2;
+  string error      = 3;
+}
+
+// ─── Node File System & Transfers (server → agent, then agent → server) ──────
+
+enum FileOpType {
+  FILE_OP_LIST          = 0;  // List directory entries in shared folder
+  FILE_OP_MKDIR         = 1;  // Create a directory inside shared folder
+  FILE_OP_DELETE        = 2;  // Delete a file or directory inside shared folder
+  FILE_OP_PUSH_TO_URL   = 3;  // Agent uploads a local shared file via HTTP POST to transfer_url
+  FILE_OP_PULL_FROM_URL = 4;  // Agent downloads a file via HTTP GET from transfer_url into shared folder
+}
+
+message FileOperationRequestPayload {
+  string     request_id   = 1;  // Correlation UUID
+  FileOpType op_type      = 2;
+  string     path         = 3;  // Relative path inside node's shared directory
+  string     transfer_url = 4;  // Used for PUSH_TO_URL and PULL_FROM_URL
+  string     auth_token   = 5;  // One-time transfer token
+}
+
+message FileEntryInfo {
+  string name        = 1;
+  string path        = 2;
+  bool   is_dir      = 3;
+  int64  size_bytes  = 4;
+  int64  modified_at = 5;  // Unix timestamp (seconds)
+  string mode        = 6;  // e.g. "-rw-r--r--"
+}
+
+message FileOperationResponsePayload {
+  string                 request_id = 1;
+  bool                   success    = 2;
+  string                 error      = 3;
+  repeated FileEntryInfo entries    = 4;  // Populated for FILE_OP_LIST
 }
 
 // ─── Service ─────────────────────────────────────────────────────────────────

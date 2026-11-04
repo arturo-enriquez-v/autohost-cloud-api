@@ -50,9 +50,13 @@ type NodeAgentServer struct {
 	logs            *logBroker
 	metricBroker    *metricBroker
 	containerBroker *containerBroker
+	terminalBroker  *terminalBroker
 
 	networkStatsMu      sync.Mutex
 	networkStatsPending map[string]chan *networkStatsResponse
+
+	fileOpsMu      sync.Mutex
+	fileOpsPending map[string]chan *pb.FileOperationResponsePayload
 
 	// metricPersistMu guards metricLastPersist to throttle DB writes.
 	metricPersistMu   sync.Mutex
@@ -105,11 +109,13 @@ func NewNodeAgentServer(
 		redis:               redis,
 		vmRepo:              vmRepo,
 		networkStatsPending: make(map[string]chan *networkStatsResponse),
+		fileOpsPending:      make(map[string]chan *pb.FileOperationResponsePayload),
 		metricBroker:        newMetricBroker(),
 		metricLastPersist:   make(map[string]time.Time),
 	}
 	s.logs = newLogBroker(reg.sendToNode)
 	s.containerBroker = newContainerBroker(reg.sendToNode)
+	s.terminalBroker = newTerminalBroker(reg.sendToNode)
 	if s.redis != nil {
 		go s.listenContainerCommands()
 	}
@@ -179,6 +185,9 @@ func (s *NodeAgentServer) Connect(
 	defer func() {
 		s.registry.unregister(nodeID)
 		close(ns.send)
+		if s.terminalBroker != nil {
+			s.terminalBroker.closeAllForNode(nodeID)
+		}
 		if s.redis != nil {
 			_ = s.redis.Del(context.Background(), fmt.Sprintf("nodes:%s:online", nodeID)).Err()
 		}
@@ -548,6 +557,36 @@ func (s *NodeAgentServer) Connect(
 		case *pb.NodeMessage_NetworkStats:
 			go s.handleNetworkStatsResult(nodeID, p.NetworkStats)
 
+		case *pb.NodeMessage_TerminalOutput:
+			if s.terminalBroker != nil {
+				s.terminalBroker.handleOutput(nodeID, p.TerminalOutput)
+			}
+			if s.redis != nil && p.TerminalOutput != nil {
+				evt, _ := json.Marshal(map[string]any{
+					"type":       "output",
+					"session_id": p.TerminalOutput.GetSessionId(),
+					"data":       p.TerminalOutput.GetData(),
+				})
+				_ = s.redis.Publish(context.Background(), fmt.Sprintf("nodes:%s:terminal:%s:out", nodeID, p.TerminalOutput.GetSessionId()), evt).Err()
+			}
+
+		case *pb.NodeMessage_TerminalClosed:
+			if s.terminalBroker != nil {
+				s.terminalBroker.handleClosed(nodeID, p.TerminalClosed)
+			}
+			if s.redis != nil && p.TerminalClosed != nil {
+				evt, _ := json.Marshal(map[string]any{
+					"type":       "closed",
+					"session_id": p.TerminalClosed.GetSessionId(),
+					"exit_code":  p.TerminalClosed.GetExitCode(),
+					"error":      p.TerminalClosed.GetError(),
+				})
+				_ = s.redis.Publish(context.Background(), fmt.Sprintf("nodes:%s:terminal:%s:out", nodeID, p.TerminalClosed.GetSessionId()), evt).Err()
+			}
+
+		case *pb.NodeMessage_FileOpResponse:
+			go s.handleFileOpResponse(nodeID, p.FileOpResponse)
+
 		default:
 			log.Printf("[gRPC] unknown payload from node %s", nodeID)
 		}
@@ -759,7 +798,7 @@ func (s *NodeAgentServer) sendServiceDownAlert(nodeID string, monitor *apps.Serv
 
 // listenContainerCommands listens for container/log stream commands and remote jobs published via Redis.
 func (s *NodeAgentServer) listenContainerCommands() {
-	pubsub := s.redis.PSubscribe(context.Background(), "nodes:*:containers:cmd", "nodes:*:jobs:cmd", "nodes:*:logs:cmd")
+	pubsub := s.redis.PSubscribe(context.Background(), "nodes:*:containers:cmd", "nodes:*:jobs:cmd", "nodes:*:logs:cmd", "nodes:*:terminal:cmd")
 	defer pubsub.Close()
 
 	ch := pubsub.Channel()
@@ -850,6 +889,28 @@ func (s *NodeAgentServer) listenContainerCommands() {
 					}
 					if err := s.SendToNode(targetNodeID, serverMsg); err != nil {
 						log.Printf("[gRPC] send job %s to node %s error: %v", req.JobID, targetNodeID, err)
+					}
+				}
+			} else if scope == "terminal" {
+				var req struct {
+					Action    string `json:"action"` // "start" | "input" | "resize" | "close"
+					SessionID string `json:"session_id"`
+					Cols      uint32 `json:"cols"`
+					Rows      uint32 `json:"rows"`
+					Shell     string `json:"shell"`
+					Cwd       string `json:"cwd"`
+					Data      []byte `json:"data"`
+				}
+				if err := json.Unmarshal([]byte(msg.Payload), &req); err == nil {
+					switch req.Action {
+					case "start":
+						_, _ = s.StartTerminalSession(targetNodeID, req.SessionID, req.Cols, req.Rows, req.Shell, req.Cwd)
+					case "input":
+						_ = s.SendTerminalInput(targetNodeID, req.SessionID, req.Data)
+					case "resize":
+						_ = s.ResizeTerminalSession(targetNodeID, req.SessionID, req.Cols, req.Rows)
+					case "close":
+						s.CloseTerminalSession(targetNodeID, req.SessionID)
 					}
 				}
 			}

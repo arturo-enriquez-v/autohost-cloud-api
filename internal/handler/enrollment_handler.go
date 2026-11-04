@@ -5,6 +5,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -51,8 +52,10 @@ func (h *EnrollmentHandler) Routes() chi.Router {
 }
 
 type enrollTokenResponse struct {
-	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Token       string    `json:"token"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	ApiURL      string    `json:"api_url,omitempty"`
+	TailscaleIP string    `json:"tailscale_ip,omitempty"`
 }
 
 func (h *EnrollmentHandler) CreateEnrollToken(w http.ResponseWriter, r *http.Request) {
@@ -86,12 +89,35 @@ func (h *EnrollmentHandler) CreateEnrollToken(w http.ResponseWriter, r *http.Req
 
 	log.Printf("[INFO] enroll token created for user: %s", claims.UserID)
 
-	// Devolver token plano al usuario (solo esta vez)
+	// Determinar URL sugerida para conectar nodos remotos
+	var apiURL string
+	var tailscaleIP string
+	if h.nodeService != nil {
+		if localNode, err := h.nodeService.FindLocalNode(); err == nil && localNode != nil {
+			if localNode.IPVPN != nil && *localNode.IPVPN != "" {
+				tailscaleIP = *localNode.IPVPN
+				apiURL = fmt.Sprintf("http://%s:8080", tailscaleIP)
+			} else if localNode.IPLocal != "" {
+				apiURL = fmt.Sprintf("http://%s:8080", localNode.IPLocal)
+			}
+		}
+	}
+	if apiURL == "" {
+		if extURL := os.Getenv("NEXT_PUBLIC_API_URL"); extURL != "" {
+			apiURL = extURL
+		} else if r != nil && r.Host != "" {
+			apiURL = fmt.Sprintf("http://%s", r.Host)
+		}
+	}
+
+	// Devolver token plano al usuario (solo esta vez) junto con la URL/IP sugerida
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(enrollTokenResponse{
-		Token:     plainToken,
-		ExpiresAt: expiresAt,
+		Token:       plainToken,
+		ExpiresAt:   expiresAt,
+		ApiURL:      apiURL,
+		TailscaleIP: tailscaleIP,
 	})
 }
 

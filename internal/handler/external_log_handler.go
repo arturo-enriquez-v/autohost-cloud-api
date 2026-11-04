@@ -5,8 +5,11 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
@@ -16,10 +19,38 @@ import (
 
 type ExternalLogHandler struct {
 	service *node.ExternalLogService
+	nodeSvc *node.NodeService
 }
 
-func NewExternalLogHandler(service *node.ExternalLogService) *ExternalLogHandler {
-	return &ExternalLogHandler{service: service}
+func NewExternalLogHandler(service *node.ExternalLogService, nodeSvc *node.NodeService) *ExternalLogHandler {
+	return &ExternalLogHandler{service: service, nodeSvc: nodeSvc}
+}
+
+func (h *ExternalLogHandler) resolveIngestURL(r *http.Request) string {
+	if h.nodeSvc != nil {
+		if localNode, err := h.nodeSvc.FindLocalNode(); err == nil && localNode != nil {
+			if localNode.IPVPN != nil && *localNode.IPVPN != "" {
+				return fmt.Sprintf("http://%s:8080/v1/external-logs/ingest", *localNode.IPVPN)
+			}
+			if localNode.IPLocal != "" {
+				return fmt.Sprintf("http://%s:8080/v1/external-logs/ingest", localNode.IPLocal)
+			}
+		}
+	}
+
+	if extURL := os.Getenv("NEXT_PUBLIC_API_URL"); extURL != "" {
+		return strings.TrimRight(extURL, "/") + "/v1/external-logs/ingest"
+	}
+
+	if r != nil && r.Host != "" {
+		proto := "http"
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			proto = "https"
+		}
+		return fmt.Sprintf("%s://%s/v1/external-logs/ingest", proto, r.Host)
+	}
+
+	return "http://localhost:8080/v1/external-logs/ingest"
 }
 
 func (h *ExternalLogHandler) IngestRoutes() chi.Router {
@@ -192,7 +223,8 @@ func (h *ExternalLogHandler) ListTokens(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"tokens": tokens,
+		"tokens":     tokens,
+		"ingest_url": h.resolveIngestURL(r),
 	})
 }
 
@@ -218,7 +250,11 @@ func (h *ExternalLogHandler) CreateToken(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(res)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"raw_token":  res.RawToken,
+		"token":      res.Token,
+		"ingest_url": h.resolveIngestURL(r),
+	})
 }
 
 // RevokeToken revokes an external log token.

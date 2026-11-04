@@ -50,6 +50,8 @@ type RouterParams struct {
 	NotificationHandler   *handler.NotificationHandler
 	HypervisorHandler     *handler.HypervisorHandler
 	VMHandler             *handler.VMHandler
+	NodeTerminalHandler   *handler.NodeTerminalHandler
+	NodeFileHandler       *handler.NodeFileHandler
 	NodeTokenService      *node.NodeTokenService
 }
 
@@ -84,6 +86,10 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/ws", p.WSHandler.Routes(nodeAuthMiddleware))
 		r.Mount("/node-logs", p.NodeLogHandler.Routes())
 		r.Mount("/node-containers", p.NodeContainerHandler.Routes())
+		r.Mount("/node-terminal", p.NodeTerminalHandler.Routes())
+		r.Mount("/nodes/{nodeId}/terminal", p.NodeTerminalHandler.NodeScopedRoutes())
+		r.Mount("/node-files", p.NodeFileHandler.Routes())
+		r.Mount("/nodes/{nodeId}/files", p.NodeFileHandler.NodeScopedRoutes())
 		r.Mount("/node-alerts", p.NodeAlertHandler.Routes())
 		r.Mount("/scheduled-tasks", p.ScheduledTaskHandler.Routes())
 		r.Mount("/alert-events", p.AlertEventHandler.Routes())
@@ -148,7 +154,9 @@ func securityHeaders(next http.Handler) http.Handler {
 func limitRequestBody(next http.Handler) http.Handler {
 	const maxBytes = 2 << 20 // 2 MB
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/backups/upload/") {
+		if strings.Contains(r.URL.Path, "/backups/upload/") ||
+			strings.Contains(r.URL.Path, "/node-files/") ||
+			strings.Contains(r.URL.Path, "/files/upload") {
 			next.ServeHTTP(w, r)
 			return
 		}

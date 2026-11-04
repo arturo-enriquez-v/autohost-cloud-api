@@ -13,7 +13,6 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
-	"github.com/arturo/autohost-cloud-api/internal/platform"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -33,20 +32,17 @@ type MarketplaceHandler struct {
 	jobService      *jobs.JobService
 	marketplaceRepo apps.MarketplaceRepository
 	dispatcher      dispatcher.ParamDispatcher
-	r2              *platform.R2Client
 }
 
 func NewMarketplaceHandler(
 	jobService *jobs.JobService,
 	marketplaceRepo apps.MarketplaceRepository,
 	disp dispatcher.ParamDispatcher,
-	r2 *platform.R2Client,
 ) *MarketplaceHandler {
 	return &MarketplaceHandler{
 		jobService:      jobService,
 		marketplaceRepo: marketplaceRepo,
 		dispatcher:      disp,
-		r2:              r2,
 	}
 }
 
@@ -108,20 +104,14 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if h.r2 == nil {
-			http.Error(w, "marketplace storage (R2) is not configured on this server", http.StatusNotImplemented)
-			return
-		}
-
-		// Download compose template from R2.
-		composeKey := req.AppName + ".yml"
-		composeContent, err := h.r2.GetObject(r.Context(), composeKey)
+		// Retrieve compose template from local or embedded self-hosted catalog.
+		composeContent, err := apps.GetAppTemplate(req.AppName)
 		if err != nil {
-			log.Printf("[ERROR] marketplace: fetch compose from R2 (%s): %v", composeKey, err)
-			http.Error(w, "could not fetch app template", http.StatusInternalServerError)
+			log.Printf("[ERROR] marketplace: fetch template (%s): %v", req.AppName, err)
+			http.Error(w, fmt.Sprintf("could not fetch app template for %q", req.AppName), http.StatusInternalServerError)
 			return
 		}
-		composeStr = string(composeContent)
+		composeStr = composeContent
 	}
 
 	// Build the JSON params to send to the agent (and persist in the DB).

@@ -4,6 +4,7 @@
 package platform
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,6 +55,73 @@ func LocalAgentConfigDir() string {
 		return filepath.Join(storage, "agent")
 	}
 	return "/etc/autohost"
+}
+
+// TransfersStagingDir returns the directory used to stage node-to-node file transfers.
+// If the primary storage directory is not writable, it falls back to a user/temp directory.
+func TransfersStagingDir() string {
+	primary := filepath.Join(StorageDir(), "transfers")
+	if err := os.MkdirAll(primary, 0755); err == nil {
+		testFile := filepath.Join(primary, ".write_check")
+		if err := os.WriteFile(testFile, []byte("ok"), 0600); err == nil {
+			_ = os.Remove(testFile)
+			return primary
+		}
+	}
+
+	home, _ := os.UserHomeDir()
+	var fallback string
+	if home != "" {
+		fallback = filepath.Join(home, ".autohost", "transfers")
+	} else {
+		fallback = filepath.Join(os.TempDir(), "autohost", "transfers")
+	}
+	_ = os.MkdirAll(fallback, 0755)
+	return fallback
+}
+
+// SharedFilesDir returns the default node shared files folder (<AUTOHOST_STORAGE_DIR>/shared).
+func SharedFilesDir() string {
+	if dir := strings.TrimSpace(os.Getenv("AUTOHOST_SHARED_DIR")); dir != "" {
+		_ = os.MkdirAll(dir, 0755)
+		return dir
+	}
+	primary := filepath.Join(StorageDir(), "shared")
+	if err := os.MkdirAll(primary, 0755); err == nil {
+		testFile := filepath.Join(primary, ".write_check")
+		if err := os.WriteFile(testFile, []byte("ok"), 0600); err == nil {
+			_ = os.Remove(testFile)
+			return primary
+		}
+	}
+
+	home, _ := os.UserHomeDir()
+	var fallback string
+	if home != "" {
+		fallback = filepath.Join(home, ".autohost", "shared")
+	} else {
+		fallback = filepath.Join(os.TempDir(), "autohost", "shared")
+	}
+	_ = os.MkdirAll(fallback, 0755)
+	return fallback
+}
+
+// SafeSharedPath resolves relPath inside baseDir and prevents path traversal outside baseDir.
+func SafeSharedPath(baseDir, relPath string) (string, string, error) {
+	cleanedRel := filepath.Clean("/" + strings.TrimSpace(relPath))
+	fullPath := filepath.Join(baseDir, cleanedRel)
+	absBase, err := filepath.Abs(baseDir)
+	if err != nil {
+		return "", "", err
+	}
+	absFull, err := filepath.Abs(fullPath)
+	if err != nil {
+		return "", "", err
+	}
+	if absFull != absBase && !strings.HasPrefix(absFull, absBase+string(filepath.Separator)) {
+		return "", "", errors.New("invalid path: access outside shared directory is forbidden")
+	}
+	return absFull, cleanedRel, nil
 }
 
 // StorageUsage holds disk usage metrics for the configured storage mount.

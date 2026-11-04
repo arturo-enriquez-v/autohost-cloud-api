@@ -53,6 +53,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change_me_in_production_autohost_selfhosted_secret_32b}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
       AUTO_ENROLL_LOCAL_NODE: ${AUTO_ENROLL_LOCAL_NODE:-true}
+      LOCAL_NODE_HOSTNAME: ${LOCAL_NODE_HOSTNAME:-}
+      LOCAL_NODE_IP: ${LOCAL_NODE_IP:-}
+      LOCAL_NODE_IP_VPN: ${LOCAL_NODE_IP_VPN:-}
       AUTOHOST_STORAGE_DIR: /var/lib/autohost
       AUTOHOST_LOCAL_AGENT_DIR: /etc/autohost
       LOCAL_AGENT_GRPC_ADDRESS: ${LOCAL_AGENT_GRPC_ADDRESS:-127.0.0.1:9090}

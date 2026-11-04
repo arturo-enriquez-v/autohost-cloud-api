@@ -38,6 +38,7 @@ func Auth(next http.Handler) http.Handler {
 
 		// Priority 1: Authorization: Bearer <token> (APIs, CLI, agents)
 		// Priority 2: access_token cookie (browser sessions via Next.js)
+		// Priority 3: ?token= or ?access_token= query parameter (WebSocket / SSE connections)
 		var raw string
 		if authz := r.Header.Get("Authorization"); authz != "" {
 			parts := strings.SplitN(authz, " ", 2)
@@ -48,6 +49,10 @@ func Auth(next http.Handler) http.Handler {
 			raw = parts[1]
 		} else if c, err := r.Cookie("access_token"); err == nil && c.Value != "" {
 			raw = c.Value
+		} else if q := r.URL.Query().Get("token"); q != "" {
+			raw = q
+		} else if q := r.URL.Query().Get("access_token"); q != "" {
+			raw = q
 		} else {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return

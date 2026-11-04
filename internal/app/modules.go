@@ -120,6 +120,8 @@ var HandlerModule = fx.Provide(
 	handler.NewNotificationHandler,
 	handler.NewHypervisorHandler,
 	handler.NewVMHandler,
+	handler.NewNodeTerminalHandler,
+	handler.NewNodeFileHandler,
 )
 
 var InfraModule = fx.Provide(
@@ -154,7 +156,6 @@ var InfraModule = fx.Provide(
 	fx.Annotate(
 		func(h *handler.NodeReportHandler) scheduler.ReportTrigger { return h },
 	),
-	provideOptionalR2Client,
 )
 
 // provideOptionalRedisClient returns a nil *redis.Client (without error) when
@@ -167,16 +168,4 @@ func provideOptionalRedisClient() *redis.Client {
 		return nil
 	}
 	return client
-}
-
-// provideOptionalR2Client returns a nil *platform.R2Client (without error) when
-// the R2 environment variables are absent, so fx does not fail on startup.
-// Marketplace routes that require R2 will respond with 501 if the client is nil.
-func provideOptionalR2Client() *platform.R2Client {
-	r2, err := platform.NewR2Client()
-	if err != nil {
-		log.Printf("[WARN] marketplace: R2 not configured (%v) — marketplace routes will be unavailable", err)
-		return nil
-	}
-	return r2
 }
