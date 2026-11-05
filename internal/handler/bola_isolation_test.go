@@ -43,7 +43,12 @@ type MockNodeRepo struct {
 	nodes map[string]*node.Node
 }
 
-func (m *MockNodeRepo) Register(n *node.Node) (*node.Node, error) { return n, nil }
+func (m *MockNodeRepo) Register(n *node.Node) (*node.Node, error) {
+	if n.ID == "" {
+		n.ID = "node-uuid-123"
+	}
+	return n, nil
+}
 func (m *MockNodeRepo) FindByID(id string) (*node.Node, error) {
 	n, ok := m.nodes[id]
 	if !ok {

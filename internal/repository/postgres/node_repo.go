@@ -26,8 +26,15 @@ func (r *NodeRepository) Register(n *node.Node) (*node.Node, error) {
 	var model NodeModel
 	err := r.db.QueryRowContext(context.Background(), `
 		INSERT INTO nodes (hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id, is_local)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id, is_local, last_seen_at, created_at, updated_at`,
+		VALUES ($1, NULLIF($2, '')::inet, NULLIF($3, '')::inet, $4, $5, $6, $7, $8)
+		ON CONFLICT (owner_id, hostname) DO UPDATE
+		SET ip_local = COALESCE(EXCLUDED.ip_local, nodes.ip_local),
+		    ip_vpn = COALESCE(EXCLUDED.ip_vpn, nodes.ip_vpn),
+		    os = COALESCE(NULLIF(EXCLUDED.os, ''), nodes.os),
+		    arch = COALESCE(NULLIF(EXCLUDED.arch, ''), nodes.arch),
+		    version_agent = COALESCE(NULLIF(EXCLUDED.version_agent, ''), nodes.version_agent),
+		    updated_at = now()
+		RETURNING id, hostname, COALESCE(ip_local::text, ''), ip_vpn, os, arch, version_agent, owner_id, project_id, is_local, last_seen_at, created_at, updated_at`,
 		n.Hostname, n.IPLocal, n.IPVPN, n.OS, n.Arch, n.VersionAgent, n.OwnerID, n.IsLocal).Scan(
 		&model.ID,
 		&model.Hostname,
@@ -74,7 +81,7 @@ func (r *NodeRepository) FindByID(id string) (*node.Node, error) {
 	var model NodeModel
 
 	err := r.db.Get(&model, `
-        SELECT id, hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id, is_local,
+        SELECT id, hostname, COALESCE(ip_local::text, '') as ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id, is_local,
                last_seen_at, created_at, updated_at
         FROM nodes 
         WHERE id = $1`, id)
@@ -106,7 +113,7 @@ func (r *NodeRepository) FindByID(id string) (*node.Node, error) {
 func (r *NodeRepository) FindLocalNode() (*node.Node, error) {
 	var model NodeModel
 	err := r.db.Get(&model, `
-		SELECT id, hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id, is_local,
+		SELECT id, hostname, COALESCE(ip_local::text, '') as ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id, is_local,
 		       last_seen_at, created_at, updated_at
 		FROM nodes
 		WHERE is_local = true
@@ -147,7 +154,7 @@ func (r *NodeRepository) ClaimUnownedNodes(ownerID string) error {
 func (r *NodeRepository) FindByOwnerID(ownerID string) ([]*node.Node, error) {
 	var models []NodeModel
 	err := r.db.Select(&models, `
-		SELECT id, hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id, is_local,
+		SELECT id, hostname, COALESCE(ip_local::text, '') as ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id, is_local,
 		       last_seen_at, created_at, updated_at
 		FROM nodes 
 		WHERE owner_id = $1
@@ -220,7 +227,7 @@ func (r *NodeRepository) FindByOwnerIDWithMetrics(ownerID string) ([]*node.NodeW
 
 	query := `
 		SELECT 
-			n.id, n.hostname, n.ip_local, n.ip_vpn, n.os, n.arch, n.version_agent, 
+			n.id, n.hostname, COALESCE(n.ip_local::text, '') as ip_local, n.ip_vpn, n.os, n.arch, n.version_agent, 
 			n.owner_id, n.project_id, n.is_local, n.last_seen_at, n.created_at, n.updated_at,
 			m.cpu_usage_percent, m.memory_usage_percent, m.disk_usage_percent, m.cpu_temp_celsius, m.collected_at
 		FROM nodes n

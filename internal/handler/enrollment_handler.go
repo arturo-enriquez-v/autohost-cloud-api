@@ -18,6 +18,7 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 type EnrollmentHandler struct {
@@ -160,35 +161,53 @@ func (h *EnrollmentHandler) EnrollNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.MarkTokenAsUsed(enroll.Token, time.Now()); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+	ipLocal := strings.TrimSpace(req.IPLocal)
+	if net.ParseIP(ipLocal) == nil {
+		remoteHost, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err == nil && net.ParseIP(remoteHost) != nil && remoteHost != "127.0.0.1" && remoteHost != "::1" {
+			ipLocal = remoteHost
+		} else {
+			ipLocal = ""
+		}
 	}
+
+	hostname := strings.TrimSpace(req.Hostname)
+	if hostname == "" {
+		hostname = "node-" + uuid.NewString()[:8]
+	}
+
 	node := &node.Node{
-		Hostname:     req.Hostname,
-		IPLocal:      req.IPLocal,
-		OS:           req.OS,
-		Arch:         req.Arch,
-		VersionAgent: req.VersionAgent,
+		Hostname:     hostname,
+		IPLocal:      ipLocal,
+		OS:           strings.TrimSpace(req.OS),
+		Arch:         strings.TrimSpace(req.Arch),
+		VersionAgent: strings.TrimSpace(req.VersionAgent),
 		OwnerID:      &enroll.UserID,
 	}
 
 	createdNode, err := h.nodeService.Register(node)
 	if err != nil {
+		log.Printf("[ERROR] enroll: failed to register node: %v", err)
 		http.Error(w, "failed to create node", http.StatusInternalServerError)
 		return
 	}
 
 	plainToken, hashToken, err := platform.GenerateTokenApi()
 	if err != nil {
+		log.Printf("[ERROR] enroll: failed to generate api token: %v", err)
 		http.Error(w, "failed to generate api token", http.StatusInternalServerError)
 		return
 	}
 
 	err = h.nodeTokenService.CreateNodeToken(createdNode.ID, hashToken)
 	if err != nil {
+		log.Printf("[ERROR] enroll: failed to save api token: %v", err)
 		http.Error(w, "failed to save api token", http.StatusInternalServerError)
 		return
+	}
+
+	if err := h.service.MarkTokenAsUsed(enroll.Token, time.Now()); err != nil {
+		log.Printf("[WARN] enroll: mark token used: %v", err)
 	}
 
 	if h.vmRepo != nil {
