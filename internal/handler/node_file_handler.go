@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -436,32 +437,49 @@ func (h *NodeFileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Allow large uploads (up to 10 GB)
+	// Allow large uploads (up to 10+ GB)
 	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	dirPath := r.URL.Query().Get("path")
+
+	mr, err := r.MultipartReader()
+	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"invalid multipart upload: %v"}`, err), http.StatusBadRequest)
 		return
 	}
-	defer func() {
-		if r.MultipartForm != nil {
-			_ = r.MultipartForm.RemoveAll()
-		}
-	}()
 
-	file, header, err := r.FormFile("file")
-	if err != nil {
+	var filePart *multipart.Part
+	for {
+		part, partErr := mr.NextPart()
+		if partErr == io.EOF {
+			break
+		}
+		if partErr != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"failed reading multipart stream: %v"}`, partErr), http.StatusBadRequest)
+			return
+		}
+		formName := part.FormName()
+		if formName == "path" && dirPath == "" {
+			b, _ := io.ReadAll(io.LimitReader(part, 4096))
+			dirPath = string(b)
+			_ = part.Close()
+			continue
+		}
+		if formName == "file" {
+			filePart = part
+			break
+		}
+		_ = part.Close()
+	}
+
+	if filePart == nil {
 		http.Error(w, `{"error":"missing 'file' field in form data"}`, http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
+	defer filePart.Close()
 
-	dirPath := r.URL.Query().Get("path")
-	if dirPath == "" {
-		dirPath = r.FormValue("path")
-	}
-	safeFilename := filepath.Base(header.Filename)
+	safeFilename := filepath.Base(filePart.FileName())
 	relDestPath := filepath.Join("/", dirPath, safeFilename)
 
 	if targetNode.IsLocal {
@@ -480,9 +498,10 @@ func (h *NodeFileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
 			return
 		}
-		written, copyErr := io.Copy(out, file)
+		written, copyErr := io.Copy(out, filePart)
 		_ = out.Close()
 		if copyErr != nil {
+			_ = os.Remove(absDest)
 			http.Error(w, fmt.Sprintf(`{"error":%q}`, copyErr.Error()), http.StatusInternalServerError)
 			return
 		}
@@ -497,21 +516,9 @@ func (h *NodeFileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Remote node: Stage file and instruct remote agent to pull over Tailscale
-	out, tempFile, err := createStagedFile(safeFilename)
-	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
-		return
-	}
-	written, copyErr := io.Copy(out, file)
-	_ = out.Close()
-	defer os.Remove(tempFile)
-	if copyErr != nil {
-		http.Error(w, fmt.Sprintf(`{"error":%q}`, copyErr.Error()), http.StatusInternalServerError)
-		return
-	}
-
-	ticket := h.createTicket(tempFile)
+	// Remote node: Stream directly via pipe from browser -> master -> remote agent
+	pr, pw := io.Pipe()
+	ticket := h.createPipeTicket(pr, pw)
 	defer h.removeTicket(ticket.ID)
 
 	transferURL := fmt.Sprintf("%s/v1/node-files/internal-transfer/%s?token=%s", h.resolveMasterBaseURL(r), ticket.ID, ticket.Token)
@@ -519,8 +526,56 @@ func (h *NodeFileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Minute)
 	defer cancel()
 
-	if _, err := h.grpc.ExecuteFileOperation(ctx, nodeID, pb.FileOpType_FILE_OP_PULL_FROM_URL, relDestPath, transferURL, ticket.Token); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadGateway)
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := h.grpc.ExecuteFileOperation(ctx, nodeID, pb.FileOpType_FILE_OP_PULL_FROM_URL, relDestPath, transferURL, ticket.Token)
+		if err != nil {
+			_ = pr.CloseWithError(err)
+			errCh <- err
+		} else {
+			errCh <- nil
+		}
+	}()
+
+	// Wait for remote agent to connect and start pulling (timeout after 25s if agent never connects)
+	select {
+	case <-ticket.StartedCh:
+		// Remote agent connected and is pulling!
+	case err := <-errCh:
+		if err != nil {
+			_ = pw.CloseWithError(err)
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadGateway)
+			return
+		}
+	case <-time.After(25 * time.Second):
+		_ = pw.CloseWithError(errors.New("timeout waiting for remote agent to initiate pull"))
+		_ = pr.Close()
+		http.Error(w, `{"error":"timeout waiting for remote agent to initiate pull"}`, http.StatusGatewayTimeout)
+		return
+	case <-ctx.Done():
+		_ = pw.CloseWithError(ctx.Err())
+		_ = pr.Close()
+		http.Error(w, `{"error":"upload cancelled"}`, http.StatusRequestTimeout)
+		return
+	}
+
+	written, copyErr := io.Copy(pw, filePart)
+	if copyErr != nil {
+		_ = pw.CloseWithError(copyErr)
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, copyErr.Error()), http.StatusInternalServerError)
+		return
+	}
+	_ = pw.Close()
+
+	// Wait for remote agent to finish flushing/renaming the file and acknowledge via gRPC
+	select {
+	case err := <-errCh:
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadGateway)
+			return
+		}
+	case <-ctx.Done():
+		http.Error(w, `{"error":"upload cancelled"}`, http.StatusRequestTimeout)
 		return
 	}
 
@@ -770,6 +825,24 @@ func (h *NodeFileHandler) AgentPullTransfer(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
+	if ticket.PipeReader != nil {
+		select {
+		case <-ticket.StartedCh:
+		default:
+			close(ticket.StartedCh)
+		}
+
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, copyErr := io.Copy(w, ticket.PipeReader)
+		if copyErr != nil {
+			_ = ticket.PipeReader.CloseWithError(copyErr)
+			return
+		}
+		_ = ticket.PipeReader.Close()
+		return
+	}
+
 	http.ServeFile(w, r, ticket.FilePath)
 }
 
