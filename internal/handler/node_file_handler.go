@@ -8,12 +8,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,11 +40,15 @@ type NodeFileEntry struct {
 }
 
 type transferTicket struct {
-	ID        string
-	Token     string
-	FilePath  string // Staging or local file path on Master
-	ExpiresAt time.Time
-	ReadyCh   chan error // Signaled when a remote node finishes uploading to FilePath
+	ID         string
+	Token      string
+	FilePath   string // Staging or local file path on Master
+	ExpiresAt  time.Time
+	PipeReader *io.PipeReader
+	PipeWriter *io.PipeWriter
+	ContentLen int64
+	StartedCh  chan struct{}
+	ReadyCh    chan error // Signaled when a remote node finishes uploading to FilePath
 }
 
 type NodeFileHandler struct {
@@ -148,8 +154,27 @@ func (h *NodeFileHandler) createTicket(filePath string) *transferTicket {
 		ID:        uuid.NewString(),
 		Token:     hex.EncodeToString(raw),
 		FilePath:  filePath,
-		ExpiresAt: time.Now().Add(15 * time.Minute),
+		ExpiresAt: time.Now().Add(60 * time.Minute),
 		ReadyCh:   make(chan error, 1),
+		StartedCh: make(chan struct{}),
+	}
+	h.ticketsMu.Lock()
+	h.tickets[t.ID] = t
+	h.ticketsMu.Unlock()
+	return t
+}
+
+func (h *NodeFileHandler) createPipeTicket(pr *io.PipeReader, pw *io.PipeWriter) *transferTicket {
+	raw := make([]byte, 24)
+	_, _ = rand.Read(raw)
+	t := &transferTicket{
+		ID:         uuid.NewString(),
+		Token:      hex.EncodeToString(raw),
+		ExpiresAt:  time.Now().Add(60 * time.Minute),
+		PipeReader: pr,
+		PipeWriter: pw,
+		ReadyCh:    make(chan error, 1),
+		StartedCh:  make(chan struct{}),
 	}
 	h.ticketsMu.Lock()
 	h.tickets[t.ID] = t
@@ -537,25 +562,59 @@ func (h *NodeFileHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Remote node: Instruct remote agent to push file to staging, then serve to browser
-	tempFile := stageFilePath(filepath.Base(relPath))
-	defer os.Remove(tempFile)
-
-	ticket := h.createTicket(tempFile)
+	// Remote node: Stream directly via pipe from remote agent -> master -> browser
+	pr, pw := io.Pipe()
+	ticket := h.createPipeTicket(pr, pw)
 	defer h.removeTicket(ticket.ID)
 
 	transferURL := fmt.Sprintf("%s/v1/node-files/internal-transfer/%s?token=%s", h.resolveMasterBaseURL(r), ticket.ID, ticket.Token)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Minute)
 	defer cancel()
 
-	if _, err := h.grpc.ExecuteFileOperation(ctx, nodeID, pb.FileOpType_FILE_OP_PUSH_TO_URL, relPath, transferURL, ticket.Token); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadGateway)
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := h.grpc.ExecuteFileOperation(ctx, nodeID, pb.FileOpType_FILE_OP_PUSH_TO_URL, relPath, transferURL, ticket.Token)
+		if err != nil {
+			_ = pw.CloseWithError(err)
+			errCh <- err
+		} else {
+			errCh <- nil
+		}
+	}()
+
+	// Wait for agent to connect and provide headers (timeout after 25s if agent never connects)
+	select {
+	case <-ticket.StartedCh:
+		// Agent connected and started pushing!
+	case err := <-errCh:
+		if err != nil {
+			_ = pr.Close()
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadGateway)
+			return
+		}
+	case <-time.After(25 * time.Second):
+		_ = pw.CloseWithError(errors.New("timeout waiting for remote agent to initiate transfer"))
+		_ = pr.Close()
+		http.Error(w, `{"error":"timeout waiting for remote agent to initiate transfer"}`, http.StatusGatewayTimeout)
+		return
+	case <-ctx.Done():
+		_ = pw.CloseWithError(ctx.Err())
+		_ = pr.Close()
+		http.Error(w, `{"error":"request cancelled"}`, http.StatusRequestTimeout)
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(relPath)))
-	http.ServeFile(w, r, tempFile)
+	if ticket.ContentLen > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(ticket.ContentLen, 10))
+	}
+
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
+	_, _ = io.Copy(w, pr)
+	_ = pr.Close()
 }
 
 // ─── 6. Transfer File Between Nodes (Node A -> Node B over Tailscale) ───────
@@ -716,6 +775,26 @@ func (h *NodeFileHandler) AgentPushTransfer(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
+
+	if ticket.PipeWriter != nil {
+		ticket.ContentLen = r.ContentLength
+		select {
+		case <-ticket.StartedCh:
+		default:
+			close(ticket.StartedCh)
+		}
+
+		_, copyErr := io.Copy(ticket.PipeWriter, r.Body)
+		if copyErr != nil {
+			_ = ticket.PipeWriter.CloseWithError(copyErr)
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, copyErr.Error()), http.StatusInternalServerError)
+			return
+		}
+		_ = ticket.PipeWriter.Close()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
+		return
+	}
 
 	out, err := os.Create(ticket.FilePath)
 	if err != nil {
