@@ -444,6 +444,11 @@ func (h *NodeFileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf(`{"error":"invalid multipart upload: %v"}`, err), http.StatusBadRequest)
 		return
 	}
+	defer func() {
+		if r.MultipartForm != nil {
+			_ = r.MultipartForm.RemoveAll()
+		}
+	}()
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
@@ -511,7 +516,7 @@ func (h *NodeFileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 
 	transferURL := fmt.Sprintf("%s/v1/node-files/internal-transfer/%s?token=%s", h.resolveMasterBaseURL(r), ticket.ID, ticket.Token)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Minute)
 	defer cancel()
 
 	if _, err := h.grpc.ExecuteFileOperation(ctx, nodeID, pb.FileOpType_FILE_OP_PULL_FROM_URL, relDestPath, transferURL, ticket.Token); err != nil {
