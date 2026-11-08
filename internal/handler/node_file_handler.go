@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -48,6 +49,7 @@ type transferTicket struct {
 	PipeReader *io.PipeReader
 	PipeWriter *io.PipeWriter
 	ContentLen int64
+	TotalSize  int64
 	StartedCh  chan struct{}
 	ReadyCh    chan error // Signaled when a remote node finishes uploading to FilePath
 }
@@ -85,6 +87,7 @@ func (h *NodeFileHandler) Routes() http.Handler {
 		protected.Delete("/{nodeId}", h.DeleteFile)
 		protected.Post("/{nodeId}/upload", h.UploadFile)
 		protected.Get("/{nodeId}/download", h.DownloadFile)
+		protected.Get("/{nodeId}/stream", h.StreamFile)
 		protected.Post("/{nodeId}/transfer", h.TransferBetweenNodes)
 	})
 
@@ -100,6 +103,7 @@ func (h *NodeFileHandler) NodeScopedRoutes() http.Handler {
 		protected.Delete("/", h.DeleteFile)
 		protected.Post("/upload", h.UploadFile)
 		protected.Get("/download", h.DownloadFile)
+		protected.Get("/stream", h.StreamFile)
 		protected.Post("/transfer", h.TransferBetweenNodes)
 	})
 	return r
@@ -677,6 +681,155 @@ func (h *NodeFileHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 	_ = pr.Close()
 }
 
+// ─── 5b. Stream File (Media Playback with HTTP Range Support) ───────────────
+
+func detectMediaType(filename string) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".mp4", ".m4v":
+		return "video/mp4"
+	case ".webm":
+		return "video/webm"
+	case ".mov":
+		return "video/quicktime"
+	case ".mkv":
+		return "video/x-matroska"
+	case ".avi":
+		return "video/x-msvideo"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".wav":
+		return "audio/wav"
+	case ".ogg", ".ogv":
+		return "video/ogg"
+	case ".flac":
+		return "audio/flac"
+	case ".aac":
+		return "audio/aac"
+	default:
+		if m := mime.TypeByExtension(ext); m != "" {
+			return m
+		}
+		return "application/octet-stream"
+	}
+}
+
+func (h *NodeFileHandler) StreamFile(w http.ResponseWriter, r *http.Request) {
+	nodeID := chi.URLParam(r, "nodeId")
+	targetNode, ok := h.authorizeNode(w, r, nodeID)
+	if !ok {
+		return
+	}
+
+	relPath := r.URL.Query().Get("path")
+	if strings.TrimSpace(relPath) == "" {
+		http.Error(w, `{"error":"path query param is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
+	if targetNode.IsLocal {
+		baseDir := platform.SharedFilesDir()
+		absPath, _, err := platform.SafeSharedPath(baseDir, relPath)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		info, err := os.Stat(absPath)
+		if err != nil || info.IsDir() {
+			http.Error(w, `{"error":"file not found or is a directory"}`, http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Header().Set("Content-Type", detectMediaType(absPath))
+		w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", filepath.Base(absPath)))
+		http.ServeFile(w, r, absPath)
+		return
+	}
+
+	// Remote node: Stream directly via pipe from remote agent -> master -> browser
+	rangeHeader := r.Header.Get("Range")
+	var startOffset int64
+	if strings.HasPrefix(rangeHeader, "bytes=") {
+		spec := strings.TrimPrefix(rangeHeader, "bytes=")
+		parts := strings.Split(spec, "-")
+		if len(parts) > 0 && parts[0] != "" {
+			if s, err := strconv.ParseInt(parts[0], 10, 64); err == nil && s >= 0 {
+				startOffset = s
+			}
+		}
+	}
+
+	pr, pw := io.Pipe()
+	ticket := h.createPipeTicket(pr, pw)
+	defer h.removeTicket(ticket.ID)
+
+	transferURL := fmt.Sprintf("%s/v1/node-files/internal-transfer/%s?token=%s&offset=%d",
+		h.resolveMasterBaseURL(r), ticket.ID, ticket.Token, startOffset)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Minute)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := h.grpc.ExecuteFileOperation(ctx, nodeID, pb.FileOpType_FILE_OP_PUSH_TO_URL, relPath, transferURL, ticket.Token)
+		if err != nil {
+			_ = pw.CloseWithError(err)
+			errCh <- err
+		} else {
+			errCh <- nil
+		}
+	}()
+
+	// Wait for agent to connect and provide headers (timeout after 25s if agent never connects)
+	select {
+	case <-ticket.StartedCh:
+		// Agent connected!
+	case err := <-errCh:
+		if err != nil {
+			_ = pr.Close()
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadGateway)
+			return
+		}
+	case <-time.After(25 * time.Second):
+		_ = pw.CloseWithError(errors.New("timeout waiting for remote agent to initiate stream"))
+		_ = pr.Close()
+		http.Error(w, `{"error":"timeout waiting for remote agent to initiate stream"}`, http.StatusGatewayTimeout)
+		return
+	case <-ctx.Done():
+		_ = pw.CloseWithError(ctx.Err())
+		_ = pr.Close()
+		http.Error(w, `{"error":"request cancelled"}`, http.StatusRequestTimeout)
+		return
+	}
+
+	mimeType := detectMediaType(relPath)
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", filepath.Base(relPath)))
+
+	totalSize := ticket.TotalSize
+	if totalSize <= 0 && ticket.ContentLen > 0 {
+		totalSize = ticket.ContentLen + startOffset
+	}
+
+	if rangeHeader != "" && totalSize > 0 {
+		endByte := totalSize - 1
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", startOffset, endByte, totalSize))
+		w.Header().Set("Content-Length", strconv.FormatInt(totalSize-startOffset, 10))
+		w.WriteHeader(http.StatusPartialContent)
+	} else if ticket.ContentLen > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(ticket.ContentLen, 10))
+		w.WriteHeader(http.StatusOK)
+	}
+
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	_, _ = io.Copy(w, pr)
+	_ = pr.Close()
+}
+
 // ─── 6. Transfer File Between Nodes (Node A -> Node B over Tailscale) ───────
 
 func (h *NodeFileHandler) TransferBetweenNodes(w http.ResponseWriter, r *http.Request) {
@@ -856,6 +1009,11 @@ func (h *NodeFileHandler) AgentPushTransfer(w http.ResponseWriter, r *http.Reque
 
 	if ticket.PipeWriter != nil {
 		ticket.ContentLen = r.ContentLength
+		if fileSizeHeader := r.Header.Get("X-File-Size"); fileSizeHeader != "" {
+			if s, err := strconv.ParseInt(fileSizeHeader, 10, 64); err == nil && s > 0 {
+				ticket.TotalSize = s
+			}
+		}
 		select {
 		case <-ticket.StartedCh:
 		default:
