@@ -107,6 +107,7 @@ var HandlerModule = fx.Provide(
 	handler.NewProjectHandler,
 	handler.NewServiceMonitorHandler,
 	handler.NewCaddyRouteHandler,
+	handler.NewCloudflareTunnelHandler,
 	handler.NewMarketplaceHandler,
 	handler.NewWebhookHandler,
 	handler.NewNodeReportHandler,

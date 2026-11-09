@@ -35,9 +35,10 @@ type RouterParams struct {
 	AlertEventHandler     *handler.AlertEventHandler
 	ProjectHandler        *handler.ProjectHandler
 	PlanHandler           *handler.PlanHandler
-	ServiceMonitorHandler *handler.ServiceMonitorHandler
-	CaddyRouteHandler     *handler.CaddyRouteHandler
-	MarketplaceHandler    *handler.MarketplaceHandler
+	ServiceMonitorHandler   *handler.ServiceMonitorHandler
+	CaddyRouteHandler       *handler.CaddyRouteHandler
+	CloudflareTunnelHandler *handler.CloudflareTunnelHandler
+	MarketplaceHandler      *handler.MarketplaceHandler
 	WebhookHandler        *handler.WebhookHandler
 	NodeReportHandler     *handler.NodeReportHandler
 	TelegramBotHandler    *handler.TelegramBotHandler
@@ -98,6 +99,7 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/plans", p.PlanHandler.Routes())
 		r.Mount("/service-monitors", p.ServiceMonitorHandler.Routes())
 		r.Mount("/caddy-routes", p.CaddyRouteHandler.Routes())
+		r.Mount("/cloudflare-tunnel", p.CloudflareTunnelHandler.Routes())
 		r.Mount("/marketplace", p.MarketplaceHandler.Routes())
 		r.Mount("/webhooks", p.WebhookHandler.Routes())
 		r.Mount("/reports", p.NodeReportHandler.Routes())

@@ -7,13 +7,16 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o autohost-cloud-api ./cmd/api && \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o autohost-migrate ./cmd/migrate
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o autohost-migrate ./cmd/migrate && \
+    curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${TARGETARCH}" -o /app/cloudflared && \
+    chmod +x /app/cloudflared
 
 # Etapa 2: runtime
 FROM gcr.io/distroless/base-debian12
 WORKDIR /app
 COPY --from=builder /app/autohost-cloud-api /usr/local/bin/autohost-cloud-api
 COPY --from=builder /app/autohost-migrate /usr/local/bin/autohost-migrate
+COPY --from=builder /app/cloudflared /usr/local/bin/cloudflared
 COPY --from=builder /app/migrations /app/migrations
 LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
 EXPOSE 8080 9090
