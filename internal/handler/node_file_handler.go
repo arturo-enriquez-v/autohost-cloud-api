@@ -109,7 +109,18 @@ func (h *NodeFileHandler) NodeScopedRoutes() http.Handler {
 	return r
 }
 
+type ctxKeyAuthorizedNode struct{}
+
+// WithAuthorizedNode injects a pre-authorized target node into the request context
+// (used by PublicShareHandler after validating the scoped Share Token and path jail).
+func WithAuthorizedNode(ctx context.Context, n *node.Node) context.Context {
+	return context.WithValue(ctx, ctxKeyAuthorizedNode{}, n)
+}
+
 func (h *NodeFileHandler) authorizeNode(w http.ResponseWriter, r *http.Request, nodeID string) (*node.Node, bool) {
+	if preAuth, ok := r.Context().Value(ctxKeyAuthorizedNode{}).(*node.Node); ok && preAuth != nil {
+		return preAuth, true
+	}
 	claims := middleware.GetClaims(r.Context())
 	if claims == nil || claims.UserID == "" {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)

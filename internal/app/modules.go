@@ -123,6 +123,7 @@ var HandlerModule = fx.Provide(
 	handler.NewVMHandler,
 	handler.NewNodeTerminalHandler,
 	handler.NewNodeFileHandler,
+	handler.NewPublicShareHandler,
 )
 
 var InfraModule = fx.Provide(

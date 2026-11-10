@@ -51,9 +51,10 @@ type RouterParams struct {
 	NotificationHandler   *handler.NotificationHandler
 	HypervisorHandler     *handler.HypervisorHandler
 	VMHandler             *handler.VMHandler
-	NodeTerminalHandler   *handler.NodeTerminalHandler
-	NodeFileHandler       *handler.NodeFileHandler
-	NodeTokenService      *node.NodeTokenService
+	NodeTerminalHandler     *handler.NodeTerminalHandler
+	NodeFileHandler         *handler.NodeFileHandler
+	PublicShareHandler      *handler.PublicShareHandler
+	NodeTokenService        *node.NodeTokenService
 }
 
 // NewRouter construye el mux de Chi
@@ -91,6 +92,9 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/nodes/{nodeId}/terminal", p.NodeTerminalHandler.NodeScopedRoutes())
 		r.Mount("/node-files", p.NodeFileHandler.Routes())
 		r.Mount("/nodes/{nodeId}/files", p.NodeFileHandler.NodeScopedRoutes())
+		r.Mount("/file-shares", p.PublicShareHandler.OwnerShareRoutes())
+		r.Mount("/public-shares", p.PublicShareHandler.PublicPortalRoutes())
+		r.Mount("/tailscale-funnel", p.PublicShareHandler.FunnelRoutes())
 		r.Mount("/node-alerts", p.NodeAlertHandler.Routes())
 		r.Mount("/scheduled-tasks", p.ScheduledTaskHandler.Routes())
 		r.Mount("/alert-events", p.AlertEventHandler.Routes())
@@ -138,7 +142,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Upgrade, Connection")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Upgrade, Connection, X-Share-Token")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -165,6 +169,7 @@ func limitRequestBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/backups/upload/") ||
 			strings.Contains(r.URL.Path, "/node-files/") ||
+			strings.Contains(r.URL.Path, "/public-shares/") ||
 			strings.Contains(r.URL.Path, "/files/upload") {
 			next.ServeHTTP(w, r)
 			return
