@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
@@ -32,6 +33,11 @@ type MarketplaceHandler struct {
 	jobService      *jobs.JobService
 	marketplaceRepo apps.MarketplaceRepository
 	dispatcher      dispatcher.ParamDispatcher
+	rbacSvc         *identity.RBACService
+}
+
+func (h *MarketplaceHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
 }
 
 func NewMarketplaceHandler(
@@ -92,6 +98,13 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 	if req.NodeID == "" || req.AppName == "" {
 		http.Error(w, "node_id and app_name are required", http.StatusBadRequest)
 		return
+	}
+
+	if h.rbacSvc != nil {
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, req.NodeID, identity.PermContainersDeploy); err != nil || !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 	}
 
 	var composeStr string
@@ -178,6 +191,17 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 // GET /v1/marketplace/apps/node/{nodeID}
 func (h *MarketplaceHandler) ListNodeApps(w http.ResponseWriter, r *http.Request) {
 	nodeID := chi.URLParam(r, "nodeID")
+	if h.rbacSvc != nil {
+		claims := middleware.GetClaims(r.Context())
+		if claims == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermContainersRead); err != nil || !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
 	apps, err := h.marketplaceRepo.FindByNodeID(nodeID)
 	if err != nil {
 		log.Printf("[ERROR] marketplace: list node apps: %v", err)

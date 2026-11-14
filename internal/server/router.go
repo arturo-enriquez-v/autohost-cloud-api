@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/fx"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	handlerMiddleware "github.com/arturo/autohost-cloud-api/internal/handler/middleware"
@@ -20,8 +21,11 @@ import (
 type RouterParams struct {
 	fx.In
 
-	AuthHandler           *handler.AuthHandler
-	NodeHandler           *handler.NodeHandler
+	AuthHandler             *handler.AuthHandler
+	UserHandler             *handler.UserHandler `optional:"true"`
+	RBACService             *identity.RBACService `optional:"true"`
+	NodeService             *node.NodeService `optional:"true"`
+	NodeHandler             *handler.NodeHandler
 	NodeMetricHandler     *handler.NodeMetricHandler
 	EnrollmentHandler     *handler.EnrollmentHandler
 	HeartbeatsHandler     *handler.HeartbeatsHandler
@@ -61,6 +65,72 @@ type RouterParams struct {
 func NewRouter(p RouterParams) *chi.Mux {
 	r := chi.NewRouter()
 
+	if p.RBACService != nil {
+		if p.AuthHandler != nil {
+			p.AuthHandler.SetRBACService(p.RBACService)
+		}
+		if p.NodeHandler != nil {
+			p.NodeHandler.SetRBACService(p.RBACService)
+		}
+		if p.ProjectHandler != nil {
+			p.ProjectHandler.SetRBACService(p.RBACService)
+		}
+		if p.NodeMetricHandler != nil {
+			p.NodeMetricHandler.SetRBACService(p.RBACService)
+		}
+		if p.NodeCommandHandler != nil {
+			p.NodeCommandHandler.SetRBACService(p.RBACService)
+		}
+		if p.JobsHandler != nil {
+			p.JobsHandler.SetRBACService(p.RBACService)
+		}
+		if p.NodeLogHandler != nil {
+			p.NodeLogHandler.SetRBACService(p.RBACService)
+		}
+		if p.NodeContainerHandler != nil {
+			p.NodeContainerHandler.SetRBACService(p.RBACService)
+		}
+		if p.NodeTerminalHandler != nil {
+			p.NodeTerminalHandler.SetRBACService(p.RBACService)
+		}
+		if p.NodeFileHandler != nil {
+			p.NodeFileHandler.SetRBACService(p.RBACService)
+		}
+		if p.PublicShareHandler != nil {
+			p.PublicShareHandler.SetRBACService(p.RBACService)
+		}
+		if p.NodeAlertHandler != nil {
+			p.NodeAlertHandler.SetRBACService(p.RBACService)
+		}
+		if p.ScheduledTaskHandler != nil {
+			p.ScheduledTaskHandler.SetRBACService(p.RBACService, p.NodeService)
+		}
+		if p.ServiceMonitorHandler != nil {
+			p.ServiceMonitorHandler.SetRBACService(p.RBACService, p.NodeService)
+		}
+		if p.CaddyRouteHandler != nil {
+			p.CaddyRouteHandler.SetRBACService(p.RBACService)
+		}
+		if p.MarketplaceHandler != nil {
+			p.MarketplaceHandler.SetRBACService(p.RBACService)
+		}
+		if p.NodeNetworkHandler != nil {
+			p.NodeNetworkHandler.SetRBACService(p.RBACService)
+		}
+		if p.BackupHandler != nil {
+			p.BackupHandler.SetRBACService(p.RBACService)
+		}
+		if p.LogDiagnosticHandler != nil {
+			p.LogDiagnosticHandler.SetRBACService(p.RBACService)
+		}
+		if p.HypervisorHandler != nil {
+			p.HypervisorHandler.SetRBACService(p.RBACService)
+		}
+		if p.VMHandler != nil {
+			p.VMHandler.SetRBACService(p.RBACService)
+		}
+	}
+
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
@@ -79,6 +149,9 @@ func NewRouter(p RouterParams) *chi.Mux {
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Mount("/auth", p.AuthHandler.Routes())
+		if p.UserHandler != nil {
+			r.Mount("/users", p.UserHandler.Routes())
+		}
 		r.Mount("/nodes", p.NodeHandler.Routes())
 		r.Mount("/node-metrics", p.NodeMetricHandler.Routes(nodeAuthMiddleware))
 		r.Mount("/enrollments", p.EnrollmentHandler.Routes())

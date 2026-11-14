@@ -18,6 +18,7 @@ type JWTClaims struct {
 	UserID string `json:"uid"`
 	Email  string `json:"email"`
 	Name   string `json:"name,omitempty"`
+	Role   string `json:"role,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -25,12 +26,16 @@ func jwtSecret() []byte {
 	return []byte(strings.TrimSpace(os.Getenv("JWT_SECRET")))
 }
 
-func SignAccessToken(userID, email, name string) (string, error) {
+func SignAccessToken(userID, email, name string, role ...string) (string, error) {
 	ttl := 15 * time.Minute
 	if v := os.Getenv("ACCESS_TOKEN_TTL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			ttl = d
 		}
+	}
+	userRole := ""
+	if len(role) > 0 {
+		userRole = role[0]
 	}
 	secret := jwtSecret()
 	now := time.Now().UTC()
@@ -38,6 +43,7 @@ func SignAccessToken(userID, email, name string) (string, error) {
 		UserID: userID,
 		Email:  email,
 		Name:   name,
+		Role:   userRole,
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),

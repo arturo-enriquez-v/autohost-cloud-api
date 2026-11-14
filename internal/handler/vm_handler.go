@@ -6,19 +6,26 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/infra"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 )
 
 type VMHandler struct {
 	vmService *infra.VMService
+	rbacSvc   *identity.RBACService
 }
 
 func NewVMHandler(vmService *infra.VMService) *VMHandler {
 	return &VMHandler{vmService: vmService}
+}
+
+func (h *VMHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
 }
 
 // NodeVMRoutes mounts routes scoped to a host node (/node-vms/{nodeId} or /nodes/{nodeId}/vms).
@@ -59,13 +66,22 @@ func (h *VMHandler) createVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ownerID := claims.UserID
+	if h.rbacSvc != nil {
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermVMsManage); err != nil || !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		ownerID = h.vmService.ResolveHostOwnerID(nodeID, claims.UserID)
+	}
+
 	var req infra.CreateVMRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	created, err := h.vmService.CreateVM(r.Context(), nodeID, claims.UserID, req)
+	created, err := h.vmService.CreateVM(r.Context(), nodeID, ownerID, req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -84,7 +100,16 @@ func (h *VMHandler) listVMs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	nodeID := chi.URLParam(r, "nodeId")
-	list, err := h.vmService.ListByHost(r.Context(), nodeID, claims.UserID)
+	ownerID := claims.UserID
+	if h.rbacSvc != nil {
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermVMsRead); err != nil || !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		ownerID = h.vmService.ResolveHostOwnerID(nodeID, claims.UserID)
+	}
+
+	list, err := h.vmService.ListByHost(r.Context(), nodeID, ownerID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -106,6 +131,21 @@ func (h *VMHandler) getVM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	vmID := chi.URLParam(r, "vmId")
+	if h.rbacSvc != nil {
+		v, err := h.vmService.GetByIDUnchecked(r.Context(), vmID)
+		if err != nil || v == nil {
+			http.Error(w, "vm not found", http.StatusNotFound)
+			return
+		}
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, v.HostNodeID, identity.PermVMsRead); err != nil || !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(v)
+		return
+	}
+
 	v, err := h.vmService.GetByID(r.Context(), vmID, claims.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -132,7 +172,25 @@ func (h *VMHandler) actionVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.vmService.ActionVM(r.Context(), vmID, claims.UserID, body.Action); err != nil {
+	ownerID := claims.UserID
+	if h.rbacSvc != nil {
+		v, err := h.vmService.GetByIDUnchecked(r.Context(), vmID)
+		if err != nil || v == nil {
+			http.Error(w, "vm not found", http.StatusNotFound)
+			return
+		}
+		reqPerm := identity.PermVMsAction
+		if strings.EqualFold(strings.TrimSpace(body.Action), "destroy") {
+			reqPerm = identity.PermVMsManage
+		}
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, v.HostNodeID, reqPerm); err != nil || !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		ownerID = v.OwnerID
+	}
+
+	if err := h.vmService.ActionVM(r.Context(), vmID, ownerID, body.Action); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -149,7 +207,21 @@ func (h *VMHandler) deleteVM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	vmID := chi.URLParam(r, "vmId")
-	if err := h.vmService.ActionVM(r.Context(), vmID, claims.UserID, "destroy"); err != nil {
+	ownerID := claims.UserID
+	if h.rbacSvc != nil {
+		v, err := h.vmService.GetByIDUnchecked(r.Context(), vmID)
+		if err != nil || v == nil {
+			http.Error(w, "vm not found", http.StatusNotFound)
+			return
+		}
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, v.HostNodeID, identity.PermVMsManage); err != nil || !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		ownerID = v.OwnerID
+	}
+
+	if err := h.vmService.ActionVM(r.Context(), vmID, ownerID, "destroy"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

@@ -222,7 +222,7 @@ func (h *EnrollmentHandler) EnrollNode(w http.ResponseWriter, r *http.Request) {
 		"grpc_address": grpcAddr,
 	}
 
-	if h.pki != nil {
+	if h.pki != nil && platform.IsGRPCTLSEnabled() {
 		h.pki.EnsureServerSAN(r.Host)
 		h.pki.EnsureServerSAN(grpcAddr)
 

@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
@@ -104,11 +105,16 @@ type PublicShareHandler struct {
 	fileHandler *NodeFileHandler
 	jobService  *jobs.JobService
 	dispatcher  dispatcher.ParamDispatcher
+	rbacSvc     *identity.RBACService
 	baseDir     string
 	statePath   string
 	mu          sync.RWMutex
 	state       *shareAndFunnelState
 	funnelLogs  []string
+}
+
+func (h *PublicShareHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
 }
 
 func NewPublicShareHandler(
@@ -336,7 +342,11 @@ func (h *PublicShareHandler) ListOwnerShares(w http.ResponseWriter, r *http.Requ
 	h.mu.RLock()
 	out := make([]*SharedFolderLink, 0)
 	for _, s := range h.state.Shares {
-		if s.OwnerID != claims.UserID {
+		if h.rbacSvc != nil {
+			if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, s.NodeID, identity.PermFilesShare); err != nil || !ok {
+				continue
+			}
+		} else if s.OwnerID != claims.UserID {
 			continue
 		}
 		if nodeFilter != "" && s.NodeID != nodeFilter {
@@ -378,7 +388,7 @@ func (h *PublicShareHandler) CreateShare(w http.ResponseWriter, r *http.Request)
 		http.Error(w, `{"error":"node not found"}`, http.StatusNotFound)
 		return
 	}
-	if targetNode.OwnerID != nil && *targetNode.OwnerID != claims.UserID {
+	if !checkNodeAccess(h.rbacSvc, targetNode, claims.UserID, identity.PermFilesShare) {
 		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 		return
 	}
@@ -464,7 +474,13 @@ func (h *PublicShareHandler) UpdateShare(w http.ResponseWriter, r *http.Request)
 	h.mu.Lock()
 	var updated *SharedFolderLink
 	for _, s := range h.state.Shares {
-		if s.ID == shareID && s.OwnerID == claims.UserID {
+		canManage := s.OwnerID == claims.UserID
+		if !canManage && h.rbacSvc != nil {
+			if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, s.NodeID, identity.PermFilesShare); err == nil && ok {
+				canManage = true
+			}
+		}
+		if s.ID == shareID && canManage {
 			if req.Title != nil && strings.TrimSpace(*req.Title) != "" {
 				s.Title = strings.TrimSpace(*req.Title)
 			}
@@ -516,7 +532,13 @@ func (h *PublicShareHandler) DeleteShare(w http.ResponseWriter, r *http.Request)
 	filtered := make([]*SharedFolderLink, 0, len(h.state.Shares))
 	found := false
 	for _, s := range h.state.Shares {
-		if s.ID == shareID && s.OwnerID == claims.UserID {
+		canManage := s.OwnerID == claims.UserID
+		if !canManage && h.rbacSvc != nil {
+			if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, s.NodeID, identity.PermFilesShare); err == nil && ok {
+				canManage = true
+			}
+		}
+		if s.ID == shareID && canManage {
 			found = true
 			continue
 		}
@@ -1115,7 +1137,7 @@ func (h *PublicShareHandler) UpsertFunnelRoute(w http.ResponseWriter, r *http.Re
 		http.Error(w, `{"error":"target node not found"}`, http.StatusNotFound)
 		return
 	}
-	if targetNode.OwnerID != nil && *targetNode.OwnerID != claims.UserID {
+	if !checkNodeAccess(h.rbacSvc, targetNode, claims.UserID, identity.PermNetworkManage) {
 		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 		return
 	}

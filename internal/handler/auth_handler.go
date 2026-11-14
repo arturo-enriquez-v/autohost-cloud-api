@@ -19,6 +19,7 @@ import (
 type AuthHandler struct {
 	service         *identity.AuthService
 	notificationSvc *identity.NotificationService
+	rbacSvc         *identity.RBACService
 }
 
 func NewAuthHandler(service *identity.AuthService, notificationSvc *identity.NotificationService) *AuthHandler {
@@ -26,6 +27,10 @@ func NewAuthHandler(service *identity.AuthService, notificationSvc *identity.Not
 		service:         service,
 		notificationSvc: notificationSvc,
 	}
+}
+
+func (h *AuthHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
 }
 
 func (h *AuthHandler) Routes() chi.Router {
@@ -101,6 +106,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pair, err := h.service.LoginAndIssue(in.Email, in.Password, r.UserAgent(), clientIP(r))
+	if errors.Is(err, identity.ErrUserDeactivated) {
+		http.Error(w, "user account is deactivated", http.StatusForbidden)
+		return
+	}
 	if errors.Is(err, identity.ErrInvalidCredentials) {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
@@ -171,13 +180,32 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	if user.AvatarURL != nil {
 		avatarURL = *user.AvatarURL
 	}
+	role := user.Role
+	if role == "" {
+		role = identity.RoleMember
+	}
 
-	response.RespondJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"uid":        user.ID,
 		"email":      user.Email,
 		"name":       name,
 		"avatar_url": avatarURL,
-	})
+		"role":       role,
+		"is_admin":   role == identity.RoleAdmin,
+		"is_active":  user.IsActive,
+	}
+
+	if h.rbacSvc != nil {
+		if enriched, err := h.rbacSvc.GetUserWithPermissions(user.ID); err == nil && enriched != nil {
+			resp["role"] = enriched.Role
+			resp["is_admin"] = enriched.IsAdmin
+			resp["is_active"] = enriched.IsActive
+			resp["projects"] = enriched.Projects
+			resp["node_permissions"] = enriched.NodePermissions
+		}
+	}
+
+	response.RespondJSON(w, http.StatusOK, resp)
 }
 
 type updateProfileReq struct {
@@ -212,13 +240,32 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	if user.AvatarURL != nil {
 		avatarURL = *user.AvatarURL
 	}
+	role := user.Role
+	if role == "" {
+		role = identity.RoleMember
+	}
 
-	response.RespondJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"uid":        user.ID,
 		"email":      user.Email,
 		"name":       name,
 		"avatar_url": avatarURL,
-	})
+		"role":       role,
+		"is_admin":   role == identity.RoleAdmin,
+		"is_active":  user.IsActive,
+	}
+
+	if h.rbacSvc != nil {
+		if enriched, err := h.rbacSvc.GetUserWithPermissions(user.ID); err == nil && enriched != nil {
+			resp["role"] = enriched.Role
+			resp["is_admin"] = enriched.IsAdmin
+			resp["is_active"] = enriched.IsActive
+			resp["projects"] = enriched.Projects
+			resp["node_permissions"] = enriched.NodePermissions
+		}
+	}
+
+	response.RespondJSON(w, http.StatusOK, resp)
 }
 
 func (h *AuthHandler) OAuthGoogle(w http.ResponseWriter, r *http.Request) {

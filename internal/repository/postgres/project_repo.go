@@ -92,3 +92,15 @@ func (r *ProjectRepository) Delete(id string) error {
 		DELETE FROM projects WHERE id = $1`, id)
 	return err
 }
+
+func (r *ProjectRepository) FindAll() ([]*apps.Project, error) {
+	var projects []*apps.Project
+	err := r.db.SelectContext(context.Background(), &projects, `
+		SELECT id, user_id, name, created_at, updated_at
+		FROM projects
+		ORDER BY name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	return projects, nil
+}

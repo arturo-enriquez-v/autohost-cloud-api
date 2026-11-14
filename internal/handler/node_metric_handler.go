@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
@@ -30,9 +31,14 @@ type NodeMetricHandler struct {
 	grpc          *grpcserver.NodeAgentServer
 	alertEventSvc *node.AlertEventService
 	redis         *redis.Client
+	rbacSvc       *identity.RBACService
 
 	cooldownMu sync.Mutex
 	cooldowns  map[string]time.Time // key: "nodeID:metricName"
+}
+
+func (h *NodeMetricHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
 }
 
 func NewNodeMetricHandler(
@@ -181,13 +187,13 @@ func (h *NodeMetricHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 
 	nodeID := chi.URLParam(r, "nodeId")
 
-	// Verify the node belongs to the authenticated user.
+	// Verify the user has metrics:read permission on the node.
 	n, err := h.nodeService.GetByID(nodeID)
 	if err != nil || n == nil {
 		http.Error(w, "node not found", http.StatusNotFound)
 		return
 	}
-	if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+	if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermMetricsRead) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -238,13 +244,13 @@ func (h *NodeMetricHandler) StreamLiveMetrics(w http.ResponseWriter, r *http.Req
 
 	nodeID := chi.URLParam(r, "nodeId")
 
-	// Verify the node belongs to the authenticated user.
+	// Verify the user has metrics:read permission on the node.
 	n, err := h.nodeService.GetByID(nodeID)
 	if err != nil || n == nil {
 		http.Error(w, "node not found", http.StatusNotFound)
 		return
 	}
-	if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+	if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermMetricsRead) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}

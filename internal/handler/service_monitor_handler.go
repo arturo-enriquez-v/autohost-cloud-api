@@ -15,16 +15,25 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 )
 
 // ServiceMonitorHandler handles CRUD for service monitors and exposes health event history.
 type ServiceMonitorHandler struct {
 	service *apps.ServiceMonitorService
 	grpc    *grpcserver.NodeAgentServer
+	nodeSvc *node.NodeService
+	rbac    *identity.RBACService
 }
 
 func NewServiceMonitorHandler(service *apps.ServiceMonitorService, grpc *grpcserver.NodeAgentServer) *ServiceMonitorHandler {
 	return &ServiceMonitorHandler{service: service, grpc: grpc}
+}
+
+func (h *ServiceMonitorHandler) SetRBACService(rbac *identity.RBACService, nodeSvc *node.NodeService) {
+	h.rbac = rbac
+	h.nodeSvc = nodeSvc
 }
 
 func (h *ServiceMonitorHandler) Routes() chi.Router {
@@ -41,7 +50,8 @@ func (h *ServiceMonitorHandler) Routes() chi.Router {
 // ─── List ─────────────────────────────────────────────────────────────────────
 
 func (h *ServiceMonitorHandler) List(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetClaims(r.Context()) == nil {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -49,6 +59,12 @@ func (h *ServiceMonitorHandler) List(w http.ResponseWriter, r *http.Request) {
 	if nodeID == "" {
 		http.Error(w, "nodeId query param required", http.StatusBadRequest)
 		return
+	}
+	if h.nodeSvc != nil {
+		if _, status := checkNodeIDAccess(h.rbac, h.nodeSvc, nodeID, claims.UserID, identity.PermMonitorsRead); status != http.StatusOK {
+			http.Error(w, "forbidden", status)
+			return
+		}
 	}
 
 	monitors, err := h.service.ListByNodeID(nodeID)
@@ -95,10 +111,19 @@ func (h *ServiceMonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "node_id, service_name and check_type are required", http.StatusBadRequest)
 		return
 	}
+	ownerID := claims.UserID
+	if h.nodeSvc != nil {
+		n, status := checkNodeIDAccess(h.rbac, h.nodeSvc, req.NodeID, claims.UserID, identity.PermMonitorsManage)
+		if status != http.StatusOK {
+			http.Error(w, "forbidden", status)
+			return
+		}
+		ownerID = effectiveNodeOwnerID(n, claims.UserID)
+	}
 
 	monitor := &apps.ServiceMonitor{
 		NodeID:             req.NodeID,
-		UserID:             claims.UserID,
+		UserID:             ownerID,
 		ServiceName:        req.ServiceName,
 		CheckType:          req.CheckType,
 		HTTPURL:            req.HTTPURL,
@@ -149,8 +174,20 @@ func (h *ServiceMonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if existing.UserID != claims.UserID {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
+		if h.nodeSvc != nil {
+			if _, status := checkNodeIDAccess(h.rbac, h.nodeSvc, existing.NodeID, claims.UserID, identity.PermMonitorsManage); status != http.StatusOK {
+				http.Error(w, "forbidden", status)
+				return
+			}
+		} else {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	} else if h.rbac != nil && h.nodeSvc != nil {
+		if _, status := checkNodeIDAccess(h.rbac, h.nodeSvc, existing.NodeID, claims.UserID, identity.PermMonitorsManage); status != http.StatusOK {
+			http.Error(w, "forbidden", status)
+			return
+		}
 	}
 
 	var req upsertMonitorRequest
@@ -213,8 +250,20 @@ func (h *ServiceMonitorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if monitor.UserID != claims.UserID {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
+		if h.nodeSvc != nil {
+			if _, status := checkNodeIDAccess(h.rbac, h.nodeSvc, monitor.NodeID, claims.UserID, identity.PermMonitorsManage); status != http.StatusOK {
+				http.Error(w, "forbidden", status)
+				return
+			}
+		} else {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	} else if h.rbac != nil && h.nodeSvc != nil {
+		if _, status := checkNodeIDAccess(h.rbac, h.nodeSvc, monitor.NodeID, claims.UserID, identity.PermMonitorsManage); status != http.StatusOK {
+			http.Error(w, "forbidden", status)
+			return
+		}
 	}
 
 	if err := h.service.Delete(id); err != nil {

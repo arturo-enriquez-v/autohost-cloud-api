@@ -21,6 +21,43 @@ func NewNodeRepository(db *sqlx.DB) *NodeRepository {
 	return &NodeRepository{db: db}
 }
 
+const nodeSelectColumns = `
+	n.id, n.hostname, COALESCE(n.ip_local::text, '') as ip_local, n.ip_vpn, n.os, n.arch, n.version_agent,
+	n.owner_id, n.project_id, n.is_local, n.last_seen_at, n.created_at, n.updated_at,
+	(v.id IS NOT NULL) AS is_vm, v.id AS vm_id, v.host_node_id AS host_node_id, hn.hostname AS host_hostname`
+
+const nodeVMJoinClause = `
+	LEFT JOIN LATERAL (
+		SELECT id, host_node_id
+		FROM vms
+		WHERE node_id = n.id
+		ORDER BY created_at DESC
+		LIMIT 1
+	) v ON true
+	LEFT JOIN nodes hn ON hn.id = v.host_node_id`
+
+func modelToNode(model NodeModel) *node.Node {
+	return &node.Node{
+		ID:           model.ID,
+		Hostname:     model.Hostname,
+		IPLocal:      model.IPLocal,
+		IPVPN:        model.IPVPN,
+		OS:           model.OS,
+		Arch:         model.Arch,
+		VersionAgent: model.VersionAgent,
+		OwnerID:      model.OwnerID,
+		ProjectID:    model.ProjectID,
+		IsLocal:      model.IsLocal,
+		LastSeenAt:   model.LastSeenAt,
+		CreatedAt:    model.CreatedAt,
+		UpdatedAt:    model.UpdatedAt,
+		IsVM:         model.IsVM,
+		VMID:         model.VMID,
+		HostNodeID:   model.HostNodeID,
+		HostHostname: model.HostHostname,
+	}
+}
+
 // Register crea un nuevo nodo
 func (r *NodeRepository) Register(n *node.Node) (*node.Node, error) {
 	var model NodeModel
@@ -81,10 +118,10 @@ func (r *NodeRepository) FindByID(id string) (*node.Node, error) {
 	var model NodeModel
 
 	err := r.db.Get(&model, `
-        SELECT id, hostname, COALESCE(ip_local::text, '') as ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id, is_local,
-               last_seen_at, created_at, updated_at
-        FROM nodes 
-        WHERE id = $1`, id)
+		SELECT `+nodeSelectColumns+`
+		FROM nodes n
+		`+nodeVMJoinClause+`
+		WHERE n.id = $1`, id)
 
 	if err == sql.ErrNoRows {
 		return nil, node.ErrNodeNotFound
@@ -93,31 +130,17 @@ func (r *NodeRepository) FindByID(id string) (*node.Node, error) {
 		return nil, err
 	}
 
-	return &node.Node{
-		ID:           model.ID,
-		Hostname:     model.Hostname,
-		IPLocal:      model.IPLocal,
-		IPVPN:        model.IPVPN,
-		OS:           model.OS,
-		Arch:         model.Arch,
-		VersionAgent: model.VersionAgent,
-		OwnerID:      model.OwnerID,
-		ProjectID:    model.ProjectID,
-		IsLocal:      model.IsLocal,
-		LastSeenAt:   model.LastSeenAt,
-		CreatedAt:    model.CreatedAt,
-		UpdatedAt:    model.UpdatedAt,
-	}, nil
+	return modelToNode(model), nil
 }
 
 func (r *NodeRepository) FindLocalNode() (*node.Node, error) {
 	var model NodeModel
 	err := r.db.Get(&model, `
-		SELECT id, hostname, COALESCE(ip_local::text, '') as ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id, is_local,
-		       last_seen_at, created_at, updated_at
-		FROM nodes
-		WHERE is_local = true
-		ORDER BY created_at ASC
+		SELECT `+nodeSelectColumns+`
+		FROM nodes n
+		`+nodeVMJoinClause+`
+		WHERE n.is_local = true
+		ORDER BY n.created_at ASC
 		LIMIT 1`)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -125,21 +148,7 @@ func (r *NodeRepository) FindLocalNode() (*node.Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &node.Node{
-		ID:           model.ID,
-		Hostname:     model.Hostname,
-		IPLocal:      model.IPLocal,
-		IPVPN:        model.IPVPN,
-		OS:           model.OS,
-		Arch:         model.Arch,
-		VersionAgent: model.VersionAgent,
-		OwnerID:      model.OwnerID,
-		ProjectID:    model.ProjectID,
-		IsLocal:      model.IsLocal,
-		LastSeenAt:   model.LastSeenAt,
-		CreatedAt:    model.CreatedAt,
-		UpdatedAt:    model.UpdatedAt,
-	}, nil
+	return modelToNode(model), nil
 }
 
 func (r *NodeRepository) ClaimUnownedNodes(ownerID string) error {
@@ -154,11 +163,11 @@ func (r *NodeRepository) ClaimUnownedNodes(ownerID string) error {
 func (r *NodeRepository) FindByOwnerID(ownerID string) ([]*node.Node, error) {
 	var models []NodeModel
 	err := r.db.Select(&models, `
-		SELECT id, hostname, COALESCE(ip_local::text, '') as ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id, is_local,
-		       last_seen_at, created_at, updated_at
-		FROM nodes 
-		WHERE owner_id = $1
-		ORDER BY is_local DESC, created_at DESC`, ownerID)
+		SELECT `+nodeSelectColumns+`
+		FROM nodes n
+		`+nodeVMJoinClause+`
+		WHERE n.owner_id = $1
+		ORDER BY n.is_local DESC, n.created_at DESC`, ownerID)
 
 	if err != nil {
 		return nil, err
@@ -166,21 +175,7 @@ func (r *NodeRepository) FindByOwnerID(ownerID string) ([]*node.Node, error) {
 
 	nodes := make([]*node.Node, len(models))
 	for i, model := range models {
-		nodes[i] = &node.Node{
-			ID:           model.ID,
-			Hostname:     model.Hostname,
-			IPLocal:      model.IPLocal,
-			IPVPN:        model.IPVPN,
-			OS:           model.OS,
-			Arch:         model.Arch,
-			VersionAgent: model.VersionAgent,
-			OwnerID:      model.OwnerID,
-			ProjectID:    model.ProjectID,
-			IsLocal:      model.IsLocal,
-			LastSeenAt:   model.LastSeenAt,
-			CreatedAt:    model.CreatedAt,
-			UpdatedAt:    model.UpdatedAt,
-		}
+		nodes[i] = modelToNode(model)
 	}
 
 	return nodes, nil
@@ -223,14 +218,17 @@ func (r *NodeRepository) UpdateVersionAgent(nodeID, version string) error {
 
 // FindByOwnerIDWithMetrics busca todos los nodos de un propietario con sus últimas métricas
 func (r *NodeRepository) FindByOwnerIDWithMetrics(ownerID string) ([]*node.NodeWithMetrics, error) {
+	return r.queryNodesWithMetrics(`WHERE n.owner_id = $1`, ownerID)
+}
+
+func (r *NodeRepository) queryNodesWithMetrics(whereClause string, args ...any) ([]*node.NodeWithMetrics, error) {
 	var results []*node.NodeWithMetrics
 
 	query := `
-		SELECT 
-			n.id, n.hostname, COALESCE(n.ip_local::text, '') as ip_local, n.ip_vpn, n.os, n.arch, n.version_agent, 
-			n.owner_id, n.project_id, n.is_local, n.last_seen_at, n.created_at, n.updated_at,
+		SELECT ` + nodeSelectColumns + `,
 			m.cpu_usage_percent, m.memory_usage_percent, m.disk_usage_percent, m.cpu_temp_celsius, m.collected_at
 		FROM nodes n
+		` + nodeVMJoinClause + `
 		LEFT JOIN LATERAL (
 			SELECT cpu_usage_percent, memory_usage_percent, disk_usage_percent, cpu_temp_celsius, collected_at
 			FROM node_metrics
@@ -238,11 +236,11 @@ func (r *NodeRepository) FindByOwnerIDWithMetrics(ownerID string) ([]*node.NodeW
 			ORDER BY collected_at DESC
 			LIMIT 1
 		) m ON true
-		WHERE n.owner_id = $1
+		` + whereClause + `
 		ORDER BY n.is_local DESC, n.created_at DESC
 	`
 
-	rows, err := r.db.Queryx(query, ownerID)
+	rows, err := r.db.Queryx(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -257,6 +255,7 @@ func (r *NodeRepository) FindByOwnerIDWithMetrics(ownerID string) ([]*node.NodeW
 			&nwm.ID, &nwm.Hostname, &nwm.IPLocal, &nwm.IPVPN, &nwm.OS, &nwm.Arch,
 			&nwm.VersionAgent, &nwm.OwnerID, &nwm.ProjectID, &nwm.IsLocal, &nwm.LastSeenAt,
 			&nwm.CreatedAt, &nwm.UpdatedAt,
+			&nwm.IsVM, &nwm.VMID, &nwm.HostNodeID, &nwm.HostHostname,
 			&cpuUsage, &memUsage, &diskUsage, &cpuTemp, &collectedAt,
 		)
 		if err != nil {
@@ -293,4 +292,27 @@ func (r *NodeRepository) AssignProject(nodeID string, projectID *string) error {
 		UPDATE nodes SET project_id = $1, updated_at = NOW() WHERE id = $2`,
 		projectID, nodeID)
 	return err
+}
+
+// FindAll returns all nodes registered in the platform.
+func (r *NodeRepository) FindAll() ([]*node.Node, error) {
+	var models []NodeModel
+	err := r.db.Select(&models, `
+		SELECT `+nodeSelectColumns+`
+		FROM nodes n
+		`+nodeVMJoinClause+`
+		ORDER BY n.is_local DESC, n.created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]*node.Node, len(models))
+	for i, model := range models {
+		nodes[i] = modelToNode(model)
+	}
+	return nodes, nil
+}
+
+// FindAllWithMetrics returns all nodes in the platform with their latest metric snapshot.
+func (r *NodeRepository) FindAllWithMetrics() ([]*node.NodeWithMetrics, error) {
+	return r.queryNodesWithMetrics("")
 }

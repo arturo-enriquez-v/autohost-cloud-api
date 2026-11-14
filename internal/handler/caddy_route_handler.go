@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
@@ -24,6 +25,11 @@ type CaddyRouteHandler struct {
 	jobService *jobs.JobService
 	dispatcher dispatcher.ParamDispatcher
 	nodeSvc    *node.NodeService
+	rbacSvc    *identity.RBACService
+}
+
+func (h *CaddyRouteHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
 }
 
 func NewCaddyRouteHandler(
@@ -65,7 +71,7 @@ func (h *CaddyRouteHandler) List(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
-		if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+		if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermNetworkRead) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -107,7 +113,7 @@ func (h *CaddyRouteHandler) Upsert(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
-		if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+		if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermNetworkManage) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -186,7 +192,7 @@ func (h *CaddyRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
-		if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+		if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermNetworkManage) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}

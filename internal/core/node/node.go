@@ -29,6 +29,12 @@ type Node struct {
 	LastSeenAt   *time.Time `db:"last_seen_at" json:"last_seen_at"`
 	CreatedAt    time.Time  `db:"created_at" json:"created_at"`
 	UpdatedAt    time.Time  `db:"updated_at" json:"updated_at"`
+	RolePreset   string     `db:"-" json:"role_preset,omitempty"`
+	Permissions  []string   `db:"-" json:"permissions,omitempty"`
+	IsVM         bool       `db:"-" json:"is_vm"`
+	VMID         *string    `db:"-" json:"vm_id,omitempty"`
+	HostNodeID   *string    `db:"-" json:"host_node_id,omitempty"`
+	HostHostname *string    `db:"-" json:"host_hostname,omitempty"`
 }
 
 // NodeWithMetrics representa un nodo con su última métrica
@@ -47,6 +53,12 @@ type NodeWithMetrics struct {
 	CreatedAt    time.Time   `json:"created_at"`
 	UpdatedAt    time.Time   `json:"updated_at"`
 	LastMetric   *LastMetric `json:"last_metric,omitempty"`
+	RolePreset   string      `json:"role_preset,omitempty"`
+	Permissions  []string    `json:"permissions,omitempty"`
+	IsVM         bool        `json:"is_vm"`
+	VMID         *string     `json:"vm_id,omitempty"`
+	HostNodeID   *string     `json:"host_node_id,omitempty"`
+	HostHostname *string     `json:"host_hostname,omitempty"`
 }
 
 // LastMetric representa la última métrica de un nodo
@@ -189,4 +201,25 @@ func (s *NodeService) ClaimUnownedNodes(ownerID string) error {
 		return ErrInvalidNodeData
 	}
 	return s.repo.ClaimUnownedNodes(ownerID)
+}
+
+// ExtendedNodeRepository is an optional interface implemented by PostgreSQL NodeRepository
+// to support RBAC queries across all nodes or specific node sets without breaking legacy mocks.
+type ExtendedNodeRepository interface {
+	FindAll() ([]*Node, error)
+	FindAllWithMetrics() ([]*NodeWithMetrics, error)
+}
+
+func (s *NodeService) GetAll() ([]*Node, error) {
+	if ext, ok := s.repo.(ExtendedNodeRepository); ok {
+		return ext.FindAll()
+	}
+	return []*Node{}, nil
+}
+
+func (s *NodeService) GetAllWithMetrics() ([]*NodeWithMetrics, error) {
+	if ext, ok := s.repo.(ExtendedNodeRepository); ok {
+		return ext.FindAllWithMetrics()
+	}
+	return []*NodeWithMetrics{}, nil
 }

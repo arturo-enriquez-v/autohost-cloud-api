@@ -29,7 +29,11 @@ func StartHTTPServer(lc fx.Lifecycle, router *chi.Mux) {
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
 			log.Printf("Iniciando servidor HTTP en %s", srv.Addr)
-			go srv.ListenAndServe()
+			go func() {
+				if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					log.Printf("[ERROR] Servidor HTTP falló en %s: %v", srv.Addr, err)
+				}
+			}()
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {

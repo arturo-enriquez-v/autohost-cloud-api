@@ -82,3 +82,33 @@ func (s *ProjectService) Delete(id, userID string) error {
 	}
 	return s.repo.Delete(id)
 }
+
+// ExtendedProjectRepository is an optional interface for multi-user / RBAC queries.
+type ExtendedProjectRepository interface {
+	FindAll() ([]*Project, error)
+}
+
+func (s *ProjectService) GetAll() ([]*Project, error) {
+	if ext, ok := s.repo.(ExtendedProjectRepository); ok {
+		return ext.FindAll()
+	}
+	return []*Project{}, nil
+}
+
+func (s *ProjectService) UpdateAsAdmin(id, name string) (*Project, error) {
+	p, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if name != "" {
+		p.Name = name
+	}
+	return s.repo.Update(p)
+}
+
+func (s *ProjectService) DeleteAsAdmin(id string) error {
+	if _, err := s.repo.FindByID(id); err != nil {
+		return err
+	}
+	return s.repo.Delete(id)
+}

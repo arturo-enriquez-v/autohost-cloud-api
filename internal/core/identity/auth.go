@@ -38,6 +38,9 @@ type User struct {
 	Email           string    `db:"email"`
 	Name            *string   `db:"name"`
 	AvatarURL       *string   `db:"avatar_url"`
+	Role            string    `db:"role"`
+	IsActive        bool      `db:"is_active"`
+	CreatedBy       *string   `db:"created_by"`
 	PasswordHash    *string   `db:"password_hash"`
 	OAuthProvider   *string   `db:"oauth_provider"`
 	OAuthProviderID *string   `db:"oauth_provider_id"`
@@ -103,7 +106,11 @@ func (s *AuthService) issueTokenPair(user *User, ua, ip string) (TokenPair, erro
 	if user.Name != nil {
 		name = *user.Name
 	}
-	access, err := platform.SignAccessToken(user.ID, user.Email, name)
+	role := user.Role
+	if role == "" {
+		role = RoleMember
+	}
+	access, err := platform.SignAccessToken(user.ID, user.Email, name, role)
 	if err != nil {
 		return TokenPair{}, err
 	}
@@ -154,7 +161,13 @@ func (s *AuthService) RegisterAndIssue(email, name, password, ua, ip string) (To
 	if err != nil {
 		return TokenPair{}, err
 	}
-	access, err := platform.SignAccessToken(userID, email, name)
+	role := RoleMember
+	if u, _ := s.repo.FindUserByID(userID); u != nil && u.Role != "" {
+		role = u.Role
+	} else if count, err := s.repo.CountUsers(); err == nil && count == 1 {
+		role = RoleAdmin
+	}
+	access, err := platform.SignAccessToken(userID, email, name, role)
 	if err != nil {
 		return TokenPair{}, err
 	}
@@ -170,6 +183,10 @@ func (s *AuthService) Login(email, password string) (*User, error) {
 	user, err := s.repo.FindUserByEmail(email)
 	if err != nil || user == nil {
 		return nil, ErrInvalidCredentials
+	}
+
+	if user.Role != "" && !user.IsActive {
+		return nil, ErrUserDeactivated
 	}
 
 	if user.PasswordHash == nil {
@@ -203,6 +220,9 @@ func (s *AuthService) RefreshTokens(oldPlain, ua, ip string) (TokenPair, error) 
 
 	user, err := s.repo.FindUserByID(userID)
 	if err != nil || user == nil {
+		return TokenPair{}, ErrInvalidRefreshToken
+	}
+	if user.Role != "" && !user.IsActive {
 		return TokenPair{}, ErrInvalidRefreshToken
 	}
 

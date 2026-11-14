@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
@@ -20,6 +21,7 @@ type LogDiagnosticHandler struct {
 	service *node.LogDiagnosticService
 	grpc    *grpcserver.NodeAgentServer
 	nodeSvc *node.NodeService
+	rbac    *identity.RBACService
 }
 
 // NewLogDiagnosticHandler creates a new handler with all required dependencies.
@@ -33,6 +35,10 @@ func NewLogDiagnosticHandler(
 		grpc:    grpc,
 		nodeSvc: nodeSvc,
 	}
+}
+
+func (h *LogDiagnosticHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbac = rbac
 }
 
 // Routes registers all log diagnostic REST endpoints.
@@ -62,15 +68,14 @@ func (h *LogDiagnosticHandler) Collect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the user owns the node.
+	// Verify the user owns or has logs:manage permission on the node.
 	if h.nodeSvc != nil {
-		n, err := h.nodeSvc.GetByID(req.NodeID)
-		if err != nil || n == nil {
-			response.RespondError(w, http.StatusNotFound, "node not found")
-			return
-		}
-		if n.OwnerID == nil || *n.OwnerID != claims.UserID {
-			response.RespondError(w, http.StatusForbidden, "forbidden")
+		if _, status := checkNodeIDAccess(h.rbac, h.nodeSvc, req.NodeID, claims.UserID, identity.PermLogsManage); status != http.StatusOK {
+			if status == http.StatusNotFound {
+				response.RespondError(w, http.StatusNotFound, "node not found")
+			} else {
+				response.RespondError(w, http.StatusForbidden, "forbidden")
+			}
 			return
 		}
 	}

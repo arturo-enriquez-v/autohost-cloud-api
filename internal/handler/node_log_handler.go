@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
@@ -27,6 +28,11 @@ type NodeLogHandler struct {
 	grpc    *grpcserver.NodeAgentServer
 	nodeSvc *node.NodeService
 	redis   *redis.Client
+	rbacSvc *identity.RBACService
+}
+
+func (h *NodeLogHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
 }
 
 func NewNodeLogHandler(grpc *grpcserver.NodeAgentServer, nodeSvc *node.NodeService, redis *redis.Client) *NodeLogHandler {
@@ -64,7 +70,7 @@ func (h *NodeLogHandler) streamLogs(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
-		if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+		if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermLogsRead) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}

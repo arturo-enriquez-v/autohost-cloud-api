@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
@@ -18,10 +19,15 @@ import (
 //   - User-facing routes (userAuth): list commands for a given node (dashboard)
 type NodeCommandHandler struct {
 	service *jobs.NodeCommandService
+	rbacSvc *identity.RBACService
 }
 
 func NewNodeCommandHandler(service *jobs.NodeCommandService) *NodeCommandHandler {
 	return &NodeCommandHandler{service: service}
+}
+
+func (h *NodeCommandHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
 }
 
 func (h *NodeCommandHandler) Routes(nodeAuthMiddleware func(http.Handler) http.Handler) chi.Router {
@@ -124,6 +130,17 @@ func (h *NodeCommandHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // GET /v1/node-commands/node/{nodeID}
 func (h *NodeCommandHandler) ListByNodeID(w http.ResponseWriter, r *http.Request) {
 	nodeID := chi.URLParam(r, "nodeID")
+	if h.rbacSvc != nil {
+		claims := middleware.GetClaims(r.Context())
+		if claims == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermJobsRead); err != nil || !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
 	cmds, err := h.service.ListByNode(nodeID)
 	if err != nil {
 		log.Printf("[ERROR] list commands by nodeID: %v", err)

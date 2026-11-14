@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
@@ -22,6 +23,11 @@ type JobHandler struct {
 	jobService          *jobs.JobService
 	dispatcher          dispatcher.NodeDispatcher
 	containerSettingSvc *node.ContainerSettingService
+	rbacSvc             *identity.RBACService
+}
+
+func (h *JobHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
 }
 
 func NewJobHandler(
@@ -66,6 +72,30 @@ func (h *JobHandler) Dispatch(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.NodeID == "" || req.CommandName == "" {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
+	}
+
+	if h.rbacSvc != nil {
+		requiredPerm := identity.PermJobsRun
+		if strings.HasPrefix(req.CommandName, "container.") {
+			parts := strings.Split(req.CommandName, ".")
+			if len(parts) >= 2 && (parts[1] == "start" || parts[1] == "stop" || parts[1] == "restart") {
+				requiredPerm = identity.PermContainersAction
+			} else {
+				requiredPerm = identity.PermContainersDeploy
+			}
+		} else if strings.HasPrefix(req.CommandName, "marketplace.") {
+			requiredPerm = identity.PermContainersDeploy
+		} else if strings.HasPrefix(req.CommandName, "vm.") {
+			if strings.HasPrefix(req.CommandName, "vm.create") || strings.HasPrefix(req.CommandName, "vm.destroy") {
+				requiredPerm = identity.PermVMsManage
+			} else {
+				requiredPerm = identity.PermVMsAction
+			}
+		}
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, req.NodeID, requiredPerm); err != nil || !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 	}
 
 	// Validate whether container action is locked
@@ -131,6 +161,17 @@ func (h *JobHandler) GetJob(w http.ResponseWriter, r *http.Request) {
 // GET /v1/jobs/node/{nodeID}
 func (h *JobHandler) ListByNode(w http.ResponseWriter, r *http.Request) {
 	nodeID := chi.URLParam(r, "nodeID")
+	if h.rbacSvc != nil {
+		claims := middleware.GetClaims(r.Context())
+		if claims == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermJobsRead); err != nil || !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
 	jobs, err := h.jobService.ListByNode(nodeID)
 	if err != nil {
 		log.Printf("[ERROR] list jobs: %v", err)

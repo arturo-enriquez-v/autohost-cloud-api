@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
@@ -19,10 +20,15 @@ import (
 type HypervisorHandler struct {
 	grpc    *grpcserver.NodeAgentServer
 	nodeSvc *node.NodeService
+	rbacSvc *identity.RBACService
 }
 
 func NewHypervisorHandler(grpc *grpcserver.NodeAgentServer, nodeSvc *node.NodeService) *HypervisorHandler {
 	return &HypervisorHandler{grpc: grpc, nodeSvc: nodeSvc}
+}
+
+func (h *HypervisorHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
 }
 
 func (h *HypervisorHandler) Routes() http.Handler {
@@ -57,7 +63,7 @@ func (h *HypervisorHandler) get(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
-		if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+		if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermVMsRead) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}

@@ -25,6 +25,7 @@ import (
 
 var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewAuthRepository, fx.As(new(identity.AuthRepository))),
+	fx.Annotate(postgres.NewRBACRepository, fx.As(new(identity.RBACRepository))),
 	fx.Annotate(postgres.NewNodeRepository, fx.As(new(node.NodeRepository))),
 	fx.Annotate(postgres.NewNodeMetricRepository, fx.As(new(node.NodeMetricRepository))),
 	fx.Annotate(postgres.NewContainerMetricRepository, fx.As(new(node.ContainerMetricRepository))),
@@ -54,6 +55,7 @@ var RepositoryModule = fx.Provide(
 
 var ServiceModule = fx.Provide(
 	identity.NewAuthService,
+	identity.NewRBACService,
 	node.NewNodeService,
 	node.NewNodeMetricService,
 	node.NewContainerMetricService,
@@ -92,6 +94,7 @@ var ServiceModule = fx.Provide(
 
 var HandlerModule = fx.Provide(
 	handler.NewAuthHandler,
+	handler.NewUserHandler,
 	handler.NewNodeHandler,
 	handler.NewNodeMetricHandler,
 	handler.NewEnrollmentHandler,

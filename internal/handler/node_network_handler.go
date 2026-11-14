@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/network"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
@@ -26,6 +27,11 @@ type NodeNetworkHandler struct {
 	svc     *network.NetworkStatService
 	nodeSvc *node.NodeService
 	grpc    *grpcserver.NodeAgentServer
+	rbacSvc *identity.RBACService
+}
+
+func (h *NodeNetworkHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
 }
 
 func NewNodeNetworkHandler(svc *network.NetworkStatService, nodeSvc *node.NodeService, grpc *grpcserver.NodeAgentServer) *NodeNetworkHandler {
@@ -98,7 +104,7 @@ func (h *NodeNetworkHandler) GetLatest(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
-		if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+		if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermNetworkRead) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}

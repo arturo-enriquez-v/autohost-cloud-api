@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
@@ -32,6 +33,11 @@ type BackupHandler struct {
 	jobSvc     *jobs.JobService
 	dispatcher dispatcher.ParamDispatcher
 	nodeSvc    *node.NodeService
+	rbacSvc    *identity.RBACService
+}
+
+func (h *BackupHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
 }
 
 func NewBackupHandler(
@@ -112,6 +118,18 @@ func (h *BackupHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	nodeID := chi.URLParam(r, "nodeId")
 	containerName := chi.URLParam(r, "containerName")
 
+	if h.rbacSvc != nil {
+		claims := middleware.GetClaims(r.Context())
+		if claims == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermBackupsRead); err != nil || !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
+
 	cfg, err := h.backupSvc.GetConfigByContainer(nodeID, containerName)
 	if err != nil {
 		if err == apps.ErrBackupNotFound {
@@ -152,6 +170,13 @@ func (h *BackupHandler) UpsertConfig(w http.ResponseWriter, r *http.Request) {
 
 	nodeID := chi.URLParam(r, "nodeId")
 	containerName := chi.URLParam(r, "containerName")
+
+	if h.rbacSvc != nil {
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermBackupsManage); err != nil || !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
 
 	var req upsertConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -213,6 +238,18 @@ func (h *BackupHandler) ListRecords(w http.ResponseWriter, r *http.Request) {
 	nodeID := chi.URLParam(r, "nodeId")
 	containerName := chi.URLParam(r, "containerName")
 
+	if h.rbacSvc != nil {
+		claims := middleware.GetClaims(r.Context())
+		if claims == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermBackupsRead); err != nil || !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
+
 	recs, err := h.backupSvc.ListRecordsByContainer(nodeID, containerName)
 	if err != nil {
 		http.Error(w, "failed to fetch backup records", http.StatusInternalServerError)
@@ -240,6 +277,13 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 
 	nodeID := chi.URLParam(r, "nodeId")
 	containerName := chi.URLParam(r, "containerName")
+
+	if h.rbacSvc != nil {
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermBackupsCreate); err != nil || !ok {
+			writeJSONError(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
 
 	cfg, err := h.backupSvc.GetConfigByContainer(nodeID, containerName)
 	if err != nil || cfg == nil {
@@ -388,6 +432,13 @@ func (h *BackupHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 	if err != nil || rec == nil {
 		http.Error(w, "backup record not found", http.StatusNotFound)
 		return
+	}
+
+	if h.rbacSvc != nil {
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, rec.NodeID, identity.PermBackupsRestore); err != nil || !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 	}
 
 	cfg, err := h.backupSvc.GetConfigByID(rec.BackupConfigID)
@@ -611,7 +662,12 @@ func (h *BackupHandler) DownloadBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if rec.UserID != claims.UserID {
+	if h.rbacSvc != nil {
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, rec.NodeID, identity.PermBackupsCreate); err != nil || !ok {
+			writeJSONError(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	} else if rec.UserID != claims.UserID {
 		writeJSONError(w, "forbidden", http.StatusForbidden)
 		return
 	}

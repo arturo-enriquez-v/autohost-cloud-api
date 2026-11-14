@@ -23,12 +23,18 @@ func NewAuthRepository(db *sqlx.DB) *AuthRepository {
 	return &AuthRepository{db: db}
 }
 
-// CreateUser crea un nuevo usuario.
+// CreateUser crea un nuevo usuario. El primer usuario de la instancia recibe automáticamente el rol 'admin'.
 func (r *AuthRepository) CreateUser(email, name, passwordHash string) (string, error) {
 	var id string
 	err := r.db.QueryRowContext(context.Background(), `
-		INSERT INTO users (email, name, password_hash)
-		VALUES ($1, $2, $3)
+		INSERT INTO users (email, name, password_hash, role, is_active)
+		VALUES (
+			$1,
+			$2,
+			$3,
+			CASE WHEN (SELECT COUNT(*) FROM users) = 0 THEN 'admin' ELSE 'member' END,
+			true
+		)
 		RETURNING id`, email, name, passwordHash).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("auth_repo.CreateUser: %w", err)
@@ -41,7 +47,7 @@ func (r *AuthRepository) CreateUser(email, name, passwordHash string) (string, e
 func (r *AuthRepository) FindUserByEmail(email string) (*identity.User, error) {
 	var model UserModel
 	err := r.db.Get(&model, `
-		SELECT id, email, name, avatar_url, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at 
+		SELECT id, email, name, avatar_url, role, is_active, created_by, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at 
 		FROM users 
 		WHERE email = $1`, email)
 
@@ -81,7 +87,7 @@ func (r *AuthRepository) RevokeRefreshToken(userID, tokenHash string) error {
 func (r *AuthRepository) FindUserByID(id string) (*identity.User, error) {
 	var model UserModel
 	err := r.db.Get(&model, `
-		SELECT id, email, name, avatar_url, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at 
+		SELECT id, email, name, avatar_url, role, is_active, created_by, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at 
 		FROM users 
 		WHERE id = $1`, id)
 
@@ -104,7 +110,7 @@ func (r *AuthRepository) UpdateUserProfile(userID string, name, avatarURL *strin
 		    avatar_url = COALESCE($2, avatar_url),
 		    updated_at = NOW()
 		WHERE id = $3
-		RETURNING id, email, name, avatar_url, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at`,
+		RETURNING id, email, name, avatar_url, role, is_active, created_by, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at`,
 		name, avatarURL, userID)
 
 	if err != nil {
@@ -122,7 +128,7 @@ func (r *AuthRepository) FindOrCreateOAuthUser(email, name, provider, providerID
 	// 1. Buscar por provider + provider_id
 	var model UserModel
 	err := r.db.Get(&model, `
-		SELECT id, email, name, avatar_url, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at
+		SELECT id, email, name, avatar_url, role, is_active, created_by, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at
 		FROM users
 		WHERE oauth_provider = $1 AND oauth_provider_id = $2`, provider, providerID)
 
@@ -132,7 +138,7 @@ func (r *AuthRepository) FindOrCreateOAuthUser(email, name, provider, providerID
 
 	// 2. Buscar por email — vincular OAuth a cuenta existente
 	err = r.db.Get(&model, `
-		SELECT id, email, name, avatar_url, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at
+		SELECT id, email, name, avatar_url, role, is_active, created_by, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at
 		FROM users
 		WHERE email = $1`, email)
 
@@ -149,10 +155,18 @@ func (r *AuthRepository) FindOrCreateOAuthUser(email, name, provider, providerID
 
 	// 3. Crear nuevo usuario (sin password)
 	var id string
+	var role string
 	err = r.db.QueryRowContext(context.Background(), `
-		INSERT INTO users (email, name, oauth_provider, oauth_provider_id)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id`, email, name, provider, providerID).Scan(&id)
+		INSERT INTO users (email, name, oauth_provider, oauth_provider_id, role, is_active)
+		VALUES (
+			$1,
+			$2,
+			$3,
+			$4,
+			CASE WHEN (SELECT COUNT(*) FROM users) = 0 THEN 'admin' ELSE 'member' END,
+			true
+		)
+		RETURNING id, role`, email, name, provider, providerID).Scan(&id, &role)
 	if err != nil {
 		return nil, fmt.Errorf("auth_repo.FindOrCreateOAuthUser: %w", err)
 	}
@@ -161,6 +175,8 @@ func (r *AuthRepository) FindOrCreateOAuthUser(email, name, provider, providerID
 		ID:              id,
 		Email:           email,
 		Name:            &name,
+		Role:            role,
+		IsActive:        true,
 		OAuthProvider:   &provider,
 		OAuthProviderID: &providerID,
 	}, nil
@@ -194,7 +210,7 @@ func (r *AuthRepository) CountUsers() (int, error) {
 func (r *AuthRepository) FindFirstUser() (*identity.User, error) {
 	var model UserModel
 	err := r.db.Get(&model, `
-		SELECT id, email, name, avatar_url, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at
+		SELECT id, email, name, avatar_url, role, is_active, created_by, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at
 		FROM users
 		ORDER BY created_at ASC
 		LIMIT 1`)
@@ -213,6 +229,9 @@ func userModelToDomain(m *UserModel) *identity.User {
 		Email:           m.Email,
 		Name:            m.Name,
 		AvatarURL:       m.AvatarURL,
+		Role:            m.Role,
+		IsActive:        m.IsActive,
+		CreatedBy:       m.CreatedBy,
 		PasswordHash:    m.PasswordHash,
 		OAuthProvider:   m.OAuthProvider,
 		OAuthProviderID: m.OAuthProviderID,

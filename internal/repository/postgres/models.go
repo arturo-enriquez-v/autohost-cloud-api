@@ -40,6 +40,9 @@ type UserModel struct {
 	Email           string    `db:"email"`
 	Name            *string   `db:"name"`
 	AvatarURL       *string   `db:"avatar_url"`
+	Role            string    `db:"role"`
+	IsActive        bool      `db:"is_active"`
+	CreatedBy       *string   `db:"created_by"`
 	PasswordHash    *string   `db:"password_hash"`
 	OAuthProvider   *string   `db:"oauth_provider"`
 	OAuthProviderID *string   `db:"oauth_provider_id"`
@@ -62,6 +65,10 @@ type NodeModel struct {
 	LastSeenAt   *time.Time `db:"last_seen_at"`
 	CreatedAt    time.Time  `db:"created_at"`
 	UpdatedAt    time.Time  `db:"updated_at"`
+	IsVM         bool       `db:"is_vm"`
+	VMID         *string    `db:"vm_id"`
+	HostNodeID   *string    `db:"host_node_id"`
+	HostHostname *string    `db:"host_hostname"`
 }
 
 // EnrollTokenModel representa la estructura de la tabla enroll_tokens

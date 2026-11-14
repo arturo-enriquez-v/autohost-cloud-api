@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
@@ -16,10 +17,15 @@ import (
 type NodeAlertHandler struct {
 	service     *node.NodeAlertService
 	nodeService *node.NodeService
+	rbacSvc     *identity.RBACService
 }
 
 func NewNodeAlertHandler(service *node.NodeAlertService, nodeService *node.NodeService) *NodeAlertHandler {
 	return &NodeAlertHandler{service: service, nodeService: nodeService}
+}
+
+func (h *NodeAlertHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
 }
 
 func (h *NodeAlertHandler) Routes() chi.Router {
@@ -38,9 +44,9 @@ func (h *NodeAlertHandler) GetByNode(w http.ResponseWriter, r *http.Request) {
 
 	nodeID := chi.URLParam(r, "nodeId")
 
-	// Verify the requesting user owns this node (prevents IDOR).
+	// Verify the requesting user has alerts:read permission on this node.
 	n, err := h.nodeService.GetByID(nodeID)
-	if err != nil || n == nil || n.OwnerID == nil || *n.OwnerID != claims.UserID {
+	if err != nil || n == nil || !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermAlertsRead) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -80,9 +86,9 @@ func (h *NodeAlertHandler) UpsertByNode(w http.ResponseWriter, r *http.Request) 
 
 	nodeID := chi.URLParam(r, "nodeId")
 
-	// Verify the requesting user owns this node (prevents IDOR).
+	// Verify the requesting user has alerts:manage permission on this node.
 	n, err := h.nodeService.GetByID(nodeID)
-	if err != nil || n == nil || n.OwnerID == nil || *n.OwnerID != claims.UserID {
+	if err != nil || n == nil || !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermAlertsManage) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}

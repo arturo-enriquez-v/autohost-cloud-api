@@ -279,7 +279,15 @@ func (s *VMService) ActionVM(ctx context.Context, vmID, userID, action string) e
 	}
 
 	if action == "destroy" {
-		return s.repo.Delete(ctx, vmID)
+		if err := s.repo.Delete(ctx, vmID); err != nil {
+			return err
+		}
+		if v.NodeID != nil && *v.NodeID != "" && s.nodeRepo != nil {
+			if err := s.nodeRepo.Delete(*v.NodeID); err != nil {
+				log.Printf("[VM Service] delete child node %s for destroyed vm %s: %v", *v.NodeID, vmID, err)
+			}
+		}
+		return nil
 	}
 
 	if action == "start" {
@@ -315,4 +323,19 @@ func (s *VMService) GetByID(ctx context.Context, vmID, userID string) (*VM, erro
 		return nil, ErrVMUnauthorized
 	}
 	return v, nil
+}
+
+// GetByIDUnchecked returns the VM record without OwnerID check (for RBAC-evaluated callers).
+func (s *VMService) GetByIDUnchecked(ctx context.Context, vmID string) (*VM, error) {
+	return s.repo.GetByID(ctx, vmID)
+}
+
+// ResolveHostOwnerID returns the OwnerID of a host node so RBAC-authorized members can operate on host VMs.
+func (s *VMService) ResolveHostOwnerID(hostNodeID, fallbackUserID string) string {
+	if s.nodeRepo != nil {
+		if n, err := s.nodeRepo.FindByID(hostNodeID); err == nil && n != nil && n.OwnerID != nil && *n.OwnerID != "" {
+			return *n.OwnerID
+		}
+	}
+	return fallbackUserID
 }

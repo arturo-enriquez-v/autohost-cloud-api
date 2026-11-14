@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
@@ -27,6 +28,11 @@ type NodeContainerHandler struct {
 	containerMetricSvc *node.ContainerMetricService
 	settingSvc         *node.ContainerSettingService
 	redis              *redis.Client
+	rbacSvc            *identity.RBACService
+}
+
+func (h *NodeContainerHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
 }
 
 func NewNodeContainerHandler(
@@ -86,13 +92,13 @@ func (h *NodeContainerHandler) streamContainers(w http.ResponseWriter, r *http.R
 
 	nodeID := chi.URLParam(r, "nodeId")
 
-	// Verify the node belongs to the authenticated user.
+	// Verify the user has containers:read permission on the node.
 	n, err := h.nodeSvc.GetByID(nodeID)
 	if err != nil || n == nil {
 		http.Error(w, "node not found", http.StatusNotFound)
 		return
 	}
-	if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+	if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermContainersRead) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -246,7 +252,7 @@ func (h *NodeContainerHandler) getContainerMetrics(w http.ResponseWriter, r *htt
 		http.Error(w, "node not found", http.StatusNotFound)
 		return
 	}
-	if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+	if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermContainersRead) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -325,7 +331,7 @@ func (h *NodeContainerHandler) getContainerSettings(w http.ResponseWriter, r *ht
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
-		if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+		if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermContainersRead) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -361,7 +367,7 @@ func (h *NodeContainerHandler) updateContainerSettings(w http.ResponseWriter, r 
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
-		if n.OwnerID == nil || *n.OwnerID != claims.UserID {
+		if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermContainersSettings) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}

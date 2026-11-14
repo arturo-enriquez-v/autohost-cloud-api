@@ -18,6 +18,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
@@ -29,6 +30,11 @@ type NodeTerminalHandler struct {
 	grpc    *grpcserver.NodeAgentServer
 	nodeSvc *node.NodeService
 	redis   *redis.Client
+	rbacSvc *identity.RBACService
+}
+
+func (h *NodeTerminalHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
 }
 
 func NewNodeTerminalHandler(grpc *grpcserver.NodeAgentServer, nodeSvc *node.NodeService, redis *redis.Client) *NodeTerminalHandler {
@@ -93,7 +99,12 @@ func (h *NodeTerminalHandler) HandleTerminalWS(w http.ResponseWriter, r *http.Re
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
-		if n.OwnerID != nil && *n.OwnerID != claims.UserID {
+		if h.rbacSvc != nil {
+			if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermTerminalExec) {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+		} else if n.OwnerID != nil && *n.OwnerID != claims.UserID {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}

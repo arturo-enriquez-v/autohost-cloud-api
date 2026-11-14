@@ -25,6 +25,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	pb "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb"
@@ -57,9 +58,14 @@ type transferTicket struct {
 type NodeFileHandler struct {
 	grpc    *grpcserver.NodeAgentServer
 	nodeSvc *node.NodeService
+	rbacSvc *identity.RBACService
 
 	ticketsMu sync.RWMutex
 	tickets   map[string]*transferTicket
+}
+
+func (h *NodeFileHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
 }
 
 func NewNodeFileHandler(grpc *grpcserver.NodeAgentServer, nodeSvc *node.NodeService) *NodeFileHandler {
@@ -117,7 +123,7 @@ func WithAuthorizedNode(ctx context.Context, n *node.Node) context.Context {
 	return context.WithValue(ctx, ctxKeyAuthorizedNode{}, n)
 }
 
-func (h *NodeFileHandler) authorizeNode(w http.ResponseWriter, r *http.Request, nodeID string) (*node.Node, bool) {
+func (h *NodeFileHandler) authorizeNode(w http.ResponseWriter, r *http.Request, nodeID string, requiredPerm ...string) (*node.Node, bool) {
 	if preAuth, ok := r.Context().Value(ctxKeyAuthorizedNode{}).(*node.Node); ok && preAuth != nil {
 		return preAuth, true
 	}
@@ -132,7 +138,11 @@ func (h *NodeFileHandler) authorizeNode(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, `{"error":"node not found"}`, http.StatusNotFound)
 		return nil, false
 	}
-	if n.OwnerID != nil && *n.OwnerID != claims.UserID {
+	perm := identity.PermFilesRead
+	if len(requiredPerm) > 0 && requiredPerm[0] != "" {
+		perm = requiredPerm[0]
+	}
+	if !checkNodeAccess(h.rbacSvc, n, claims.UserID, perm) {
 		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 		return nil, false
 	}
@@ -345,7 +355,7 @@ func sortFileEntries(entries []NodeFileEntry) {
 
 func (h *NodeFileHandler) MakeDirectory(w http.ResponseWriter, r *http.Request) {
 	nodeID := chi.URLParam(r, "nodeId")
-	targetNode, ok := h.authorizeNode(w, r, nodeID)
+	targetNode, ok := h.authorizeNode(w, r, nodeID, identity.PermFilesWrite)
 	if !ok {
 		return
 	}
@@ -398,7 +408,7 @@ func (h *NodeFileHandler) MakeDirectory(w http.ResponseWriter, r *http.Request) 
 
 func (h *NodeFileHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	nodeID := chi.URLParam(r, "nodeId")
-	targetNode, ok := h.authorizeNode(w, r, nodeID)
+	targetNode, ok := h.authorizeNode(w, r, nodeID, identity.PermFilesDelete)
 	if !ok {
 		return
 	}
@@ -447,7 +457,7 @@ func (h *NodeFileHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 
 func (h *NodeFileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	nodeID := chi.URLParam(r, "nodeId")
-	targetNode, ok := h.authorizeNode(w, r, nodeID)
+	targetNode, ok := h.authorizeNode(w, r, nodeID, identity.PermFilesWrite)
 	if !ok {
 		return
 	}
@@ -864,7 +874,7 @@ func (h *NodeFileHandler) TransferBetweenNodes(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	targetNode, ok := h.authorizeNode(w, r, req.TargetNodeID)
+	targetNode, ok := h.authorizeNode(w, r, req.TargetNodeID, identity.PermFilesWrite)
 	if !ok {
 		return
 	}

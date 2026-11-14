@@ -9,17 +9,26 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
+	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
 )
 
 type ScheduledTaskHandler struct {
 	service *jobs.ScheduledTaskService
+	nodeSvc *node.NodeService
+	rbac    *identity.RBACService
 }
 
 func NewScheduledTaskHandler(service *jobs.ScheduledTaskService) *ScheduledTaskHandler {
 	return &ScheduledTaskHandler{service: service}
+}
+
+func (h *ScheduledTaskHandler) SetRBACService(rbac *identity.RBACService, nodeSvc *node.NodeService) {
+	h.rbac = rbac
+	h.nodeSvc = nodeSvc
 }
 
 func (h *ScheduledTaskHandler) Routes() chi.Router {
@@ -75,6 +84,12 @@ func (h *ScheduledTaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.NodeID == "" || req.CommandID == "" || req.CommandName == "" || req.ScheduleType == "" {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
+	}
+	if h.nodeSvc != nil {
+		if _, status := checkNodeIDAccess(h.rbac, h.nodeSvc, req.NodeID, claims.UserID, identity.PermJobsManage); status != http.StatusOK {
+			http.Error(w, "forbidden", status)
+			return
+		}
 	}
 
 	enabled := true
