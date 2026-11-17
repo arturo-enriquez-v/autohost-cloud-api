@@ -78,7 +78,7 @@ func (h *JobHandler) Dispatch(w http.ResponseWriter, r *http.Request) {
 		requiredPerm := identity.PermJobsRun
 		if strings.HasPrefix(req.CommandName, "container.") {
 			parts := strings.Split(req.CommandName, ".")
-			if len(parts) >= 2 && (parts[1] == "start" || parts[1] == "stop" || parts[1] == "restart") {
+			if len(parts) >= 2 && (parts[1] == "start" || parts[1] == "stop" || parts[1] == "restart" || parts[1] == "remove") {
 				requiredPerm = identity.PermContainersAction
 			} else {
 				requiredPerm = identity.PermContainersDeploy
@@ -101,7 +101,7 @@ func (h *JobHandler) Dispatch(w http.ResponseWriter, r *http.Request) {
 	// Validate whether container action is locked
 	if strings.HasPrefix(req.CommandName, "container.") {
 		parts := strings.Split(req.CommandName, ".")
-		if len(parts) >= 3 && (parts[1] == "start" || parts[1] == "stop" || parts[1] == "restart") {
+		if len(parts) >= 3 && (parts[1] == "start" || parts[1] == "stop" || parts[1] == "restart" || parts[1] == "remove") {
 			containerName := strings.Join(parts[2:], ".")
 			if h.containerSettingSvc != nil && h.containerSettingSvc.IsContainerLocked(r.Context(), req.NodeID, containerName) {
 				http.Error(w, fmt.Sprintf("action blocked: container '%s' is locked", containerName), http.StatusForbidden)

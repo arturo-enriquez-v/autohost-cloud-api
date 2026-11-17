@@ -44,11 +44,39 @@ func (s *NodeAgentServer) ExecuteFileOperation(
 	transferURL string,
 	authToken string,
 ) (*pb.FileOperationResponsePayload, error) {
+	return s.sendFileOp(ctx, nodeID, &pb.FileOperationRequestPayload{
+		OpType:      opType,
+		Path:        path,
+		TransferUrl: transferURL,
+		AuthToken:   authToken,
+	})
+}
+
+// ExecuteFileRename sends a rename/move file operation request to the connected node agent.
+func (s *NodeAgentServer) ExecuteFileRename(
+	ctx context.Context,
+	nodeID string,
+	srcPath string,
+	destPath string,
+) (*pb.FileOperationResponsePayload, error) {
+	return s.sendFileOp(ctx, nodeID, &pb.FileOperationRequestPayload{
+		OpType:   pb.FileOpType_FILE_OP_RENAME,
+		Path:     srcPath,
+		DestPath: destPath,
+	})
+}
+
+func (s *NodeAgentServer) sendFileOp(
+	ctx context.Context,
+	nodeID string,
+	payload *pb.FileOperationRequestPayload,
+) (*pb.FileOperationResponsePayload, error) {
 	if !s.IsNodeConnected(nodeID) {
 		return nil, errors.New("node is not connected via gRPC")
 	}
 
 	reqID := uuid.NewString()
+	payload.RequestId = reqID
 	ch := make(chan *pb.FileOperationResponsePayload, 1)
 
 	s.fileOpsMu.Lock()
@@ -63,13 +91,7 @@ func (s *NodeAgentServer) ExecuteFileOperation(
 
 	msg := &pb.ServerMessage{
 		Payload: &pb.ServerMessage_FileOpRequest{
-			FileOpRequest: &pb.FileOperationRequestPayload{
-				RequestId:   reqID,
-				OpType:      opType,
-				Path:        path,
-				TransferUrl: transferURL,
-				AuthToken:   authToken,
-			},
+			FileOpRequest: payload,
 		},
 	}
 

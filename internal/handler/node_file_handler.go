@@ -90,6 +90,7 @@ func (h *NodeFileHandler) Routes() http.Handler {
 		protected.Use(middleware.Auth)
 		protected.Get("/{nodeId}", h.ListFiles)
 		protected.Post("/{nodeId}/mkdir", h.MakeDirectory)
+		protected.Post("/{nodeId}/rename", h.RenameFile)
 		protected.Delete("/{nodeId}", h.DeleteFile)
 		protected.Post("/{nodeId}/upload", h.UploadFile)
 		protected.Get("/{nodeId}/download", h.DownloadFile)
@@ -106,6 +107,7 @@ func (h *NodeFileHandler) NodeScopedRoutes() http.Handler {
 		protected.Use(middleware.Auth)
 		protected.Get("/", h.ListFiles)
 		protected.Post("/mkdir", h.MakeDirectory)
+		protected.Post("/rename", h.RenameFile)
 		protected.Delete("/", h.DeleteFile)
 		protected.Post("/upload", h.UploadFile)
 		protected.Get("/download", h.DownloadFile)
@@ -401,6 +403,71 @@ func (h *NodeFileHandler) MakeDirectory(w http.ResponseWriter, r *http.Request) 
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
 		"path":    filepath.Clean("/" + req.Path),
+	})
+}
+
+// ─── 2b. Rename File or Directory ───────────────────────────────────────────
+
+func (h *NodeFileHandler) RenameFile(w http.ResponseWriter, r *http.Request) {
+	nodeID := chi.URLParam(r, "nodeId")
+	targetNode, ok := h.authorizeNode(w, r, nodeID, identity.PermFilesWrite)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Path    string `json:"path"`
+		NewPath string `json:"new_path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Path) == "" || strings.TrimSpace(req.NewPath) == "" {
+		http.Error(w, `{"error":"path and new_path are required"}`, http.StatusBadRequest)
+		return
+	}
+
+	if targetNode.IsLocal {
+		baseDir := platform.SharedFilesDir()
+		srcAbs, _, err := platform.SafeSharedPath(baseDir, req.Path)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		destAbs, cleanedDest, err := platform.SafeSharedPath(baseDir, req.NewPath)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		if srcAbs == filepath.Clean(baseDir) || destAbs == filepath.Clean(baseDir) {
+			http.Error(w, `{"error":"cannot rename root shared directory"}`, http.StatusBadRequest)
+			return
+		}
+		if _, err := os.Stat(destAbs); err == nil {
+			http.Error(w, `{"error":"destination already exists"}`, http.StatusConflict)
+			return
+		}
+		if err := os.Rename(srcAbs, destAbs); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success":  true,
+			"new_path": cleanedDest,
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	if _, err := h.grpc.ExecuteFileRename(ctx, nodeID, req.Path, req.NewPath); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"success":  true,
+		"new_path": filepath.Clean("/" + req.NewPath),
 	})
 }
 

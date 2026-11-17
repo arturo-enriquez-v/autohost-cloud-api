@@ -340,6 +340,7 @@ enum FileOpType {
   FILE_OP_DELETE        = 2;  // Delete a file or directory inside shared folder
   FILE_OP_PUSH_TO_URL   = 3;  // Agent uploads a local shared file via HTTP POST to transfer_url
   FILE_OP_PULL_FROM_URL = 4;  // Agent downloads a file via HTTP GET from transfer_url into shared folder
+  FILE_OP_RENAME        = 5;  // Rename or move a file/directory inside shared folder
 }
 
 message FileOperationRequestPayload {
@@ -348,6 +349,7 @@ message FileOperationRequestPayload {
   string     path         = 3;  // Relative path inside node's shared directory
   string     transfer_url = 4;  // Used for PUSH_TO_URL and PULL_FROM_URL
   string     auth_token   = 5;  // One-time transfer token
+  string     dest_path    = 6;  // Destination relative path for FILE_OP_RENAME
 }
 
 message FileEntryInfo {
