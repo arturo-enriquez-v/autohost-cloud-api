@@ -30,6 +30,7 @@ import (
 
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
+	"github.com/arturo/autohost-cloud-api/internal/core/network"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
@@ -37,60 +38,22 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// SharePermission defines the access level for a shared folder link:
-//   - "read":   View folder contents, stream media, and download files.
-//   - "write":  "read" + upload new files and create subfolders.
-//   - "editor": "write" + delete files and folders inside the shared scope.
-type SharePermission string
+// Domain types live in core/network; aliases keep this handler's code unchanged.
+type (
+	SharePermission      = network.SharePermission
+	SharedFolderLink     = network.SharedFolderLink
+	TailscaleFunnelRoute = network.TailscaleFunnelRoute
+	shareAndFunnelState  = network.ShareFunnelState
+)
 
 const (
-	SharePermRead   SharePermission = "read"
-	SharePermWrite  SharePermission = "write"
-	SharePermEditor SharePermission = "editor"
+	SharePermRead   = network.SharePermRead
+	SharePermWrite  = network.SharePermWrite
+	SharePermEditor = network.SharePermEditor
 )
 
 func isValidSharePerm(p SharePermission) bool {
 	return p == SharePermRead || p == SharePermWrite || p == SharePermEditor
-}
-
-// SharedFolderLink represents a Google-Drive-style password-protected folder share.
-type SharedFolderLink struct {
-	ID            string          `json:"id"`
-	OwnerID       string          `json:"owner_id"`
-	NodeID        string          `json:"node_id"`
-	NodeName      string          `json:"node_name"`
-	FolderPath    string          `json:"folder_path"` // "/" for all folders, or "/specific/folder"
-	Title         string          `json:"title"`
-	Permission    SharePermission `json:"permission"` // "read" | "write" | "editor"
-	Password      string          `json:"password"`   // visible only to authenticated owner
-	FunnelEnabled bool            `json:"funnel_enabled"`
-	FunnelURL     string          `json:"funnel_url,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
-}
-
-// TailscaleFunnelRoute represents a Docker container exposed via Tailscale Funnel.
-type TailscaleFunnelRoute struct {
-	ID             string    `json:"id"`
-	FunnelPort     int       `json:"funnel_port"` // 443, 8443, or 10000
-	PathPrefix     string    `json:"path_prefix"` // "/" or "/app"
-	PublicURL      string    `json:"public_url"`
-	TargetNodeID   string    `json:"target_node_id"`
-	TargetNodeName string    `json:"target_node_name"`
-	TargetIP       string    `json:"target_ip"`
-	ContainerPort  int       `json:"container_port"`
-	Upstream       string    `json:"upstream"`
-	ContainerID    string    `json:"container_id,omitempty"`
-	ContainerName  string    `json:"container_name,omitempty"`
-	ContainerImage string    `json:"container_image,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-}
-
-type shareAndFunnelState struct {
-	FunnelDNSName string                  `json:"funnel_dns_name"`
-	Shares        []*SharedFolderLink     `json:"shares"`
-	FunnelRoutes  []*TailscaleFunnelRoute `json:"funnel_routes"`
-	UpdatedAt     time.Time               `json:"updated_at"`
 }
 
 type shareTokenClaims struct {
@@ -107,8 +70,9 @@ type PublicShareHandler struct {
 	jobService  *jobs.JobService
 	dispatcher  dispatcher.ParamDispatcher
 	rbacSvc     *identity.RBACService
+	store       network.GatewayStateStore
 	baseDir     string
-	statePath   string
+	statePath   string // legacy JSON state, imported into the DB once
 	mu          sync.RWMutex
 	state       *shareAndFunnelState
 	funnelLogs  []string
@@ -123,6 +87,7 @@ func NewPublicShareHandler(
 	fileHandler *NodeFileHandler,
 	jobService *jobs.JobService,
 	disp dispatcher.ParamDispatcher,
+	store network.GatewayStateStore,
 ) *PublicShareHandler {
 	baseDir := filepath.Join(platform.StorageDir(), "shares")
 	_ = os.MkdirAll(baseDir, 0700)
@@ -132,6 +97,7 @@ func NewPublicShareHandler(
 		fileHandler: fileHandler,
 		jobService:  jobService,
 		dispatcher:  disp,
+		store:       store,
 		baseDir:     baseDir,
 		statePath:   filepath.Join(baseDir, "state.json"),
 		state: &shareAndFunnelState{
@@ -149,7 +115,7 @@ func NewPublicShareHandler(
 			h.mu.Lock()
 			if h.state.FunnelDNSName == "" {
 				h.state.FunnelDNSName = dns
-				h.saveStateLocked()
+				_ = h.saveStateLocked()
 			}
 			h.mu.Unlock()
 		}
@@ -194,33 +160,123 @@ func (h *PublicShareHandler) FunnelRoutes() chi.Router {
 	return r
 }
 
+// loadState reads shares and funnel routes from Postgres. On the first start after the migration it
+// imports the legacy state.json (hashing the plaintext share passwords) and renames the file.
 func (h *PublicShareHandler) loadState() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	if h.store == nil {
+		log.Printf("[WARN] public shares: no state store configured; shares will not persist")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	st, err := h.store.LoadShareFunnelState(ctx)
+	if err != nil {
+		log.Printf("[ERROR] public shares: load state from database: %v", err)
+		return
+	}
+	h.state = st
+
+	if len(st.Shares) == 0 && len(st.FunnelRoutes) == 0 {
+		h.importLegacyStateLocked(ctx)
+	}
+}
+
+// legacyShareState mirrors the old state.json layout, where share passwords were stored in plaintext.
+type legacyShareState struct {
+	FunnelDNSName string `json:"funnel_dns_name"`
+	Shares        []struct {
+		SharedFolderLink
+		Password string `json:"password"`
+	} `json:"shares"`
+	FunnelRoutes []*TailscaleFunnelRoute `json:"funnel_routes"`
+}
+
+func (h *PublicShareHandler) importLegacyStateLocked(ctx context.Context) {
 	data, err := os.ReadFile(h.statePath)
 	if err != nil {
 		return
 	}
-	var st shareAndFunnelState
-	if err := json.Unmarshal(data, &st); err == nil {
-		if st.Shares == nil {
-			st.Shares = []*SharedFolderLink{}
-		}
-		if st.FunnelRoutes == nil {
-			st.FunnelRoutes = []*TailscaleFunnelRoute{}
-		}
-		h.state = &st
-	}
-}
-
-func (h *PublicShareHandler) saveStateLocked() {
-	h.state.UpdatedAt = time.Now().UTC()
-	data, err := json.MarshalIndent(h.state, "", "  ")
-	if err != nil {
+	var legacy legacyShareState
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		log.Printf("[WARN] public shares: cannot parse legacy %s: %v", h.statePath, err)
 		return
 	}
-	_ = os.MkdirAll(h.baseDir, 0700)
-	_ = os.WriteFile(h.statePath, data, 0600)
+
+	st := &shareAndFunnelState{
+		FunnelDNSName: legacy.FunnelDNSName,
+		Shares:        []*SharedFolderLink{},
+		FunnelRoutes:  []*TailscaleFunnelRoute{},
+	}
+	if st.FunnelDNSName == "" {
+		st.FunnelDNSName = h.state.FunnelDNSName
+	}
+	for _, ls := range legacy.Shares {
+		share := ls.SharedFolderLink
+		hash, err := platform.HashPassword(ls.Password)
+		if err != nil || ls.Password == "" {
+			log.Printf("[WARN] public shares: skipping legacy share %s without a usable password", share.ID)
+			continue
+		}
+		share.PasswordHash = hash
+		st.Shares = append(st.Shares, &share)
+	}
+	if legacy.FunnelRoutes != nil {
+		st.FunnelRoutes = legacy.FunnelRoutes
+	}
+
+	if err := h.store.SaveShareFunnelState(ctx, st); err != nil {
+		log.Printf("[ERROR] public shares: import legacy state into database: %v", err)
+		return
+	}
+	// Reload so rows dropped by foreign keys (deleted nodes/users) are reflected in memory.
+	if reloaded, err := h.store.LoadShareFunnelState(ctx); err == nil {
+		h.state = reloaded
+	} else {
+		h.state = st
+	}
+	if err := os.Rename(h.statePath, h.statePath+".migrated"); err != nil {
+		log.Printf("[WARN] public shares: imported legacy state but could not rename %s: %v", h.statePath, err)
+	}
+	log.Printf("[INFO] public shares: imported %d share(s) and %d funnel route(s) from legacy %s",
+		len(h.state.Shares), len(h.state.FunnelRoutes), h.statePath)
+}
+
+// saveStateLocked persists the in-memory state. Callers must hold h.mu.
+func (h *PublicShareHandler) saveStateLocked() error {
+	if h.store == nil {
+		return fmt.Errorf("no state store configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := h.store.SaveShareFunnelState(ctx, h.state); err != nil {
+		log.Printf("[ERROR] public shares: persist state: %v", err)
+		return err
+	}
+	return nil
+}
+
+// shareWithPassword is the create/update response: the plaintext password is included only when it was
+// just set or regenerated, since only its bcrypt hash is stored.
+type shareWithPassword struct {
+	*SharedFolderLink
+	Password string `json:"password,omitempty"`
+}
+
+// minSharePasswordLen is the minimum length for custom share passwords (generated ones are 12 chars).
+const minSharePasswordLen = 8
+
+func validateSharePassword(p string) error {
+	if len(p) < minSharePasswordLen {
+		return fmt.Errorf("share password must be at least %d characters", minSharePasswordLen)
+	}
+	if len(p) > 72 {
+		return fmt.Errorf("share password must be at most 72 characters")
+	}
+	return nil
 }
 
 func generateDefaultSharePassword() string {
@@ -403,6 +459,14 @@ func (h *PublicShareHandler) CreateShare(w http.ResponseWriter, r *http.Request)
 	pwd := strings.TrimSpace(req.Password)
 	if pwd == "" {
 		pwd = generateDefaultSharePassword()
+	} else if err := validateSharePassword(pwd); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+	pwdHash, err := platform.HashPassword(pwd)
+	if err != nil {
+		http.Error(w, `{"error":"could not secure share password"}`, http.StatusInternalServerError)
+		return
 	}
 
 	title := strings.TrimSpace(req.Title)
@@ -432,7 +496,7 @@ func (h *PublicShareHandler) CreateShare(w http.ResponseWriter, r *http.Request)
 		FolderPath:    cleanPath,
 		Title:         title,
 		Permission:    perm,
-		Password:      pwd,
+		PasswordHash:  pwdHash,
 		FunnelEnabled: req.FunnelEnabled,
 		FunnelURL:     funnelURL,
 		CreatedAt:     now,
@@ -440,16 +504,22 @@ func (h *PublicShareHandler) CreateShare(w http.ResponseWriter, r *http.Request)
 	}
 
 	h.state.Shares = append(h.state.Shares, share)
-	h.saveStateLocked()
+	if err := h.saveStateLocked(); err != nil {
+		h.state.Shares = h.state.Shares[:len(h.state.Shares)-1]
+		h.mu.Unlock()
+		http.Error(w, `{"error":"could not save share"}`, http.StatusInternalServerError)
+		return
+	}
 	h.mu.Unlock()
 
 	if req.FunnelEnabled {
 		go h.syncHostTailscaleFunnel()
 	}
 
+	// The plaintext password is returned only here (and when it is reset); only its hash is stored.
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(share)
+	_ = json.NewEncoder(w).Encode(shareWithPassword{SharedFolderLink: share, Password: pwd})
 }
 
 // PUT /v1/file-shares/{shareId}
@@ -465,11 +535,34 @@ func (h *PublicShareHandler) UpdateShare(w http.ResponseWriter, r *http.Request)
 		Title         *string          `json:"title"`
 		Permission    *SharePermission `json:"permission"`
 		Password      *string          `json:"password"`
-		FunnelEnabled *bool            `json:"funnel_enabled"`
+		// RegeneratePassword issues a new random password (returned once in the response).
+		RegeneratePassword bool  `json:"regenerate_password"`
+		FunnelEnabled      *bool `json:"funnel_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
 		return
+	}
+
+	// Hash a new password (custom or regenerated) before taking the lock: bcrypt is slow.
+	newPassword := ""
+	if req.RegeneratePassword {
+		newPassword = generateDefaultSharePassword()
+	} else if req.Password != nil && strings.TrimSpace(*req.Password) != "" {
+		newPassword = strings.TrimSpace(*req.Password)
+		if err := validateSharePassword(newPassword); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+	}
+	newHash := ""
+	if newPassword != "" {
+		hash, err := platform.HashPassword(newPassword)
+		if err != nil {
+			http.Error(w, `{"error":"could not secure share password"}`, http.StatusInternalServerError)
+			return
+		}
+		newHash = hash
 	}
 
 	h.mu.Lock()
@@ -488,8 +581,8 @@ func (h *PublicShareHandler) UpdateShare(w http.ResponseWriter, r *http.Request)
 			if req.Permission != nil && isValidSharePerm(*req.Permission) {
 				s.Permission = *req.Permission
 			}
-			if req.Password != nil && strings.TrimSpace(*req.Password) != "" {
-				s.Password = strings.TrimSpace(*req.Password)
+			if newHash != "" {
+				s.PasswordHash = newHash
 			}
 			if req.FunnelEnabled != nil {
 				s.FunnelEnabled = *req.FunnelEnabled
@@ -505,7 +598,12 @@ func (h *PublicShareHandler) UpdateShare(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if updated != nil {
-		h.saveStateLocked()
+		if err := h.saveStateLocked(); err != nil {
+			h.mu.Unlock()
+			h.loadState() // drop the unsaved in-memory change
+			http.Error(w, `{"error":"could not save share"}`, http.StatusInternalServerError)
+			return
+		}
 	}
 	h.mu.Unlock()
 
@@ -517,7 +615,7 @@ func (h *PublicShareHandler) UpdateShare(w http.ResponseWriter, r *http.Request)
 	go h.syncHostTailscaleFunnel()
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(updated)
+	_ = json.NewEncoder(w).Encode(shareWithPassword{SharedFolderLink: updated, Password: newPassword})
 }
 
 // DELETE /v1/file-shares/{shareId}
@@ -546,8 +644,14 @@ func (h *PublicShareHandler) DeleteShare(w http.ResponseWriter, r *http.Request)
 		filtered = append(filtered, s)
 	}
 	if found {
+		previous := h.state.Shares
 		h.state.Shares = filtered
-		h.saveStateLocked()
+		if err := h.saveStateLocked(); err != nil {
+			h.state.Shares = previous
+			h.mu.Unlock()
+			http.Error(w, `{"error":"could not delete share"}`, http.StatusInternalServerError)
+			return
+		}
 	}
 	h.mu.Unlock()
 
@@ -623,7 +727,7 @@ func (h *PublicShareHandler) UnlockPublicShare(w http.ResponseWriter, r *http.Re
 	}
 
 	inputPwd := strings.TrimSpace(req.Password)
-	if subtle.ConstantTimeCompare([]byte(inputPwd), []byte(found.Password)) != 1 {
+	if inputPwd == "" || found.PasswordHash == "" || platform.CheckPassword(found.PasswordHash, inputPwd) != nil {
 		http.Error(w, `{"error":"Contraseña incorrecta"}`, http.StatusUnauthorized)
 		return
 	}
@@ -1084,7 +1188,7 @@ func (h *PublicShareHandler) GetFunnelStatus(w http.ResponseWriter, r *http.Requ
 			dnsName = detected
 			h.mu.Lock()
 			h.state.FunnelDNSName = detected
-			h.saveStateLocked()
+			_ = h.saveStateLocked()
 			h.mu.Unlock()
 		}
 	}
@@ -1135,7 +1239,12 @@ func (h *PublicShareHandler) UpdateFunnelConfig(w http.ResponseWriter, r *http.R
 	for _, rt := range h.state.FunnelRoutes {
 		rt.PublicURL = buildFunnelPublicURL(cleanDNS, rt.FunnelPort, rt.PathPrefix)
 	}
-	h.saveStateLocked()
+	if err := h.saveStateLocked(); err != nil {
+		h.mu.Unlock()
+		h.loadState()
+		http.Error(w, `{"error":"could not save funnel configuration"}`, http.StatusInternalServerError)
+		return
+	}
 	h.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1254,7 +1363,12 @@ func (h *PublicShareHandler) UpsertFunnelRoute(w http.ResponseWriter, r *http.Re
 	if !replaced {
 		h.state.FunnelRoutes = append(h.state.FunnelRoutes, route)
 	}
-	h.saveStateLocked()
+	if err := h.saveStateLocked(); err != nil {
+		h.mu.Unlock()
+		h.loadState()
+		http.Error(w, `{"error":"could not save funnel route"}`, http.StatusInternalServerError)
+		return
+	}
 	h.mu.Unlock()
 
 	go h.syncHostTailscaleFunnel()
@@ -1292,8 +1406,14 @@ func (h *PublicShareHandler) DeleteFunnelRoute(w http.ResponseWriter, r *http.Re
 		http.Error(w, `{"error":"route not found"}`, http.StatusNotFound)
 		return
 	}
+	previousRoutes := h.state.FunnelRoutes
 	h.state.FunnelRoutes = filtered
-	h.saveStateLocked()
+	if err := h.saveStateLocked(); err != nil {
+		h.state.FunnelRoutes = previousRoutes
+		h.mu.Unlock()
+		http.Error(w, `{"error":"could not delete funnel route"}`, http.StatusInternalServerError)
+		return
+	}
 	h.mu.Unlock()
 
 	go h.syncHostTailscaleFunnel()

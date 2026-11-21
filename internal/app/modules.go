@@ -46,6 +46,7 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewNetworkStatRepository, fx.As(new(network.NetworkStatRepository))),
 	fx.Annotate(postgres.NewExternalLogRepository, fx.As(new(node.ExternalLogRepository))),
 	fx.Annotate(postgres.NewBackupRepository, fx.As(new(apps.BackupRepository))),
+	fx.Annotate(postgres.NewGatewayStateRepository, fx.As(new(network.GatewayStateStore))),
 	fx.Annotate(postgres.NewLogDiagnosticRepository, fx.As(new(node.LogDiagnosticRepository))),
 	fx.Annotate(postgres.NewClusterRepository, fx.As(new(infra.ClusterRepository))),
 	fx.Annotate(postgres.NewContainerSettingRepository, fx.As(new(node.ContainerSettingRepository))),

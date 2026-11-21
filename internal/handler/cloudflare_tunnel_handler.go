@@ -29,6 +29,7 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
+	"github.com/arturo/autohost-cloud-api/internal/core/network"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
@@ -41,36 +42,11 @@ const (
 	internalProxyBindAddr = "127.0.0.1:18080"
 )
 
-// CloudflareTunnelRoute represents a reverse-proxy route exposed through the Master Cloudflare Tunnel
-// and routed over Tailscale (or local loopback) to a container on any node.
-type CloudflareTunnelRoute struct {
-	Domain         string    `json:"domain"`
-	Subdomain      string    `json:"subdomain"`
-	BaseDomain     string    `json:"base_domain"`
-	TargetNodeID   string    `json:"target_node_id"`
-	TargetNodeName string    `json:"target_node_name"`
-	TargetIP       string    `json:"target_ip"`
-	Port           int       `json:"port"`
-	Upstream       string    `json:"upstream"`
-	ContainerID    string    `json:"container_id,omitempty"`
-	ContainerName  string    `json:"container_name,omitempty"`
-	ContainerImage string    `json:"container_image,omitempty"`
-	DNSConfigured  bool      `json:"dns_configured"`
-	DNSMessage     string    `json:"dns_message,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-}
-
-// CloudflareTunnelState is persisted to /var/lib/autohost/cloudflared/state.json.
-type CloudflareTunnelState struct {
-	TunnelID       string                   `json:"tunnel_id"`
-	TunnelName     string                   `json:"tunnel_name"`
-	BaseDomain     string                   `json:"base_domain"`
-	Mode           string                   `json:"mode"` // "managed" (1-click login) | "quick" (trycloudflare) | "token"
-	QuickTunnelURL string                   `json:"quick_tunnel_url,omitempty"`
-	Routes         []*CloudflareTunnelRoute `json:"routes"`
-	UpdatedAt      time.Time                `json:"updated_at"`
-}
+// Domain types live in core/network; aliases keep this handler's code unchanged.
+type (
+	CloudflareTunnelRoute = network.CloudflareTunnelRoute
+	CloudflareTunnelState = network.CloudflareTunnelState
+)
 
 // CloudflareTunnelStatusResponse is returned by GET /v1/cloudflare-tunnel/status.
 type CloudflareTunnelStatusResponse struct {
@@ -110,6 +86,7 @@ type CloudflareTunnelHandler struct {
 	tunnelLogs   []string
 	proxyServer  *http.Server
 	rbacSvc      *identity.RBACService
+	store        network.GatewayStateStore
 }
 
 func (h *CloudflareTunnelHandler) SetRBACService(rbac *identity.RBACService) {
@@ -151,6 +128,7 @@ func NewCloudflareTunnelHandler(
 	caddySvc *apps.CaddyRouteService,
 	jobService *jobs.JobService,
 	disp dispatcher.ParamDispatcher,
+	store network.GatewayStateStore,
 ) *CloudflareTunnelHandler {
 	baseDir := filepath.Join(platform.StorageDir(), "cloudflared")
 	cfHomeDir := filepath.Join(baseDir, ".cloudflared")
@@ -161,6 +139,7 @@ func NewCloudflareTunnelHandler(
 		caddySvc:   caddySvc,
 		jobService: jobService,
 		dispatcher: disp,
+		store:      store,
 		baseDir:    baseDir,
 		cfHomeDir:  cfHomeDir,
 		statePath:  filepath.Join(baseDir, "state.json"),
@@ -186,7 +165,7 @@ func NewCloudflareTunnelHandler(
 				if detected := h.detectZoneFromCert(); detected != "" {
 					h.mu.Lock()
 					h.state.BaseDomain = detected
-					h.saveStateLocked()
+					_ = h.saveStateLocked()
 					h.mu.Unlock()
 				}
 			}
@@ -298,40 +277,78 @@ func (h *CloudflareTunnelHandler) resolveUpstreamForHost(host string) string {
 	return ""
 }
 
+// loadState reads the tunnel configuration and routes from Postgres. On the first start after the
+// migration it imports the legacy state.json and renames it. Tunnel credentials stay on disk.
 func (h *CloudflareTunnelHandler) loadState() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	data, err := os.ReadFile(h.statePath)
-	if err != nil {
+	if h.store == nil {
+		log.Printf("[WARN] cloudflared: no state store configured; tunnel routes will not persist")
 		return
 	}
-	var st CloudflareTunnelState
-	if err := json.Unmarshal(data, &st); err == nil {
-		if st.TunnelName == "" {
-			st.TunnelName = defaultTunnelName
-		}
-		if st.Mode == "" {
-			st.Mode = "managed"
-		}
-		if st.Routes == nil {
-			st.Routes = []*CloudflareTunnelRoute{}
-		}
-		h.state = &st
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	st, err := h.store.LoadCloudflareTunnelState(ctx)
+	if err != nil {
+		log.Printf("[ERROR] cloudflared: load state from database: %v", err)
+		return
 	}
+	if st.TunnelID == "" && st.BaseDomain == "" && len(st.Routes) == 0 {
+		if imported := h.importLegacyStateLocked(ctx); imported != nil {
+			st = imported
+		}
+	}
+	if st.TunnelName == "" {
+		st.TunnelName = defaultTunnelName
+	}
+	if st.Mode == "" {
+		st.Mode = "managed"
+	}
+	if st.Routes == nil {
+		st.Routes = []*CloudflareTunnelRoute{}
+	}
+	h.state = st
 }
 
-func (h *CloudflareTunnelHandler) saveStateLocked() {
-	h.state.UpdatedAt = time.Now().UTC()
-	data, err := json.MarshalIndent(h.state, "", "  ")
+func (h *CloudflareTunnelHandler) importLegacyStateLocked(ctx context.Context) *CloudflareTunnelState {
+	data, err := os.ReadFile(h.statePath)
 	if err != nil {
-		log.Printf("[ERROR] marshal cloudflared state: %v", err)
-		return
+		return nil
 	}
-	_ = os.MkdirAll(h.baseDir, 0700)
-	if err := os.WriteFile(h.statePath, data, 0600); err != nil {
-		log.Printf("[ERROR] write cloudflared state: %v", err)
+	var legacy CloudflareTunnelState
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		log.Printf("[WARN] cloudflared: cannot parse legacy %s: %v", h.statePath, err)
+		return nil
 	}
+	if err := h.store.SaveCloudflareTunnelState(ctx, &legacy); err != nil {
+		log.Printf("[ERROR] cloudflared: import legacy state into database: %v", err)
+		return nil
+	}
+	reloaded, err := h.store.LoadCloudflareTunnelState(ctx)
+	if err != nil {
+		reloaded = &legacy
+	}
+	if err := os.Rename(h.statePath, h.statePath+".migrated"); err != nil {
+		log.Printf("[WARN] cloudflared: imported legacy state but could not rename %s: %v", h.statePath, err)
+	}
+	log.Printf("[INFO] cloudflared: imported tunnel state with %d route(s) from legacy %s", len(reloaded.Routes), h.statePath)
+	return reloaded
+}
+
+// saveStateLocked persists the in-memory state. Callers must hold h.mu.
+func (h *CloudflareTunnelHandler) saveStateLocked() error {
+	if h.store == nil {
+		return fmt.Errorf("no state store configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := h.store.SaveCloudflareTunnelState(ctx, h.state); err != nil {
+		log.Printf("[ERROR] cloudflared: persist state: %v", err)
+		return err
+	}
+	return nil
 }
 
 func (h *CloudflareTunnelHandler) appendLog(line string) {
@@ -650,7 +667,7 @@ func (h *CloudflareTunnelHandler) StartLogin(w http.ResponseWriter, r *http.Requ
 				h.mu.Lock()
 				h.state.BaseDomain = detectedDomain
 				h.state.Mode = "managed"
-				h.saveStateLocked()
+				_ = h.saveStateLocked()
 				h.mu.Unlock()
 			}
 			if err := h.ensureTunnelAndRun(); err != nil {
@@ -755,7 +772,7 @@ func (h *CloudflareTunnelHandler) ensureTunnelAndRun() error {
 		h.state.TunnelID = tunnelID
 		h.state.TunnelName = createName
 		h.state.Mode = "managed"
-		h.saveStateLocked()
+		_ = h.saveStateLocked()
 		h.mu.Unlock()
 	}
 
@@ -883,7 +900,7 @@ func (h *CloudflareTunnelHandler) StartQuickTunnel(w http.ResponseWriter, r *htt
 	}
 	h.state.Mode = "quick"
 	h.state.QuickTunnelURL = ""
-	h.saveStateLocked()
+	_ = h.saveStateLocked()
 	h.mu.Unlock()
 
 	cmd := exec.Command(binPath, "tunnel", "--url", "http://"+internalProxyBindAddr)
@@ -914,7 +931,7 @@ func (h *CloudflareTunnelHandler) StartQuickTunnel(w http.ResponseWriter, r *htt
 				h.mu.Lock()
 				if h.state.QuickTunnelURL == "" {
 					h.state.QuickTunnelURL = match
-					h.saveStateLocked()
+					_ = h.saveStateLocked()
 					select {
 					case foundCh <- match:
 					default:
@@ -985,8 +1002,14 @@ func (h *CloudflareTunnelHandler) UpdateConfig(w http.ResponseWriter, r *http.Re
 	}
 
 	h.mu.Lock()
+	previousDomain := h.state.BaseDomain
 	h.state.BaseDomain = cleanDomain
-	h.saveStateLocked()
+	if err := h.saveStateLocked(); err != nil {
+		h.state.BaseDomain = previousDomain
+		h.mu.Unlock()
+		http.Error(w, "could not save tunnel configuration", http.StatusInternalServerError)
+		return
+	}
 	h.mu.Unlock()
 
 	if h.isCertPresent() {
@@ -1024,7 +1047,7 @@ func (h *CloudflareTunnelHandler) Disconnect(w http.ResponseWriter, r *http.Requ
 	h.loginURL = ""
 	h.state.QuickTunnelURL = ""
 	_ = os.Remove(h.certPath())
-	h.saveStateLocked()
+	_ = h.saveStateLocked()
 	h.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1183,7 +1206,12 @@ func (h *CloudflareTunnelHandler) UpsertRoute(w http.ResponseWriter, r *http.Req
 		h.state.Routes = append(h.state.Routes, route)
 	}
 	tunnelID := h.state.TunnelID
-	h.saveStateLocked()
+	if err := h.saveStateLocked(); err != nil {
+		h.mu.Unlock()
+		h.loadState() // drop the unsaved in-memory change
+		http.Error(w, "could not save tunnel route", http.StatusInternalServerError)
+		return
+	}
 	h.mu.Unlock()
 
 	// Also sync to CaddyRoute table on Master node so existing Caddy views stay consistent
@@ -1220,7 +1248,7 @@ func (h *CloudflareTunnelHandler) UpsertRoute(w http.ResponseWriter, r *http.Req
 				h.mu.Lock()
 				route.DNSConfigured = dnsErr == nil
 				route.DNSMessage = outStr
-				h.saveStateLocked()
+				_ = h.saveStateLocked()
 				h.mu.Unlock()
 			}
 		}
@@ -1267,8 +1295,14 @@ func (h *CloudflareTunnelHandler) DeleteRoute(w http.ResponseWriter, r *http.Req
 		http.Error(w, "route not found", http.StatusNotFound)
 		return
 	}
+	previousRoutes := h.state.Routes
 	h.state.Routes = filtered
-	h.saveStateLocked()
+	if err := h.saveStateLocked(); err != nil {
+		h.state.Routes = previousRoutes
+		h.mu.Unlock()
+		http.Error(w, "could not delete tunnel route", http.StatusInternalServerError)
+		return
+	}
 	h.mu.Unlock()
 
 	if h.caddySvc != nil && h.nodeSvc != nil {
