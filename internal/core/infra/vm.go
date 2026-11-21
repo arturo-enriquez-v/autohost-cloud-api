@@ -21,10 +21,12 @@ import (
 )
 
 var (
-	ErrVMNotFound      = errors.New("vm not found")
-	ErrVMAlreadyExists = errors.New("vm with this name already exists on host")
-	ErrVMInvalidSpecs  = errors.New("invalid vm specifications")
-	ErrVMUnauthorized  = errors.New("unauthorized")
+	ErrVMNotFound          = errors.New("vm not found")
+	ErrVMAlreadyExists     = errors.New("vm with this name already exists on host")
+	ErrVMInvalidSpecs      = errors.New("invalid vm specifications")
+	ErrVMUnauthorized      = errors.New("unauthorized")
+	ErrHostNodeNotFound    = errors.New("host node not found")
+	ErrVMUnsupportedAction = errors.New("unsupported action")
 
 	// Backward compatibility aliases
 	ErrNotFound      = ErrVMNotFound
@@ -124,7 +126,7 @@ func (s *VMService) CreateVM(ctx context.Context, hostNodeID, userID string, req
 	// 1. Verify host node exists and belongs to the caller
 	hostNode, err := s.nodeRepo.FindByID(hostNodeID)
 	if err != nil || hostNode == nil {
-		return nil, errors.New("host node not found")
+		return nil, ErrHostNodeNotFound
 	}
 	if hostNode.OwnerID == nil || *hostNode.OwnerID != userID {
 		return nil, ErrVMUnauthorized
@@ -266,7 +268,7 @@ func (s *VMService) ActionVM(ctx context.Context, vmID, userID, action string) e
 	switch action {
 	case "start", "stop", "reboot", "destroy":
 	default:
-		return fmt.Errorf("unsupported action %q", action)
+		return fmt.Errorf("%w %q", ErrVMUnsupportedAction, action)
 	}
 
 	commandName := fmt.Sprintf("vm.%s.%s", action, v.Name)
@@ -305,7 +307,7 @@ func (s *VMService) ActionVM(ctx context.Context, vmID, userID, action string) e
 func (s *VMService) ListByHost(ctx context.Context, hostNodeID, userID string) ([]*VM, error) {
 	hostNode, err := s.nodeRepo.FindByID(hostNodeID)
 	if err != nil || hostNode == nil {
-		return nil, errors.New("host node not found")
+		return nil, ErrHostNodeNotFound
 	}
 	if hostNode.OwnerID == nil || *hostNode.OwnerID != userID {
 		return nil, ErrVMUnauthorized

@@ -5,6 +5,8 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -90,7 +92,7 @@ func (h *VMHandler) createVM(w http.ResponseWriter, r *http.Request) {
 
 	created, err := h.vmService.CreateVM(r.Context(), nodeID, ownerID, req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeVMError(w, "create vm", err)
 		return
 	}
 
@@ -116,7 +118,7 @@ func (h *VMHandler) listVMs(w http.ResponseWriter, r *http.Request) {
 
 	list, err := h.vmService.ListByHost(r.Context(), nodeID, ownerID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeVMError(w, "list vms", err)
 		return
 	}
 
@@ -153,7 +155,7 @@ func (h *VMHandler) getVM(w http.ResponseWriter, r *http.Request) {
 
 	v, err := h.vmService.GetByID(r.Context(), vmID, claims.UserID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeVMError(w, "get vm", err)
 		return
 	}
 
@@ -196,7 +198,7 @@ func (h *VMHandler) actionVM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.vmService.ActionVM(r.Context(), vmID, ownerID, body.Action); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeVMError(w, "vm action", err)
 		return
 	}
 
@@ -227,11 +229,29 @@ func (h *VMHandler) deleteVM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.vmService.ActionVM(r.Context(), vmID, ownerID, "destroy"); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeVMError(w, "delete vm", err)
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// writeVMError maps VM service errors to HTTP statuses. Validation errors keep their message; unexpected
+// errors (database, job dispatch) are logged and answered with a generic message.
+func writeVMError(w http.ResponseWriter, op string, err error) {
+	switch {
+	case errors.Is(err, infra.ErrVMInvalidSpecs), errors.Is(err, infra.ErrVMUnsupportedAction):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, infra.ErrVMNotFound), errors.Is(err, infra.ErrHostNodeNotFound):
+		http.Error(w, err.Error(), http.StatusNotFound)
+	case errors.Is(err, infra.ErrVMAlreadyExists):
+		http.Error(w, err.Error(), http.StatusConflict)
+	case errors.Is(err, infra.ErrVMUnauthorized):
+		http.Error(w, "forbidden", http.StatusForbidden)
+	default:
+		log.Printf("[ERROR] %s: %v", op, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
 }
 
 // nodePerm returns the route-level node authorization middleware (see requireNodePerm).

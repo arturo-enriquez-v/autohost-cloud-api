@@ -6,6 +6,8 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
@@ -72,6 +74,20 @@ func (h *ClusterHandler) canEnrollNode(ctx context.Context, userID, nodeID strin
 	return err == nil && ok
 }
 
+// writeClusterError maps cluster service errors to HTTP statuses. Validation errors keep their message;
+// unexpected errors (database, job dispatch) are logged and answered with a generic message.
+func writeClusterError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, infra.ErrInvalidClusterData), errors.Is(err, infra.ErrManagerRequired), errors.Is(err, infra.ErrNodeNoVPNIP):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, infra.ErrClusterNotFound), errors.Is(err, infra.ErrServiceNotFound), errors.Is(err, infra.ErrNodeNotFound):
+		http.Error(w, err.Error(), http.StatusNotFound)
+	default:
+		log.Printf("[ERROR] cluster: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
+}
+
 func (h *ClusterHandler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Use(middleware.Auth)
@@ -103,7 +119,7 @@ func (h *ClusterHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	clusters, err := h.service.ListClusters(r.Context(), claims.UserID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeClusterError(w, err)
 		return
 	}
 
@@ -143,7 +159,7 @@ func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	det, err := h.service.CreateCluster(r.Context(), claims.UserID, req.Name, req.ManagerNodeID, req.WorkerNodeIDs)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeClusterError(w, err)
 		return
 	}
 
@@ -159,7 +175,7 @@ func (h *ClusterHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	}
 	det, err := h.service.GetClusterWithDetails(r.Context(), c.ID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeClusterError(w, err)
 		return
 	}
 
@@ -173,7 +189,7 @@ func (h *ClusterHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.service.DeleteCluster(r.Context(), c.ID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeClusterError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -212,7 +228,7 @@ func (h *ClusterHandler) AddNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.AddNodeToCluster(r.Context(), clusterID, req.NodeID, req.Role); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeClusterError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -231,7 +247,7 @@ func (h *ClusterHandler) RemoveNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.service.RemoveNodeFromCluster(r.Context(), clusterID, nodeID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeClusterError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -263,7 +279,7 @@ func (h *ClusterHandler) CreateService(w http.ResponseWriter, r *http.Request) {
 
 	svc, err := h.service.CreateService(r.Context(), clusterID, req.Name, req.Image, req.Ports, req.EnvVars, req.Replicas)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeClusterError(w, err)
 		return
 	}
 
@@ -293,7 +309,7 @@ func (h *ClusterHandler) ScaleService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.ScaleService(r.Context(), serviceID, req.Replicas); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeClusterError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -307,7 +323,7 @@ func (h *ClusterHandler) DeleteService(w http.ResponseWriter, r *http.Request) {
 	}
 	serviceID := svc.ID
 	if err := h.service.DeleteService(r.Context(), serviceID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeClusterError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -321,7 +337,7 @@ func (h *ClusterHandler) GetAutoscaling(w http.ResponseWriter, r *http.Request) 
 	serviceID := svc.ID
 	policy, err := h.service.GetAutoscaling(r.Context(), serviceID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeClusterError(w, err)
 		return
 	}
 	if policy == nil {
@@ -346,7 +362,7 @@ func (h *ClusterHandler) ConfigureAutoscaling(w http.ResponseWriter, r *http.Req
 
 	saved, err := h.service.ConfigureAutoscaling(r.Context(), serviceID, &policy)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeClusterError(w, err)
 		return
 	}
 
