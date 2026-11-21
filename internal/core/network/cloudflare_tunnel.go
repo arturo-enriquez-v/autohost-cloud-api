@@ -6,7 +6,9 @@ package network
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -577,34 +579,96 @@ func (t *CloudflareTunnel) commandEnv() []string {
 	return append(out, "HOME="+t.cfg.BaseDir, "TUNNEL_ORIGIN_CERT="+t.certPath())
 }
 
-// ensureBinary locates cloudflared or downloads the official static binary if missing.
-// NOTE: the download is not checksum-verified.
+// Pinned cloudflared release downloaded when no system binary is installed. The SHA-256 values come from the
+// release notes and were verified against the downloaded assets. To use another release set both
+// CLOUDFLARED_VERSION and CLOUDFLARED_SHA256 (hash of the binary for this host's architecture).
+const pinnedCloudflaredVersion = "2026.10.7"
+
+var pinnedCloudflaredSHA256 = map[string]string{
+	"amd64": "1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872",
+	"arm64": "3df43aedc9ff291d1735b5cb576cb97e0b157488796db2e32b28aecabb445775",
+	"arm":   "74f690f6707182839b63e0465726c7776dd63f0a174390b911d5d71f35cab94e",
+}
+
+var (
+	sha256HexRe          = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	cloudflaredVersionRe = regexp.MustCompile(`^[0-9A-Za-z._-]{1,40}$`)
+)
+
+// cloudflaredDownloadBase is the release download URL prefix (var for tests).
+var cloudflaredDownloadBase = "https://github.com/cloudflare/cloudflared/releases/download"
+
+// maxCloudflaredSize caps the download (current binaries are ~40 MB).
+const maxCloudflaredSize = 200 << 20
+
+// cloudflaredRelease returns the version, architecture and expected SHA-256 of the binary to install.
+func cloudflaredRelease() (version, arch, sum string, err error) {
+	switch runtime.GOARCH {
+	case "amd64", "arm64", "arm":
+		arch = runtime.GOARCH
+	default:
+		return "", "", "", fmt.Errorf("no cloudflared binary available for architecture %s; install cloudflared manually", runtime.GOARCH)
+	}
+	envVersion := strings.TrimSpace(os.Getenv("CLOUDFLARED_VERSION"))
+	envSum := strings.ToLower(strings.TrimSpace(os.Getenv("CLOUDFLARED_SHA256")))
+	switch {
+	case envVersion == "" && envSum == "":
+		return pinnedCloudflaredVersion, arch, pinnedCloudflaredSHA256[arch], nil
+	case envVersion == "" || envSum == "":
+		return "", "", "", errors.New("CLOUDFLARED_VERSION and CLOUDFLARED_SHA256 must be set together")
+	case !sha256HexRe.MatchString(envSum):
+		return "", "", "", errors.New("CLOUDFLARED_SHA256 must be a hex-encoded SHA-256")
+	case !cloudflaredVersionRe.MatchString(envVersion):
+		return "", "", "", errors.New("invalid CLOUDFLARED_VERSION")
+	}
+	return envVersion, arch, envSum, nil
+}
+
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// ensureBinary returns a cloudflared binary to run. A system-installed binary (PATH, /usr/local/bin,
+// /usr/bin) is trusted as installed by the administrator. Otherwise the pinned release is downloaded into
+// BaseDir/bin and its SHA-256 verified before it is ever executed; a previously downloaded binary that does not
+// match the expected hash (e.g. an unverified "latest" download from older versions) is replaced.
 func (t *CloudflareTunnel) ensureBinary() (string, error) {
 	if p, err := exec.LookPath("cloudflared"); err == nil && p != "" {
 		return p, nil
 	}
-	for _, candidate := range []string{"/usr/local/bin/cloudflared", "/usr/bin/cloudflared", filepath.Join(t.cfg.BaseDir, "bin", "cloudflared")} {
+	for _, candidate := range []string{"/usr/local/bin/cloudflared", "/usr/bin/cloudflared"} {
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			return candidate, nil
 		}
 	}
 
-	arch := "amd64"
-	switch runtime.GOARCH {
-	case "arm64":
-		arch = "arm64"
-	case "arm":
-		arch = "arm"
+	version, arch, wantSum, err := cloudflaredRelease()
+	if err != nil {
+		return "", err
 	}
-	dlURL := fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-%s", arch)
 	binDir := filepath.Join(t.cfg.BaseDir, "bin")
+	destPath := filepath.Join(binDir, "cloudflared")
+	if got, err := fileSHA256(destPath); err == nil {
+		if got == wantSum {
+			return destPath, nil
+		}
+		log.Printf("[CLOUDFLARE-GATEWAY] %s does not match the expected SHA-256 for cloudflared %s; replacing it", destPath, version)
+	}
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		return "", err
 	}
-	destPath := filepath.Join(binDir, "cloudflared")
-	tmpPath := destPath + ".tmp"
 
-	log.Printf("[CLOUDFLARE-GATEWAY] Downloading cloudflared binary from %s ...", dlURL)
+	dlURL := fmt.Sprintf("%s/%s/cloudflared-linux-%s", strings.TrimRight(cloudflaredDownloadBase, "/"), version, arch)
+	log.Printf("[CLOUDFLARE-GATEWAY] Downloading cloudflared %s from %s ...", version, dlURL)
 	resp, err := (&http.Client{Timeout: 90 * time.Second}).Get(dlURL)
 	if err != nil {
 		return "", fmt.Errorf("download cloudflared: %w", err)
@@ -613,19 +677,35 @@ func (t *CloudflareTunnel) ensureBinary() (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("download cloudflared returned HTTP %d", resp.StatusCode)
 	}
-	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+
+	tmp, err := os.CreateTemp(binDir, ".cloudflared-*.tmp")
 	if err != nil {
 		return "", err
 	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		f.Close()
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) // no-op after a successful rename
+
+	h := sha256.New()
+	n, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(resp.Body, maxCloudflaredSize+1))
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return "", fmt.Errorf("download cloudflared: %w", err)
+	}
+	if n > maxCloudflaredSize {
+		return "", fmt.Errorf("download cloudflared: file exceeds %d bytes", maxCloudflaredSize)
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); got != wantSum {
+		return "", fmt.Errorf("cloudflared %s checksum mismatch: expected %s, got %s; refusing to install", version, wantSum, got)
+	}
+	if err := os.Chmod(tmpPath, 0755); err != nil {
 		return "", err
 	}
-	f.Close()
 	if err := os.Rename(tmpPath, destPath); err != nil {
 		return "", err
 	}
-	log.Printf("[CLOUDFLARE-GATEWAY] Installed cloudflared at %s", destPath)
+	log.Printf("[CLOUDFLARE-GATEWAY] Installed cloudflared %s at %s (SHA-256 verified)", version, destPath)
 	return destPath, nil
 }
 
