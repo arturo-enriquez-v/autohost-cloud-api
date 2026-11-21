@@ -298,6 +298,14 @@ func (h *ProjectHandler) RemoveNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Only detach the node from this project: without this check, managing any project would allow
+	// detaching a node from a different project (revoking the access its members inherit).
+	n, err := h.nodeService.GetByID(nodeID)
+	if err != nil || n == nil || n.ProjectID == nil || *n.ProjectID != projectID {
+		http.Error(w, "node not found in this project", http.StatusNotFound)
+		return
+	}
+
 	if err := h.nodeService.RemoveFromProject(nodeID); err != nil {
 		log.Printf("[ERROR] remove node from project: %v", err)
 		http.Error(w, "could not remove node", http.StatusInternalServerError)
@@ -391,8 +399,12 @@ func (h *ProjectHandler) AssignMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.rbacSvc.AssignProjectMember(claims.UserID, projectID, req.UserID, req.DefaultRole, req.AllNodes, req.DefaultPermissions, req.NodePermissions); err != nil {
-		if errors.Is(err, identity.ErrUserNotFound) {
-			http.Error(w, "user not found", http.StatusNotFound)
+		if errors.Is(err, identity.ErrUserNotFound) || errors.Is(err, identity.ErrNodeNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, identity.ErrNodeNotInProject) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		log.Printf("[ERROR] assign project member: %v", err)

@@ -25,17 +25,19 @@ var (
 
 // Job represents a single execution request sent to a node.
 type Job struct {
-	ID          string      `db:"id"`
-	NodeID      string      `db:"node_id"`
-	CommandName string      `db:"command_name"`
-	CommandType CommandType `db:"command_type"`
-	Status      JobStatus   `db:"status"`
-	Params      string      `db:"params"` // JSON-encoded params for parameterized commands
-	Output      string      `db:"output"`
-	Error       string      `db:"error"`
-	CreatedAt   time.Time   `db:"created_at"`
-	StartedAt   *time.Time  `db:"started_at"`
-	FinishedAt  *time.Time  `db:"finished_at"`
+	ID          string      `db:"id" json:"id"`
+	NodeID      string      `db:"node_id" json:"node_id"`
+	CommandName string      `db:"command_name" json:"command_name"`
+	CommandType CommandType `db:"command_type" json:"command_type"`
+	Status      JobStatus   `db:"status" json:"status"`
+	// Params is the JSON-encoded input of parameterized commands. It is never serialized to API clients:
+	// internal jobs carry secrets in it (e.g. vm.create's enrollment token, swarm join tokens).
+	Params     string     `db:"params" json:"-"`
+	Output     string     `db:"output" json:"output"`
+	Error      string     `db:"error" json:"error"`
+	CreatedAt  time.Time  `db:"created_at" json:"created_at"`
+	StartedAt  *time.Time `db:"started_at" json:"started_at"`
+	FinishedAt *time.Time `db:"finished_at" json:"finished_at"`
 }
 
 // JobRepository defines the persistence contract for jobs.

@@ -19,6 +19,10 @@ var (
 	ErrCannotDeleteSelf      = errors.New("cannot delete your own account")
 	ErrCannotDemoteLastAdmin = errors.New("cannot remove or deactivate the last active administrator")
 	ErrInvalidRole           = errors.New("invalid role: must be 'admin' or 'member'")
+	ErrCredentialsRequired   = errors.New("email and password are required")
+	ErrNodeIDRequired        = errors.New("node_id is required")
+	ErrNodeNotFound          = errors.New("node not found")
+	ErrNodeNotInProject      = errors.New("node does not belong to this project")
 )
 
 // ProjectMembership represents a user's assignment to a project.
@@ -261,7 +265,7 @@ func (s *RBACService) CreateUser(actorID string, in CreateUserInput) (*UserWithP
 	email := strings.ToLower(strings.TrimSpace(in.Email))
 	name := strings.TrimSpace(in.Name)
 	if email == "" || in.Password == "" {
-		return nil, errors.New("email and password are required")
+		return nil, ErrCredentialsRequired
 	}
 
 	role := strings.ToLower(strings.TrimSpace(in.Role))
@@ -440,7 +444,7 @@ func (s *RBACService) SetUserPermissions(actorID, targetUserID string, projects 
 // UpsertNodePermission sets or updates a user's granular permissions for a single node.
 func (s *RBACService) UpsertNodePermission(actorID, targetUserID string, in NodePermissionGrantInput) (*NodePermissionGrant, error) {
 	if in.NodeID == "" {
-		return nil, errors.New("node_id is required")
+		return nil, ErrNodeIDRequired
 	}
 	target, err := s.repo.GetUserByID(context.Background(), targetUserID)
 	if err != nil {
@@ -455,7 +459,7 @@ func (s *RBACService) UpsertNodePermission(actorID, targetUserID string, in Node
 		return nil, err
 	}
 	if !exists {
-		return nil, errors.New("node not found")
+		return nil, ErrNodeNotFound
 	}
 
 	projectID := in.ProjectID
@@ -511,6 +515,21 @@ func (s *RBACService) AssignProjectMember(actorID, projectID, targetUserID strin
 	}
 	if target == nil {
 		return ErrUserNotFound
+	}
+
+	// Project managers may only grant access to nodes inside their project. Validate every node before
+	// writing anything, so a rejected request leaves no partial membership behind.
+	for _, np := range nodePerms {
+		nodeProjID, _, exists, err := s.repo.GetNodeProjectAndOwner(context.Background(), np.NodeID)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return ErrNodeNotFound
+		}
+		if nodeProjID == nil || *nodeProjID != projectID {
+			return ErrNodeNotInProject
+		}
 	}
 
 	preset, perms := ResolveNodePermissions(defaultRole, defaultPerms)

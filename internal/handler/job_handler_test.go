@@ -16,6 +16,7 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
+	"github.com/go-chi/chi/v5"
 )
 
 type mockSettingRepo struct {
@@ -162,5 +163,59 @@ func TestJobHandler_Dispatch_DeniedWithoutPermission(t *testing.T) {
 	h.Dispatch(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for a user without access, got %d", rec.Code)
+	}
+}
+
+// jobRepo is an in-memory jobs.JobRepository holding one job.
+type jobRepo struct{ job *jobs.Job }
+
+func (r *jobRepo) Create(j *jobs.Job) (*jobs.Job, error) { return j, nil }
+func (r *jobRepo) FindByID(id string) (*jobs.Job, error) {
+	if r.job == nil || r.job.ID != id {
+		return nil, jobs.ErrJobNotFound
+	}
+	return r.job, nil
+}
+func (r *jobRepo) FindByNodeID(string) ([]*jobs.Job, error) { return []*jobs.Job{r.job}, nil }
+func (r *jobRepo) FindPendingByNodeID(string, jobs.CommandType) ([]*jobs.Job, error) {
+	return nil, nil
+}
+func (r *jobRepo) UpdateStatus(string, jobs.JobStatus, string, string) error { return nil }
+
+// Jobs are serialized in snake_case and never expose params, which may hold secrets such as
+// vm.create's enrollment token.
+func TestJobHandler_GetJob_SnakeCaseWithoutParams(t *testing.T) {
+	repo := &jobRepo{job: &jobs.Job{
+		ID: "job-1", NodeID: "node-123", CommandName: "vm.create", CommandType: jobs.CommandTypeDefault,
+		Status: jobs.StatusPending, Params: `{"enroll_token":"secret-token"}`,
+	}}
+	h := handler.NewJobHandler(jobs.NewJobService(repo), &dummyDispatcher{}, nil)
+	h.SetRBACService(ownerRBAC())
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "job-1")
+	req := httptest.NewRequest(http.MethodGet, "/v1/jobs/job-1", nil)
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	req = req.WithContext(middleware.ContextWithClaims(ctx, &middleware.Claims{UserID: "user-1"}))
+	rec := httptest.NewRecorder()
+	h.GetJob(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("secret-token")) {
+		t.Fatalf("response leaks job params: %s", rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("response is not JSON: %v", err)
+	}
+	for _, k := range []string{"id", "node_id", "command_name", "command_type", "status", "output", "error", "created_at", "started_at", "finished_at"} {
+		if _, ok := got[k]; !ok {
+			t.Errorf("missing field %q in %v", k, got)
+		}
+	}
+	if _, ok := got["params"]; ok {
+		t.Errorf("params must not be serialized")
 	}
 }

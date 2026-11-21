@@ -118,11 +118,13 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, identity.ErrUserAlreadyExists):
 			response.RespondError(w, http.StatusConflict, "email already exists")
-		case errors.Is(err, identity.ErrInvalidRole):
+		case errors.Is(err, identity.ErrInvalidRole), errors.Is(err, identity.ErrCredentialsRequired):
 			response.RespondError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, identity.ErrNodeNotFound):
+			response.RespondError(w, http.StatusNotFound, err.Error())
 		default:
 			log.Printf("[ERROR] create user: %v", err)
-			response.RespondError(w, http.StatusBadRequest, err.Error())
+			response.RespondError(w, http.StatusInternalServerError, "could not create user")
 		}
 		return
 	}
@@ -292,12 +294,15 @@ func (h *UserHandler) UpsertNodePermission(w http.ResponseWriter, r *http.Reques
 
 	grant, err := h.rbacSvc.UpsertNodePermission(actorID, targetID, in)
 	if err != nil {
-		if errors.Is(err, identity.ErrUserNotFound) {
-			response.RespondError(w, http.StatusNotFound, "user not found")
-			return
+		switch {
+		case errors.Is(err, identity.ErrUserNotFound), errors.Is(err, identity.ErrNodeNotFound):
+			response.RespondError(w, http.StatusNotFound, err.Error())
+		case errors.Is(err, identity.ErrNodeIDRequired):
+			response.RespondError(w, http.StatusBadRequest, err.Error())
+		default:
+			log.Printf("[ERROR] upsert node permission (user=%s node=%s): %v", targetID, nodeID, err)
+			response.RespondError(w, http.StatusInternalServerError, "could not update node permission")
 		}
-		log.Printf("[ERROR] upsert node permission (user=%s node=%s): %v", targetID, nodeID, err)
-		response.RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
