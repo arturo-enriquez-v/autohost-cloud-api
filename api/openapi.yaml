@@ -86,6 +86,15 @@ tags:
 
       **Scheduled backups are not implemented yet**: `cron_expression` and `enabled` are stored, but backups
       only run through `POST /v1/backups/run/{nodeId}/{containerName}`.
+  - name: Virtual machines
+    description: |
+      KVM virtual machines on hypervisor nodes. A new VM boots with cloud-init and enrolls itself as an
+      AutoHost node, so it then appears in `GET /v1/nodes` with `is_vm: true`.
+  - name: Clusters
+    description: |
+      Docker Swarm clusters across nodes, connected over the VPN. Only the cluster owner (or an admin)
+      can see and manage a cluster; adding a node requires `node:update` on it, since the cluster can then
+      schedule workloads there.
   - name: Node commands
     description: |
       Commands a node exposes to the dashboard: built-in ones and custom `.sh` scripts the agent discovers.
@@ -2762,6 +2771,613 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/nodes/{nodeId}/vms:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      operationId: listNodeVMs
+      tags: [Virtual machines]
+      summary: List a node's virtual machines
+      description: Requires `vms:read` on the host node.
+      responses:
+        "200":
+          description: The VMs hosted on the node.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VM"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      operationId: createVM
+      tags: [Virtual machines]
+      summary: Create a virtual machine
+      description: |
+        Requires `vms:manage` on the host node. The VM is created asynchronously: the record starts as
+        `creating` and becomes `running` once the agent has booted it. Out-of-range specs are clamped
+        (1–64 vCPUs, 512 MB–256 GB RAM, 5–2000 GB disk); missing ones get defaults.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVMRequest"
+      responses:
+        "201":
+          description: VM created, being provisioned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VM"
+        "400":
+          description: Invalid name or malformed JSON.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["invalid vm specifications: name must be 1-64 chars [a-zA-Z0-9_-]"]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The host node does not exist.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [host node not found]
+        "409":
+          description: A VM with this name already exists on the host.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/node-vms/{nodeId}:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      operationId: listNodeVMsLegacy
+      deprecated: true
+      description: Use `GET /v1/nodes/{nodeId}/vms`.
+      tags: [Virtual machines]
+      summary: List a node's virtual machines
+      responses:
+        "200":
+          description: The VMs hosted on the node.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VM"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      operationId: createVMLegacy
+      deprecated: true
+      tags: [Virtual machines]
+      summary: Create a virtual machine
+      description: Use `POST /v1/nodes/{nodeId}/vms`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVMRequest"
+      responses:
+        "201":
+          description: VM created, being provisioned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VM"
+        "400":
+          description: Invalid name or malformed JSON.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["invalid vm specifications: name must be 1-64 chars [a-zA-Z0-9_-]"]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The host node does not exist.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [host node not found]
+        "409":
+          description: A VM with this name already exists on the host.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/vms/{vmId}:
+    parameters:
+      - $ref: "#/components/parameters/VMIDPath"
+    get:
+      tags: [Virtual machines]
+      operationId: getVM
+      summary: Get a virtual machine
+      description: Requires `vms:read` on the host node.
+      responses:
+        "200":
+          description: The VM.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VM"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/VMNotFound"
+    delete:
+      tags: [Virtual machines]
+      operationId: deleteVM
+      summary: Destroy a virtual machine
+      description: |
+        Requires `vms:manage` on the host node. Sends `vm.destroy` to the host and deletes the VM record
+        and the node it enrolled as. **The VM's disk is destroyed.**
+      responses:
+        "204":
+          description: Destroyed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/VMNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/vms/{vmId}/actions:
+    parameters:
+      - $ref: "#/components/parameters/VMIDPath"
+    post:
+      tags: [Virtual machines]
+      operationId: runVMAction
+      summary: Start, stop, reboot or destroy a virtual machine
+      description: |
+        Requires `vms:action` on the host node (`vms:manage` for `destroy`, which behaves like
+        `DELETE /v1/vms/{vmId}`). The action is sent to the host as a job; `start` and `stop` update the
+        VM's status right away, without waiting for the host.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [start, stop, reboot, destroy]
+      responses:
+        "200":
+          description: Action sent.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, action]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+                  action:
+                    type: string
+        "400":
+          description: Missing or unsupported action.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ['unsupported action "explode"']
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/VMNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/hypervisors/{nodeId}:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      tags: [Virtual machines]
+      operationId: getHypervisorInfo
+      summary: Get a node's hypervisor capabilities
+      description: |
+        Requires `vms:read`. Reports whether the node can host VMs (KVM and libvirt available) and its
+        resources, as last announced by the agent.
+      responses:
+        "200":
+          description: Hypervisor information. `reported` is false when the agent never announced it.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reported]
+                properties:
+                  reported:
+                    type: boolean
+                  info:
+                    $ref: "#/components/schemas/HypervisorInfo"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/clusters:
+    get:
+      tags: [Clusters]
+      operationId: listClusters
+      summary: List the caller's clusters
+      description: Only clusters the caller owns, with their nodes and services.
+      responses:
+        "200":
+          description: The caller's clusters.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ClusterDetails"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Clusters]
+      operationId: createCluster
+      summary: Create a cluster
+      description: |
+        Initializes Docker Swarm on the manager node and joins the workers. Requires `node:update` on every
+        node. All nodes must have a VPN IP. Joining happens asynchronously through jobs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, manager_node_id]
+              properties:
+                name:
+                  type: string
+                manager_node_id:
+                  type: string
+                  format: uuid
+                worker_node_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "201":
+          description: Cluster created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterDetails"
+        "400":
+          $ref: "#/components/responses/ClusterBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Missing `node:update` on one of the nodes.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          description: A node does not exist.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [node not found]
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/clusters/{clusterId}:
+    parameters:
+      - $ref: "#/components/parameters/ClusterIDPath"
+    get:
+      tags: [Clusters]
+      operationId: getCluster
+      summary: Get a cluster
+      description: Clusters the caller cannot manage answer `404`, like unknown IDs.
+      responses:
+        "200":
+          description: The cluster with its nodes and services.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterDetails"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ClusterNotFound"
+    delete:
+      tags: [Clusters]
+      operationId: deleteCluster
+      summary: Delete a cluster
+      description: Makes every node leave the swarm (forced) and deletes the cluster.
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ClusterNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/clusters/{clusterId}/nodes:
+    parameters:
+      - $ref: "#/components/parameters/ClusterIDPath"
+    post:
+      tags: [Clusters]
+      operationId: addClusterNode
+      summary: Add a node to a cluster
+      description: Requires `node:update` on the node, which must have a VPN IP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [node_id]
+              properties:
+                node_id:
+                  type: string
+                  format: uuid
+                role:
+                  $ref: "#/components/schemas/ClusterRole"
+      responses:
+        "201":
+          description: The node is joining the swarm.
+        "400":
+          $ref: "#/components/responses/ClusterBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Missing `node:update` on the node.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          description: Unknown cluster or node.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/clusters/{clusterId}/nodes/{nodeId}:
+    parameters:
+      - $ref: "#/components/parameters/ClusterIDPath"
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    delete:
+      tags: [Clusters]
+      operationId: removeClusterNode
+      summary: Remove a node from a cluster
+      description: The node leaves the swarm (forced). It must be a member of this cluster.
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Unknown cluster, or the node is not a member.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [node is not a member of this cluster]
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/clusters/{clusterId}/services:
+    parameters:
+      - $ref: "#/components/parameters/ClusterIDPath"
+    post:
+      tags: [Clusters]
+      operationId: createClusterService
+      summary: Deploy a service to a cluster
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, image]
+              properties:
+                name:
+                  type: string
+                image:
+                  type: string
+                  examples: [nginx:1.27]
+                ports:
+                  type: string
+                  description: Published ports, as for `docker service create --publish`.
+                  examples: ["8080:80"]
+                env_vars:
+                  type: object
+                  additionalProperties:
+                    type: string
+                replicas:
+                  type: integer
+                  minimum: 1
+                  default: 1
+      responses:
+        "201":
+          description: Service created and being deployed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterService"
+        "400":
+          $ref: "#/components/responses/ClusterBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ClusterNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/clusters/{clusterId}/services/{serviceId}:
+    parameters:
+      - $ref: "#/components/parameters/ClusterIDPath"
+      - $ref: "#/components/parameters/ClusterServiceIDPath"
+    delete:
+      tags: [Clusters]
+      operationId: deleteClusterService
+      summary: Remove a service from a cluster
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ClusterNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/clusters/{clusterId}/services/{serviceId}/scale:
+    parameters:
+      - $ref: "#/components/parameters/ClusterIDPath"
+      - $ref: "#/components/parameters/ClusterServiceIDPath"
+    put:
+      tags: [Clusters]
+      operationId: scaleClusterService
+      summary: Scale a service
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [replicas]
+              properties:
+                replicas:
+                  type: integer
+                  minimum: 1
+      responses:
+        "200":
+          description: Scaling.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, replicas]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  replicas:
+                    type: integer
+        "400":
+          description: Malformed JSON or `replicas` below 1.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [replicas must be >= 1]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ClusterNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/clusters/{clusterId}/services/{serviceId}/autoscaling:
+    parameters:
+      - $ref: "#/components/parameters/ClusterIDPath"
+      - $ref: "#/components/parameters/ClusterServiceIDPath"
+    get:
+      tags: [Clusters]
+      operationId: getServiceAutoscaling
+      summary: Get a service's autoscaling policy
+      responses:
+        "200":
+          description: The policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoscalePolicy"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Unknown cluster or service, or the service has no policy.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [no autoscaling policy found]
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Clusters]
+      operationId: setServiceAutoscaling
+      summary: Set a service's autoscaling policy
+      description: |
+        Creates or replaces the policy. A background scheduler scales the service between `min_replicas`
+        and `max_replicas` when the metric stays above `scale_up_threshold` (or below
+        `scale_down_threshold`) for the configured duration. Missing or invalid values get defaults: 1–1
+        replicas, 75% up, 30% down, 30 s up, 60 s down, 30 s cooldown.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AutoscalePolicyRequest"
+      responses:
+        "200":
+          description: The saved policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoscalePolicy"
+        "400":
+          description: Malformed JSON.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ClusterNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2781,6 +3397,30 @@ components:
         Node token (`autohost-node_...`) issued to an agent at enrollment. Only accepted on agent routes.
 
   parameters:
+    VMIDPath:
+      name: vmId
+      in: path
+      required: true
+      description: Virtual machine ID.
+      schema:
+        type: string
+        format: uuid
+    ClusterIDPath:
+      name: clusterId
+      in: path
+      required: true
+      description: Cluster ID.
+      schema:
+        type: string
+        format: uuid
+    ClusterServiceIDPath:
+      name: serviceId
+      in: path
+      required: true
+      description: Cluster service ID.
+      schema:
+        type: string
+        format: uuid
     FilePathQuery:
       name: path
       in: query
@@ -2851,6 +3491,27 @@ components:
         format: uuid
 
   responses:
+    VMNotFound:
+      description: No VM with this ID.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: [vm not found]
+    ClusterNotFound:
+      description: Unknown cluster or service, or one the caller cannot manage.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: [cluster not found]
+    ClusterBadRequest:
+      description: Malformed JSON, missing fields, invalid role, or a node without a VPN IP.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: [node does not have an active VPN IP]
     FileError:
       description: Invalid path (400), not found (404) or already exists (409).
       content:
@@ -4033,3 +4694,265 @@ components:
         warning_high:
           type: boolean
           description: True at 85% usage or more.
+
+    VMStatus:
+      type: string
+      enum: [creating, running, stopped, error, destroyed]
+
+    VM:
+      type: object
+      required: [id, host_node_id, owner_id, name, vcpus, ram_mb, disk_gb, image, status, ip_address, cloud_init_user, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        host_node_id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+          description: The AutoHost node the VM enrolled as, once it has booted.
+        owner_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        vcpus:
+          type: integer
+        ram_mb:
+          type: integer
+        disk_gb:
+          type: integer
+        image:
+          type: string
+          examples: [ubuntu-24.04]
+        status:
+          $ref: "#/components/schemas/VMStatus"
+        ip_address:
+          type: string
+        cloud_init_user:
+          type: string
+        error_message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateVMRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          pattern: "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"
+        vcpus:
+          type: integer
+          default: 2
+        ram_mb:
+          type: integer
+          default: 2048
+        disk_gb:
+          type: integer
+          default: 20
+        image:
+          type: string
+          default: ubuntu-24.04
+        cloud_init_user:
+          type: string
+          description: Defaults to `debian` for Debian images, `ubuntu` otherwise.
+        ssh_keys:
+          type: array
+          description: Public SSH keys authorized for the cloud-init user.
+          items:
+            type: string
+
+    HypervisorInfo:
+      type: object
+      required: [capable, kvm_available, libvirt_available, libvirt_version, network_name, cpu_cores, ram_total_bytes, storage_total_bytes, storage_available_bytes, reported_at]
+      properties:
+        capable:
+          type: boolean
+          description: True when the node can host VMs.
+        kvm_available:
+          type: boolean
+        libvirt_available:
+          type: boolean
+        libvirt_version:
+          type: string
+        reason:
+          type: string
+          description: Why the node cannot host VMs, when `capable` is false.
+        network_name:
+          type: string
+        cpu_cores:
+          type: integer
+        ram_total_bytes:
+          type: integer
+          format: int64
+        storage_total_bytes:
+          type: integer
+          format: int64
+        storage_available_bytes:
+          type: integer
+          format: int64
+        reported_at:
+          type: string
+          format: date-time
+
+    ClusterRole:
+      type: string
+      enum: [manager, worker]
+      default: worker
+
+    Cluster:
+      type: object
+      required: [id, user_id, name, status, overlay_network, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        status:
+          type: string
+        overlay_network:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ClusterNode:
+      type: object
+      required: [id, cluster_id, node_id, role, swarm_node_id, status, joined_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        cluster_id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        role:
+          $ref: "#/components/schemas/ClusterRole"
+        swarm_node_id:
+          type: string
+        status:
+          type: string
+        joined_at:
+          type: string
+          format: date-time
+        node_hostname:
+          type: string
+        node_ip:
+          type: string
+        node_ip_vpn:
+          type: string
+
+    ClusterService:
+      type: object
+      required: [id, cluster_id, name, image, ports, env_vars, replicas, swarm_service_id, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        cluster_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        image:
+          type: string
+        ports:
+          type: string
+        env_vars:
+          type: object
+          additionalProperties:
+            type: string
+        replicas:
+          type: integer
+        swarm_service_id:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        autoscaling:
+          $ref: "#/components/schemas/AutoscalePolicy"
+
+    ClusterDetails:
+      type: object
+      required: [cluster, nodes, services]
+      properties:
+        cluster:
+          $ref: "#/components/schemas/Cluster"
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClusterNode"
+        services:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClusterService"
+
+    AutoscalePolicyRequest:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        metric_type:
+          type: string
+          enum: [cpu, ram]
+        scale_up_threshold:
+          type: number
+          description: Percentage.
+        scale_down_threshold:
+          type: number
+          description: Percentage.
+        scale_up_duration_sec:
+          type: integer
+        scale_down_duration_sec:
+          type: integer
+        min_replicas:
+          type: integer
+        max_replicas:
+          type: integer
+        cooldown_seconds:
+          type: integer
+
+    AutoscalePolicy:
+      allOf:
+        - $ref: "#/components/schemas/AutoscalePolicyRequest"
+        - type: object
+          required: [id, cluster_service_id, created_at, updated_at]
+          properties:
+            id:
+              type: string
+              format: uuid
+            cluster_service_id:
+              type: string
+              format: uuid
+            last_scaled_at:
+              type: string
+              format: date-time
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time

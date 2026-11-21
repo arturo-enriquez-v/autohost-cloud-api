@@ -20,7 +20,6 @@ import (
 // under them are allowed to be missing from the spec. Remove a prefix once its module is documented; the
 // test flags prefixes that are already fully covered so this list only shrinks.
 var pendingDocPrefixes = []string{
-	"/v1/nodes/{nodeId}/vms",
 	"/v1/file-shares",
 	"/v1/public-shares",
 	"/v1/tailscale-funnel",
@@ -39,11 +38,7 @@ var pendingDocPrefixes = []string{
 	"/v1/external-log-tokens",
 	"/v1/vpn",
 	"/v1/log-diagnostics",
-	"/v1/clusters",
 	"/v1/notifications",
-	"/v1/hypervisors",
-	"/v1/vms",
-	"/v1/node-vms",
 	"/v1/agent/network-stats",
 	"/v1/node-network",
 }
