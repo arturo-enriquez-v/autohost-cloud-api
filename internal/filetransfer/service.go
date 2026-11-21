@@ -128,22 +128,16 @@ func (s *Service) MasterBaseURL() string { return s.MasterBaseURLOr("") }
 // MasterBaseURLOr is MasterBaseURL with a fallback (e.g. derived from the current request) used when neither
 // the local node's address nor NEXT_PUBLIC_API_URL is known.
 func (s *Service) MasterBaseURLOr(fallback string) string {
+	var localIPs []string
 	if s.nodes != nil {
 		if local, err := s.nodes.FindLocalNode(); err == nil && local != nil {
-			for _, raw := range []string{derefStr(local.IPVPN), local.IPLocal} {
-				if ip := strings.Split(strings.TrimSpace(raw), "/")[0]; ip != "" {
-					return fmt.Sprintf("http://%s:8080", ip)
-				}
-			}
+			localIPs = []string{derefStr(local.IPVPN), local.IPLocal}
 		}
 	}
-	if ext := os.Getenv("NEXT_PUBLIC_API_URL"); ext != "" {
-		return strings.TrimRight(ext, "/")
+	if u := platform.AgentAPIURL(localIPs, fallback); u != "" {
+		return u
 	}
-	if fallback != "" {
-		return fallback
-	}
-	return "http://127.0.0.1:8080"
+	return "http://127.0.0.1:" + platform.AgentAPIPort()
 }
 
 func derefStr(p *string) string {

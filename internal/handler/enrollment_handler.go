@@ -6,7 +6,6 @@ package handler
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -97,26 +96,23 @@ func (h *EnrollmentHandler) CreateEnrollToken(w http.ResponseWriter, r *http.Req
 
 	log.Printf("[INFO] enroll token created for user: %s", claims.UserID)
 
-	// Determinar URL sugerida para conectar nodos remotos
-	var apiURL string
+	// Suggested URL for remote nodes to reach this API.
 	var tailscaleIP string
+	var localIPs []string
 	if h.nodeService != nil {
 		if localNode, err := h.nodeService.FindLocalNode(); err == nil && localNode != nil {
 			if localNode.IPVPN != nil && *localNode.IPVPN != "" {
 				tailscaleIP = *localNode.IPVPN
-				apiURL = fmt.Sprintf("http://%s:8080", tailscaleIP)
-			} else if localNode.IPLocal != "" {
-				apiURL = fmt.Sprintf("http://%s:8080", localNode.IPLocal)
+				localIPs = append(localIPs, tailscaleIP)
 			}
+			localIPs = append(localIPs, localNode.IPLocal)
 		}
 	}
-	if apiURL == "" {
-		if extURL := os.Getenv("NEXT_PUBLIC_API_URL"); extURL != "" {
-			apiURL = extURL
-		} else if r != nil && r.Host != "" {
-			apiURL = fmt.Sprintf("http://%s", r.Host)
-		}
+	fallback := ""
+	if r.Host != "" {
+		fallback = "http://" + r.Host
 	}
+	apiURL := platform.AgentAPIURL(localIPs, fallback)
 
 	// Devolver token plano al usuario (solo esta vez) junto con la URL/IP sugerida
 	w.Header().Set("Content-Type", "application/json")

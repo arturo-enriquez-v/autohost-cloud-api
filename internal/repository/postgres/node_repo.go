@@ -6,6 +6,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/jmoiron/sqlx"
@@ -310,6 +311,31 @@ func (r *NodeRepository) FindAll() ([]*node.Node, error) {
 		nodes[i] = modelToNode(model)
 	}
 	return nodes, nil
+}
+
+// FindLatestMetric returns the node's most recent metric sample, or nil when it has none.
+func (r *NodeRepository) FindLatestMetric(nodeID string) (*node.LastMetric, error) {
+	var cpu, mem, disk, cpuTemp sql.NullFloat64
+	var collectedAt time.Time
+	err := r.db.QueryRowContext(context.Background(), `
+		SELECT cpu_usage_percent, memory_usage_percent, disk_usage_percent, cpu_temp_celsius, collected_at
+		FROM node_metrics
+		WHERE node_id = $1
+		ORDER BY collected_at DESC
+		LIMIT 1`, nodeID).Scan(&cpu, &mem, &disk, &cpuTemp, &collectedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &node.LastMetric{
+		CPUUsagePercent:    cpu.Float64,
+		MemoryUsagePercent: mem.Float64,
+		DiskUsagePercent:   disk.Float64,
+		CPUTempCelsius:     cpuTemp.Float64,
+		CollectedAt:        collectedAt,
+	}, nil
 }
 
 // FindAllWithMetrics returns all nodes in the platform with their latest metric snapshot.

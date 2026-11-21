@@ -217,6 +217,20 @@ func (s *NodeService) GetAll() ([]*Node, error) {
 	return []*Node{}, nil
 }
 
+// latestMetricRepository is implemented by repositories that can look up a node's latest metric sample.
+type latestMetricRepository interface {
+	FindLatestMetric(nodeID string) (*LastMetric, error)
+}
+
+// GetLatestMetric returns the node's most recent metric sample, or nil when it has none (or the
+// repository does not support metrics).
+func (s *NodeService) GetLatestMetric(nodeID string) (*LastMetric, error) {
+	if repo, ok := s.repo.(latestMetricRepository); ok {
+		return repo.FindLatestMetric(nodeID)
+	}
+	return nil, nil
+}
+
 func (s *NodeService) GetAllWithMetrics() ([]*NodeWithMetrics, error) {
 	if ext, ok := s.repo.(ExtendedNodeRepository); ok {
 		return ext.FindAllWithMetrics()

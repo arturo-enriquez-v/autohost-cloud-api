@@ -213,6 +213,20 @@ func TestBOLA_CrossTenantAccessDenied(t *testing.T) {
 			expectedStatus: http.StatusForbidden,
 		},
 		{
+			name:           "User B cannot PUT User A node",
+			method:         "PUT",
+			url:            "/v1/nodes/node_owned_by_a",
+			body:           `{"hostname":"hacked"}`,
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "User B cannot PUT User A node via the deprecated body-ID route",
+			method:         "PUT",
+			url:            "/v1/nodes",
+			body:           `{"id":"node_owned_by_a","hostname":"hacked"}`,
+			expectedStatus: http.StatusForbidden,
+		},
+		{
 			name:           "User B cannot DELETE User A node",
 			method:         "DELETE",
 			url:            "/v1/nodes/node_owned_by_a",

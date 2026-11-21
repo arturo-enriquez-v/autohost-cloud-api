@@ -36,8 +36,9 @@ func (h *NodeHandler) Routes() chi.Router {
 
 	r.Get("/", h.List)
 	r.Get("/with-metrics", h.ListWithMetrics)
-	r.Put("/", h.Update)
+	r.Put("/", h.Update) // Deprecated: use PUT /{id}. Kept for clients that send the ID in the body.
 	r.Get("/{id}", h.Get)
+	r.Put("/{id}", h.UpdateByID)
 	r.Delete("/{id}", h.Delete)
 
 	return r
@@ -159,14 +160,14 @@ func (h *NodeHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	nodeID := chi.URLParam(r, "id")
 	if nodeID == "" {
-		http.Error(w, "missing node id", http.StatusBadRequest)
+		response.RespondError(w, http.StatusBadRequest, "missing node id")
 		return
 	}
 
 	n, err := h.service.GetByID(nodeID)
 	if err != nil {
 		if err == node.ErrNodeNotFound {
-			http.Error(w, "node not found", http.StatusNotFound)
+			response.RespondError(w, http.StatusNotFound, "node not found")
 			return
 		}
 		log.Printf("[ERROR] get node: %v", err)
@@ -204,28 +205,54 @@ func (h *NodeHandler) Get(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:    n.UpdatedAt,
 		RolePreset:   rolePreset,
 		Permissions:  perms,
+		IsVM:         n.IsVM,
+		VMID:         n.VMID,
+		HostNodeID:   n.HostNodeID,
+		HostHostname: n.HostHostname,
+	}
+	if metric, err := h.service.GetLatestMetric(n.ID); err != nil {
+		log.Printf("[WARN] get latest metric for node %s: %v", n.ID, err)
+	} else {
+		result.LastMetric = metric
 	}
 
 	response.RespondJSON(w, http.StatusOK, result)
 }
 
+// Update renames the node whose ID is sent in the body.
+//
+// Deprecated: use UpdateByID (PUT /v1/nodes/{id}).
 func (h *NodeHandler) Update(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		ID       string `json:"id"`
+		Hostname string `json:"hostname"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		response.RespondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	h.updateNode(w, r, input.ID, input.Hostname)
+}
+
+// UpdateByID renames the node identified in the URL. PUT /v1/nodes/{id}  {"hostname": "..."}
+func (h *NodeHandler) UpdateByID(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Hostname string `json:"hostname"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		response.RespondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	h.updateNode(w, r, chi.URLParam(r, "id"), input.Hostname)
+}
+
+func (h *NodeHandler) updateNode(w http.ResponseWriter, r *http.Request, nodeID, hostname string) {
 	userID, ok := middleware.RequireUserID(w, r)
 	if !ok {
 		return
 	}
 
-	var input struct {
-		ID       string `json:"id"`
-		Hostname string `json:"hostname"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	existing, err := h.service.GetByID(input.ID)
+	existing, err := h.service.GetByID(nodeID)
 	if err != nil || existing == nil {
 		response.RespondError(w, http.StatusNotFound, "node not found")
 		return
@@ -235,7 +262,7 @@ func (h *NodeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updatedNode, err := h.service.Update(input.ID, input.Hostname)
+	updatedNode, err := h.service.Update(nodeID, hostname)
 	if err != nil {
 		log.Printf("[ERROR] update node: %v", err)
 		response.RespondError(w, http.StatusInternalServerError, "could not update node")
