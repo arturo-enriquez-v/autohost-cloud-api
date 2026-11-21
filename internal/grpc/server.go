@@ -457,18 +457,18 @@ func (s *NodeAgentServer) Connect(
 			// Publish to Redis for distributed subscribers (e.g. Cloud Run REST API).
 			if s.redis != nil {
 				payload := map[string]any{
-					"cpu_usage_percent":    m.GetCpuUsagePercent(),
-					"ram_total_bytes":      m.GetRamTotalBytes(),
-					"ram_used_bytes":       m.GetRamUsedBytes(),
-					"ram_available_bytes":  m.GetRamAvailableBytes(),
-					"ram_usage_percent":    m.GetRamUsagePercent(),
-					"disk_total_bytes":     m.GetDiskTotalBytes(),
-					"disk_used_bytes":      m.GetDiskUsedBytes(),
-					"disk_available_bytes": m.GetDiskAvailableBytes(),
-					"disk_usage_percent":   m.GetDiskUsagePercent(),
-					"uptime_seconds":       m.GetUptimeSeconds(),
-					"cpu_temp_celsius":     m.GetCpuTempCelsius(),
-					"collected_at":         time.Now().UTC().Format(time.RFC3339),
+					"cpu_usage_percent":      m.GetCpuUsagePercent(),
+					"memory_total_bytes":     m.GetRamTotalBytes(),
+					"memory_used_bytes":      m.GetRamUsedBytes(),
+					"memory_available_bytes": m.GetRamAvailableBytes(),
+					"memory_usage_percent":   m.GetRamUsagePercent(),
+					"disk_total_bytes":       m.GetDiskTotalBytes(),
+					"disk_used_bytes":        m.GetDiskUsedBytes(),
+					"disk_available_bytes":   m.GetDiskAvailableBytes(),
+					"disk_usage_percent":     m.GetDiskUsagePercent(),
+					"uptime_seconds":         m.GetUptimeSeconds(),
+					"cpu_temp_celsius":       m.GetCpuTempCelsius(),
+					"collected_at":           time.Now().UTC().Format(time.RFC3339),
 				}
 				if data, err := json.Marshal(payload); err == nil {
 					_ = s.redis.Publish(context.Background(), fmt.Sprintf("nodes:%s:metrics", nodeID), data).Err()

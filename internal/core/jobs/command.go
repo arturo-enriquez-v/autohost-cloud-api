@@ -28,13 +28,13 @@ var (
 // Default commands are built-in; custom commands are .sh scripts under a
 // configured folder that the agent discovers and registers.
 type NodeCommand struct {
-	ID          string      `db:"id"`
-	NodeID      string      `db:"node_id"`
-	Name        string      `db:"name"`
-	Description string      `db:"description"`
-	Type        CommandType `db:"type"`
-	ScriptPath  string      `db:"script_path"` // only set for custom commands
-	CreatedAt   time.Time   `db:"created_at"`
+	ID          string      `db:"id" json:"id"`
+	NodeID      string      `db:"node_id" json:"node_id"`
+	Name        string      `db:"name" json:"name"`
+	Description string      `db:"description" json:"description"`
+	Type        CommandType `db:"type" json:"type"`
+	ScriptPath  string      `db:"script_path" json:"script_path"` // only set for custom commands
+	CreatedAt   time.Time   `db:"created_at" json:"created_at"`
 }
 
 // NodeCommandRepository defines the persistence contract for node commands.

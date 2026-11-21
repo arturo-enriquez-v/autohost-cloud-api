@@ -5,6 +5,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 
@@ -79,6 +80,10 @@ func (h *NodeCommandHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	saved, err := h.service.Register(cmd)
+	if errors.Is(err, jobs.ErrInvalidCommandData) {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		log.Printf("[ERROR] register node command: %v", err)
 		http.Error(w, "could not register command", http.StatusInternalServerError)

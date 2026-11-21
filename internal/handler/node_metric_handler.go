@@ -86,9 +86,7 @@ func (h *NodeMetricHandler) PostMetrics(w http.ResponseWriter, r *http.Request) 
 	}
 	var nodeMetrics node.CreateNodeMetricRequest
 	if err := json.NewDecoder(r.Body).Decode(&nodeMetrics); err != nil {
-		fmt.Println("Error decoding JSON:", &nodeMetrics)
 		http.Error(w, "bad json", http.StatusBadRequest)
-		fmt.Println(err)
 		return
 	}
 
@@ -97,7 +95,8 @@ func (h *NodeMetricHandler) PostMetrics(w http.ResponseWriter, r *http.Request) 
 
 	// Usar el servicio para guardar las métricas
 	if _, err := h.service.StoreNodeMetric(&nodeMetrics); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("[ERROR] store metrics for node %s: %v", nodeToken.NodeID, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
@@ -314,10 +313,10 @@ func (h *NodeMetricHandler) StreamLiveMetrics(w http.ResponseWriter, r *http.Req
 
 		type liveMetric struct {
 			CPUUsagePercent    float32 `json:"cpu_usage_percent"`
-			RAMTotalBytes      uint64  `json:"ram_total_bytes"`
-			RAMUsedBytes       uint64  `json:"ram_used_bytes"`
-			RAMAvailableBytes  uint64  `json:"ram_available_bytes"`
-			RAMUsagePercent    float32 `json:"ram_usage_percent"`
+			RAMTotalBytes      uint64  `json:"memory_total_bytes"`
+			RAMUsedBytes       uint64  `json:"memory_used_bytes"`
+			RAMAvailableBytes  uint64  `json:"memory_available_bytes"`
+			RAMUsagePercent    float32 `json:"memory_usage_percent"`
 			DiskTotalBytes     uint64  `json:"disk_total_bytes"`
 			DiskUsedBytes      uint64  `json:"disk_used_bytes"`
 			DiskAvailableBytes uint64  `json:"disk_available_bytes"`

@@ -5,6 +5,7 @@ package handler
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
@@ -44,7 +45,8 @@ func (h *HeartbeatsHandler) HandleHeartbeat(w http.ResponseWriter, r *http.Reque
 
 	// Actualizar last_seen del nodo
 	if err := h.nodeService.UpdateLastSeen(nodeToken.NodeID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("[ERROR] heartbeat for node %s: %v", nodeToken.NodeID, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
@@ -70,7 +72,8 @@ func (h *HeartbeatsHandler) HandleVersionReport(w http.ResponseWriter, r *http.R
 	}
 
 	if err := h.nodeService.UpdateVersionAgent(nodeToken.NodeID, req.Version); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("[ERROR] version report for node %s: %v", nodeToken.NodeID, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
