@@ -145,7 +145,42 @@ func SafeSharedPath(baseDir, relPath string) (string, string, error) {
 	if absFull != absBase && !strings.HasPrefix(absFull, absBase+string(filepath.Separator)) {
 		return "", "", errors.New("invalid path: access outside shared directory is forbidden")
 	}
+	// The lexical check above does not see symlinks: a link inside the shared folder (e.g. created by a
+	// container that mounts it) could point anywhere on the host. Resolve the existing part of the path and
+	// verify it still lives under the (resolved) base directory.
+	if !resolvedWithin(absBase, absFull) {
+		return "", "", errors.New("invalid path: symlink escapes the shared directory")
+	}
 	return absFull, cleanedRel, nil
+}
+
+// resolvedWithin resolves symlinks in the deepest existing ancestor of target (target itself may not exist
+// yet, e.g. an upload destination) and reports whether the result is base or inside it.
+func resolvedWithin(base, target string) bool {
+	realBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		// Base does not exist yet: nothing under it can be a symlink.
+		return true
+	}
+	existing := target
+	var rest []string
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return false
+		}
+		rest = append([]string{filepath.Base(existing)}, rest...)
+		existing = parent
+	}
+	realExisting, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return false // dangling symlink or unreadable component
+	}
+	resolved := filepath.Join(append([]string{realExisting}, rest...)...)
+	return resolved == realBase || strings.HasPrefix(resolved, realBase+string(filepath.Separator))
 }
 
 // StorageUsage holds disk usage metrics for the configured storage mount.

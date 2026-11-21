@@ -38,14 +38,19 @@ func (r *EnrollTokenRepo) FindEnrollTokenByHash(token string) (*node.EnrollToken
 	return &model, nil
 }
 
+// MarkTokenAsUsed atomically consumes an unused token. It returns node.ErrEnrollTokenAlreadyUsed when the
+// token was already consumed, so two concurrent enrollments cannot both succeed with the same token.
 func (r *EnrollTokenRepo) MarkTokenAsUsed(token string, usedAt time.Time) error {
-	_, err := r.DB.Exec(`
+	res, err := r.DB.Exec(`
 		UPDATE enroll_tokens
 		SET consumed_at = $1
-		WHERE token = $2
+		WHERE token = $2 AND consumed_at IS NULL
 	`, usedAt, token)
 	if err != nil {
 		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return node.ErrEnrollTokenAlreadyUsed
 	}
 	return nil
 }

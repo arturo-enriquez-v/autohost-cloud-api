@@ -11,6 +11,8 @@ import (
 var (
 	ErrEnrollTokenNotFound    = errors.New("enroll token not found")
 	ErrInvalidEnrollTokenData = errors.New("invalid enroll token data")
+	// ErrEnrollTokenAlreadyUsed is returned when a token was consumed (possibly by a concurrent request).
+	ErrEnrollTokenAlreadyUsed = errors.New("enroll token already used")
 )
 
 type EnrollToken struct {

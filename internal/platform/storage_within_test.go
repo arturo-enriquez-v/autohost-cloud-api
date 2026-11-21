@@ -35,3 +35,31 @@ func TestIsWithinDir(t *testing.T) {
 		t.Errorf("symlink escaping the base dir must be rejected")
 	}
 }
+
+func TestSafeSharedPathRejectsSymlinkEscape(t *testing.T) {
+	base := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret"), []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(base, "escape")); err != nil {
+		t.Skip("symlinks not supported")
+	}
+	if err := os.MkdirAll(filepath.Join(base, "docs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, rel := range []string{"/escape/secret", "/escape", "/escape/new-file"} {
+		if _, _, err := SafeSharedPath(base, rel); err == nil {
+			t.Errorf("%s: symlink escape must be rejected", rel)
+		}
+	}
+	for _, rel := range []string{"/", "/docs", "/docs/new.txt", "/new-dir/new.txt"} {
+		if _, _, err := SafeSharedPath(base, rel); err != nil {
+			t.Errorf("%s: legitimate path rejected: %v", rel, err)
+		}
+	}
+	if _, _, err := SafeSharedPath(base, "/../etc/passwd"); err != nil {
+		t.Errorf("lexical traversal is clamped to the base by filepath.Clean, got error: %v", err)
+	}
+}

@@ -43,6 +43,9 @@ func (m *mockEnrollRepo) FindEnrollTokenByHash(hash string) (*node.EnrollToken, 
 }
 
 func (m *mockEnrollRepo) MarkTokenAsUsed(token string, usedAt time.Time) error {
+	if m.used[token] {
+		return node.ErrEnrollTokenAlreadyUsed
+	}
 	m.used[token] = true
 	if t, ok := m.tokens[token]; ok {
 		t.ConsumedAt = &usedAt
@@ -133,5 +136,42 @@ func TestEnrollNode_SanitizesUnknownIPAndSucceeds(t *testing.T) {
 	// Verify token was marked as used
 	if !enrollRepo.used[rawToken] {
 		t.Errorf("expected token to be marked as used on success")
+	}
+}
+
+func TestEnrollNode_TokenCannotBeConsumedTwiceConcurrently(t *testing.T) {
+	enrollRepo := &mockEnrollRepo{
+		tokens: make(map[string]*node.EnrollToken),
+		used:   make(map[string]bool),
+	}
+	rawToken := "autohost-enr_race"
+	enrollRepo.tokens[rawToken] = &node.EnrollToken{
+		ID:        "tok-race",
+		Token:     rawToken,
+		UserID:    "user-uuid-1",
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+	nodeRepo := &MockNodeRepo{nodes: make(map[string]*node.Node)}
+	h := handler.NewEnrollmentHandler(
+		node.NewEnrollmentService(enrollRepo),
+		node.NewNodeService(nodeRepo),
+		node.NewNodeTokenService(&mockNodeTokenRepo{tokens: make(map[string]string)}),
+		nil, nil,
+	)
+	enroll := func() int {
+		b, _ := json.Marshal(map[string]string{"enroll_token": rawToken, "hostname": "n", "ip_local": "10.0.0.9"})
+		req := httptest.NewRequest(http.MethodPost, "/enroll", bytes.NewReader(b))
+		w := httptest.NewRecorder()
+		h.EnrollNode(w, req)
+		return w.Code
+	}
+
+	if code := enroll(); code != http.StatusCreated {
+		t.Fatalf("first enrollment: got %d", code)
+	}
+	// Simulate a concurrent request that read the token before it was marked consumed.
+	enrollRepo.tokens[rawToken].ConsumedAt = nil
+	if code := enroll(); code != http.StatusUnauthorized {
+		t.Fatalf("second enrollment with the same token must be rejected, got %d", code)
 	}
 }

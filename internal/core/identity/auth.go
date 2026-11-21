@@ -69,6 +69,10 @@ type AuthService struct {
 	repo               AuthRepository
 	onFirstUserCreated func(userID string)
 
+	// signupMu serializes account creation so the "first user becomes admin" check (CountUsers == 0) and
+	// the insert cannot interleave between two concurrent sign-ups. Per-process only.
+	signupMu sync.Mutex
+
 	// refreshMu serializes refresh rotations so concurrent requests presenting the same token
 	// (parallel navigations, several tabs) resolve deterministically through refreshGrace.
 	refreshMu sync.Mutex
@@ -144,6 +148,9 @@ func (s *AuthService) issueTokenPair(user *User, ua, ip string) (TokenPair, erro
 // En modo self-hosted, permite el registro libre del primer usuario (Setup Wizard)
 // y bloquea registros posteriores a menos que ALLOW_REGISTRATION=true.
 func (s *AuthService) Register(email, name, password string) (userID string, err error) {
+	s.signupMu.Lock()
+	defer s.signupMu.Unlock()
+
 	count, err := s.repo.CountUsers()
 	if err != nil {
 		return "", err
@@ -285,6 +292,9 @@ func (s *AuthService) LoginOAuth(email, name, provider, providerID string) (*Use
 	if existing != nil {
 		return s.repo.FindOrCreateOAuthUser(email, name, provider, providerID)
 	}
+
+	s.signupMu.Lock()
+	defer s.signupMu.Unlock()
 
 	count, err := s.repo.CountUsers()
 	if err != nil {

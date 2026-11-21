@@ -5,6 +5,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -161,6 +162,18 @@ func (h *EnrollmentHandler) EnrollNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Consume the token before creating anything: the conditional UPDATE makes this the single point
+	// that decides which of several concurrent requests with the same token wins.
+	if err := h.service.MarkTokenAsUsed(enroll.Token, time.Now()); err != nil {
+		if errors.Is(err, node.ErrEnrollTokenAlreadyUsed) {
+			http.Error(w, "token already used", http.StatusUnauthorized)
+			return
+		}
+		log.Printf("[ERROR] enroll: consume token: %v", err)
+		http.Error(w, "could not validate token", http.StatusInternalServerError)
+		return
+	}
+
 	ipLocal := strings.TrimSpace(req.IPLocal)
 	if net.ParseIP(ipLocal) == nil {
 		remoteHost, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -204,10 +217,6 @@ func (h *EnrollmentHandler) EnrollNode(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[ERROR] enroll: failed to save api token: %v", err)
 		http.Error(w, "failed to save api token", http.StatusInternalServerError)
 		return
-	}
-
-	if err := h.service.MarkTokenAsUsed(enroll.Token, time.Now()); err != nil {
-		log.Printf("[WARN] enroll: mark token used: %v", err)
 	}
 
 	if h.vmRepo != nil {

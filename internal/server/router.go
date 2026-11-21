@@ -5,7 +5,6 @@ package server
 
 import (
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/go-chi/chi/middleware"
@@ -211,20 +210,20 @@ func NewRouter(p RouterParams) *chi.Mux {
 	return r
 }
 
+// corsMiddleware only grants cross-origin access (with credentials) to origins listed in FRONTEND_URL or
+// served from the API's own hostname. Previously, without FRONTEND_URL, any Origin was reflected together
+// with Access-Control-Allow-Credentials, letting any website make authenticated requests.
 func corsMiddleware(next http.Handler) http.Handler {
-	frontendURL := os.Getenv("FRONTEND_URL")
+	allowed := handlerMiddleware.AllowedOrigins()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Vary", "Origin")
 		origin := r.Header.Get("Origin")
-		if frontendURL != "" {
-			w.Header().Set("Access-Control-Allow-Origin", frontendURL)
-		} else if origin != "" {
+		if origin != "" && handlerMiddleware.IsAllowedOrigin(origin, r.Host, allowed) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
-		} else {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Upgrade, Connection, X-Share-Token")
 		}
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Upgrade, Connection, X-Share-Token")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return

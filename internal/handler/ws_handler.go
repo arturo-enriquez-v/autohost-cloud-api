@@ -19,9 +19,7 @@ import (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
+	CheckOrigin:     middleware.CheckWebSocketOrigin,
 }
 
 // WSHandler manages WebSocket connections from node agents.
