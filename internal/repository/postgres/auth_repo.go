@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
@@ -70,9 +71,40 @@ func (r *AuthRepository) StoreRefreshToken(userID, tokenHash, userAgent, ip stri
 		ipVal = ip
 	}
 	expiresAt := time.Now().UTC().Add(platform.RefreshTokenTTL())
-	_, err := r.db.Exec(`
+	if _, err := r.db.Exec(`
 		INSERT INTO refresh_tokens (user_id, token_hash, user_agent, ip, expires_at)
-		VALUES ($1, $2, $3, $4, $5)`, userID, tokenHash, userAgent, ipVal, expiresAt)
+		VALUES ($1, $2, $3, $4, $5)`, userID, tokenHash, userAgent, ipVal, expiresAt); err != nil {
+		return err
+	}
+	// Housekeeping is best effort: a failure must not block the login that just succeeded.
+	if err := r.enforceSessionLimit(userID, platform.MaxSessionsPerUser()); err != nil {
+		log.Printf("[AUTH] session housekeeping for user %s failed: %v", userID, err)
+	}
+	return nil
+}
+
+// enforceSessionLimit revokes the user's oldest active sessions beyond maxSessions (0 = no cap) and deletes the
+// user's refresh tokens that expired or were revoked more than a day ago. Every refresh rotates the token, so
+// without pruning the table would grow by roughly 96 rows per open session per day.
+func (r *AuthRepository) enforceSessionLimit(userID string, maxSessions int) error {
+	if maxSessions > 0 {
+		if _, err := r.db.Exec(`
+			UPDATE refresh_tokens
+			SET revoked_at = now()
+			WHERE user_id = $1 AND revoked_at IS NULL
+			  AND id NOT IN (
+				SELECT id FROM refresh_tokens
+				WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
+				ORDER BY created_at DESC
+				LIMIT $2
+			  )`, userID, maxSessions); err != nil {
+			return err
+		}
+	}
+	_, err := r.db.Exec(`
+		DELETE FROM refresh_tokens
+		WHERE user_id = $1
+		  AND (expires_at < now() - interval '1 day' OR revoked_at < now() - interval '1 day')`, userID)
 	return err
 }
 

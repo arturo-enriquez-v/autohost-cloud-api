@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,6 +76,17 @@ func RefreshTokenTTL() time.Duration {
 		}
 	}
 	return 30 * 24 * time.Hour
+}
+
+// MaxSessionsPerUser caps concurrent sessions (active refresh tokens) per user: issuing a new one revokes the
+// oldest beyond the limit. MAX_SESSIONS_PER_USER, default 20; 0 disables the cap.
+func MaxSessionsPerUser() int {
+	if v := strings.TrimSpace(os.Getenv("MAX_SESSIONS_PER_USER")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return 20
 }
 
 // MakeRefreshPair genera un token de refresco y su hash
