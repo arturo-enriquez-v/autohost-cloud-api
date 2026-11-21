@@ -194,6 +194,10 @@ func (h *WSHandler) handleMessage(c *Client, msg Message) {
 			log.Printf("[WARN] invalid job_result payload from %s: %v", c.NodeID, err)
 			return
 		}
+		if j, err := h.jobService.GetByID(p.JobID); err != nil || j == nil || j.NodeID != c.NodeID {
+			log.Printf("[WARN] rejecting job_result for job %s from node %s: job not found or owned by another node", p.JobID, c.NodeID)
+			return
+		}
 		if err := h.jobService.UpdateResult(
 			p.JobID,
 			jobs.JobStatus(p.Status),

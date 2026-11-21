@@ -292,6 +292,11 @@ func (s *NodeAgentServer) Connect(
 		switch p := in.Payload.(type) {
 		case *pb.NodeMessage_JobResult:
 			r := p.JobResult
+			// A node may only report results for jobs dispatched to itself.
+			if ownerJob, err := s.jobSvc.GetByID(r.GetJobId()); err != nil || ownerJob == nil || ownerJob.NodeID != nodeID {
+				log.Printf("[gRPC] rejecting result for job %s from node %s: job not found or owned by another node", r.GetJobId(), nodeID)
+				continue
+			}
 			jobStatus := jobs.JobStatus(pbJobStatus(r.GetStatus()))
 			if err := s.jobSvc.UpdateResult(
 				r.GetJobId(),
@@ -326,6 +331,12 @@ func (s *NodeAgentServer) Connect(
 					FileSizeBytes int64  `json:"file_size_bytes"`
 				}
 				_ = json.Unmarshal([]byte(r.GetOutput()), &outputData)
+				// parent_path refers to the API server's own disk: never trust an agent-supplied value
+				// outside the backups directory (it is later served and deleted by the API).
+				if outputData.ParentPath != "" && !platform.IsWithinDir(platform.BackupsDir(), outputData.ParentPath) {
+					log.Printf("[gRPC] ignoring parent_path %q reported by node %s for job %s: outside backups dir", outputData.ParentPath, nodeID, r.GetJobId())
+					outputData.ParentPath = ""
+				}
 
 				var errMsg *string
 				if r.GetError() != "" {

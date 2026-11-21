@@ -32,6 +32,30 @@ func BackupsDir() string {
 	return filepath.Join(StorageDir(), "backups")
 }
 
+// IsWithinDir reports whether p resolves to a path strictly inside baseDir (after cleaning and
+// resolving symlinks of the existing portion). It is used to validate paths that originate from
+// untrusted sources (e.g. agent job output) before the API reads or deletes them.
+func IsWithinDir(baseDir, p string) bool {
+	if strings.TrimSpace(p) == "" || strings.TrimSpace(baseDir) == "" {
+		return false
+	}
+	absBase, err := filepath.Abs(baseDir)
+	if err != nil {
+		return false
+	}
+	absP, err := filepath.Abs(p)
+	if err != nil {
+		return false
+	}
+	if resolved, err := filepath.EvalSymlinks(absBase); err == nil {
+		absBase = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(absP); err == nil {
+		absP = resolved
+	}
+	return strings.HasPrefix(absP, absBase+string(filepath.Separator))
+}
+
 // PKICertsDir returns the directory for mTLS Root CA and server certificates.
 // Reads GRPC_CERTS_DIR first, then <AUTOHOST_STORAGE_DIR>/certs if AUTOHOST_STORAGE_DIR
 // is explicitly configured, otherwise "./certs".
@@ -171,4 +195,3 @@ func GetStorageUsage(dir string) (*StorageUsage, error) {
 		WarningHigh:    pct >= 85.0,
 	}, nil
 }
-

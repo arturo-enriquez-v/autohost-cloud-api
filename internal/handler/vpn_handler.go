@@ -76,6 +76,13 @@ func (h *VPNHandler) UpdateVPNStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ipVPN, err := normalizeVPNAddress(req.IPVPN)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	req.IPVPN = ipVPN
+
 	if err := h.nodeSvc.UpdateVPNIP(nodeToken.NodeID, req.IPVPN); err != nil {
 		log.Printf("[ERROR] update vpn ip for node %s: %v", nodeToken.NodeID, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)

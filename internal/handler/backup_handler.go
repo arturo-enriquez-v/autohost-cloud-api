@@ -127,12 +127,13 @@ func (h *BackupHandler) HandlePostBackupReplication(jobID string) {
 		replicaRelPath := fmt.Sprintf("/backup/%s/%s", rec.ContainerName, filename)
 
 		var repErr error
-		if rec.ParentPath != nil && *rec.ParentPath != "" {
-			if _, statErr := os.Stat(*rec.ParentPath); statErr == nil {
-				repErr = h.nodeFileHandler.PushLocalFileToNodeShared(ctx, baseURL, replicaNode, *rec.ParentPath, replicaRelPath)
+		parentPath := trustedParentPath(rec)
+		if parentPath != "" {
+			if _, statErr := os.Stat(parentPath); statErr == nil {
+				repErr = h.nodeFileHandler.PushLocalFileToNodeShared(ctx, baseURL, replicaNode, parentPath, replicaRelPath)
 			}
 		}
-		if repErr != nil || rec.ParentPath == nil || *rec.ParentPath == "" {
+		if repErr != nil || parentPath == "" {
 			_, repErr = h.nodeFileHandler.TransferSharedFile(ctx, baseURL, srcNode, srcRelPath, replicaNode, replicaRelPath)
 		}
 
@@ -265,6 +266,17 @@ func (h *BackupHandler) UpsertConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := validateContainerName(containerName); err != nil {
+		writeJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	for _, v := range req.Volumes {
+		if err := validateBackupVolume(v); err != nil {
+			writeJSONError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
 	volsRaw, _ := json.Marshal(req.Volumes)
 	cronExpr := req.CronExpression
 	if cronExpr == "" {
@@ -308,9 +320,13 @@ func (h *BackupHandler) UpsertConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pgUser := req.PgUser
+	pgUser := strings.TrimSpace(req.PgUser)
 	if pgUser == "" {
 		pgUser = "postgres"
+	}
+	if err := validatePgIdentifier("user", pgUser); err != nil {
+		writeJSONError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	cfg, err := h.backupSvc.UpsertConfig(&apps.BackupConfig{
@@ -467,7 +483,9 @@ func (h *BackupHandler) reconcileRecordFiles(ctx context.Context, recs []*apps.B
 		}
 		if hasParent {
 			st := fileUnknown
-			if _, err := os.Stat(*rec.ParentPath); err == nil {
+			if trusted := trustedParentPath(rec); trusted == "" {
+				st = fileMissing
+			} else if _, err := os.Stat(trusted); err == nil {
 				st = filePresent
 			} else if os.IsNotExist(err) {
 				st = fileMissing
@@ -572,7 +590,11 @@ func (h *BackupHandler) DeleteRecord(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if rec.ParentPath != nil && *rec.ParentPath != "" {
-		if err := os.Remove(*rec.ParentPath); err != nil && !os.IsNotExist(err) {
+		trusted := trustedParentPath(rec)
+		if trusted == "" {
+			// Untrusted path outside the backups dir: drop the reference without touching the disk.
+			parentPath = nil
+		} else if err := os.Remove(trusted); err != nil && !os.IsNotExist(err) {
 			failures = append(failures, fmt.Sprintf("parent server: %v", err))
 		} else {
 			parentPath = nil
@@ -871,6 +893,14 @@ func (h *BackupHandler) UploadReplicatedBackup(w http.ResponseWriter, r *http.Re
 		writeJSONError(w, "backup record not found", http.StatusNotFound)
 		return
 	}
+	if rec.NodeID != nodeID {
+		writeJSONError(w, "forbidden: backup record belongs to another node", http.StatusForbidden)
+		return
+	}
+	if err := validateContainerName(rec.ContainerName); err != nil {
+		writeJSONError(w, "invalid container name on backup record", http.StatusBadRequest)
+		return
+	}
 
 	filename := r.URL.Query().Get("filename")
 	if filename == "" {
@@ -974,10 +1004,15 @@ func (h *BackupHandler) DownloadForNode(w http.ResponseWriter, r *http.Request) 
 		writeJSONError(w, "backup record not found", http.StatusNotFound)
 		return
 	}
+	// Restores are dispatched to the record's own node; no other node may fetch its archive.
+	if rec.NodeID != nodeID {
+		writeJSONError(w, "forbidden: backup record belongs to another node", http.StatusForbidden)
+		return
+	}
 
-	if rec.ParentPath != nil && *rec.ParentPath != "" {
-		if _, err := os.Stat(*rec.ParentPath); err == nil {
-			http.ServeFile(w, r, *rec.ParentPath)
+	if parentPath := trustedParentPath(rec); parentPath != "" {
+		if _, err := os.Stat(parentPath); err == nil {
+			http.ServeFile(w, r, parentPath)
 			return
 		}
 	}
@@ -1018,11 +1053,11 @@ func (h *BackupHandler) DownloadBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. If stored on parent node disk, serve directly
-	if rec.ParentPath != nil && *rec.ParentPath != "" {
-		if _, err := os.Stat(*rec.ParentPath); err == nil {
-			filename := filepath.Base(*rec.ParentPath)
+	if parentPath := trustedParentPath(rec); parentPath != "" {
+		if _, err := os.Stat(parentPath); err == nil {
+			filename := filepath.Base(parentPath)
 			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
-			http.ServeFile(w, r, *rec.ParentPath)
+			http.ServeFile(w, r, parentPath)
 			return
 		}
 	}
@@ -1053,6 +1088,19 @@ func (h *BackupHandler) DownloadBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSONError(w, "backup file is not available on parent, source, or replica node", http.StatusNotFound)
+}
+
+// trustedParentPath returns the record's parent_path only if it lives inside the API backups
+// directory. Any other value is treated as absent so it is never served, copied or deleted.
+func trustedParentPath(rec *apps.BackupRecord) string {
+	if rec == nil || rec.ParentPath == nil || *rec.ParentPath == "" {
+		return ""
+	}
+	if !platform.IsWithinDir(platform.BackupsDir(), *rec.ParentPath) {
+		log.Printf("[BACKUP] ignoring parent_path %q of record %s: outside backups dir", *rec.ParentPath, rec.ID)
+		return ""
+	}
+	return *rec.ParentPath
 }
 
 func extractSharedBackupRelPath(localPath, containerName string) string {

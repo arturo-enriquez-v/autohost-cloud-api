@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -983,17 +984,34 @@ func (h *PublicShareHandler) syncHostTailscaleFunnel() {
 		sb.WriteString("$TS_BIN funnel --bg --https=443 --set-path=/api/public-shares http://127.0.0.1:3000/api/public-shares || true\n")
 	}
 
-	// Expose each container route over Tailscale Funnel
+	// Expose each container route over Tailscale Funnel.
+	// Every value is re-validated here (state is also loaded from disk) and shell-quoted, because this
+	// script is executed as root on the master host.
 	for _, rt := range routes {
+		if _, ok := funnelPortToInternalBind[rt.FunnelPort]; !ok {
+			log.Printf("[WARN] funnel sync: skipping route %s with invalid port %d", rt.ID, rt.FunnelPort)
+			continue
+		}
+		host, port, err := net.SplitHostPort(rt.Upstream)
+		portNum, perr := strconv.Atoi(port)
+		if err != nil || net.ParseIP(host) == nil || perr != nil || portNum <= 0 || portNum > 65535 {
+			log.Printf("[WARN] funnel sync: skipping route %s with invalid upstream %q", rt.ID, rt.Upstream)
+			continue
+		}
 		pathArg := ""
 		if rt.PathPrefix != "" && rt.PathPrefix != "/" {
-			pathArg = fmt.Sprintf("--set-path=%s ", rt.PathPrefix)
+			cleanPrefix, err := normalizeFunnelPathPrefix(rt.PathPrefix)
+			if err != nil {
+				log.Printf("[WARN] funnel sync: skipping route %s with invalid path prefix %q", rt.ID, rt.PathPrefix)
+				continue
+			}
+			pathArg = shellQuote("--set-path="+cleanPrefix) + " "
 		}
 		sb.WriteString(fmt.Sprintf(
-			"$TS_BIN funnel --bg --https=%d %shttp://%s || true\n",
+			"\"$TS_BIN\" funnel --bg --https=%d %s%s || true\n",
 			rt.FunnelPort,
 			pathArg,
-			rt.Upstream,
+			shellQuote("http://"+net.JoinHostPort(host, strconv.Itoa(portNum))),
 		))
 	}
 
@@ -1144,18 +1162,23 @@ func (h *PublicShareHandler) UpsertFunnelRoute(w http.ResponseWriter, r *http.Re
 
 	targetIP := ""
 	if targetNode.IPVPN != nil && strings.TrimSpace(*targetNode.IPVPN) != "" {
-		targetIP = strings.TrimSpace(*targetNode.IPVPN)
+		targetIP = hostIPOnly(*targetNode.IPVPN)
 	} else if targetNode.IsLocal {
 		targetIP = "127.0.0.1"
 	} else if strings.TrimSpace(targetNode.IPLocal) != "" {
-		targetIP = strings.TrimSpace(targetNode.IPLocal)
+		targetIP = hostIPOnly(targetNode.IPLocal)
 	}
-	if idx := strings.IndexByte(targetIP, '/'); idx != -1 {
-		targetIP = targetIP[:idx]
+	if targetIP == "" {
+		http.Error(w, `{"error":"target node has no valid IP address"}`, http.StatusBadRequest)
+		return
 	}
 
-	cleanPrefix := "/" + strings.TrimPrefix(strings.TrimSpace(req.PathPrefix), "/")
-	upstream := fmt.Sprintf("%s:%d", targetIP, req.ContainerPort)
+	cleanPrefix, err := normalizeFunnelPathPrefix(req.PathPrefix)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+	upstream := net.JoinHostPort(targetIP, strconv.Itoa(req.ContainerPort))
 
 	h.mu.Lock()
 	dnsName := h.state.FunnelDNSName
