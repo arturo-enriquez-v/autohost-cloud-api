@@ -114,7 +114,13 @@ func (h *NodeCommandHandler) ListForNode(w http.ResponseWriter, r *http.Request)
 // DELETE /v1/node-commands/{id}
 func (h *NodeCommandHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if err := h.service.Delete(id); err != nil {
+	nodeToken := middleware.GetNodeToken(r.Context())
+	if nodeToken == nil || nodeToken.NodeID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// A node may only delete its own registered commands.
+	if err := h.service.DeleteForNode(id, nodeToken.NodeID); err != nil {
 		if err == jobs.ErrCommandNotFound {
 			http.Error(w, "command not found", http.StatusNotFound)
 			return

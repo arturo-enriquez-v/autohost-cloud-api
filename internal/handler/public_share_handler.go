@@ -1033,6 +1033,19 @@ func (h *PublicShareHandler) syncHostTailscaleFunnel() {
 	}
 }
 
+// canManageFunnelRoute reports whether userID may modify a funnel route: global admins, or users with
+// network:manage on the route's target node.
+func (h *PublicShareHandler) canManageFunnelRoute(userID string, rt *TailscaleFunnelRoute) bool {
+	if checkAdminAccess(h.rbacSvc, userID) {
+		return true
+	}
+	if h.rbacSvc == nil || rt == nil || rt.TargetNodeID == "" {
+		return false
+	}
+	ok, err := h.rbacSvc.HasNodePermission(userID, rt.TargetNodeID, identity.PermNetworkManage)
+	return err == nil && ok
+}
+
 // GET /v1/tailscale-funnel/status
 func (h *PublicShareHandler) GetFunnelStatus(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetClaims(r.Context())
@@ -1043,8 +1056,23 @@ func (h *PublicShareHandler) GetFunnelStatus(w http.ResponseWriter, r *http.Requ
 
 	h.mu.RLock()
 	dnsName := h.state.FunnelDNSName
-	routes := append([]*TailscaleFunnelRoute{}, h.state.FunnelRoutes...)
+	allRoutes := append([]*TailscaleFunnelRoute{}, h.state.FunnelRoutes...)
 	h.mu.RUnlock()
+
+	// Only expose routes targeting nodes the caller can see (admins see everything).
+	isAdmin := checkAdminAccess(h.rbacSvc, claims.UserID)
+	routes := make([]*TailscaleFunnelRoute, 0, len(allRoutes))
+	for _, rt := range allRoutes {
+		if isAdmin {
+			routes = append(routes, rt)
+			continue
+		}
+		if h.rbacSvc != nil {
+			if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, rt.TargetNodeID, identity.PermNetworkRead); err == nil && ok {
+				routes = append(routes, rt)
+			}
+		}
+	}
 
 	if dnsName == "" {
 		if detected := h.detectTailscaleDNSName(); detected != "" {
@@ -1069,6 +1097,11 @@ func (h *PublicShareHandler) UpdateFunnelConfig(w http.ResponseWriter, r *http.R
 	claims := middleware.GetClaims(r.Context())
 	if claims == nil {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	// The funnel DNS name is a platform-wide setting of the master host.
+	if !checkAdminAccess(h.rbacSvc, claims.UserID) {
+		http.Error(w, `{"error":"forbidden: admin only"}`, http.StatusForbidden)
 		return
 	}
 
@@ -1202,6 +1235,11 @@ func (h *PublicShareHandler) UpsertFunnelRoute(w http.ResponseWriter, r *http.Re
 	replaced := false
 	for i, existing := range h.state.FunnelRoutes {
 		if existing.FunnelPort == req.FunnelPort && existing.PathPrefix == cleanPrefix {
+			if !h.canManageFunnelRoute(claims.UserID, existing) {
+				h.mu.Unlock()
+				http.Error(w, `{"error":"forbidden: this public path is already routed to a node you cannot manage"}`, http.StatusForbidden)
+				return
+			}
 			route.ID = existing.ID
 			h.state.FunnelRoutes[i] = route
 			replaced = true
@@ -1231,10 +1269,23 @@ func (h *PublicShareHandler) DeleteFunnelRoute(w http.ResponseWriter, r *http.Re
 	routeID := chi.URLParam(r, "routeId")
 	h.mu.Lock()
 	filtered := make([]*TailscaleFunnelRoute, 0, len(h.state.FunnelRoutes))
+	found := false
 	for _, rt := range h.state.FunnelRoutes {
-		if rt.ID != routeID {
-			filtered = append(filtered, rt)
+		if rt.ID == routeID {
+			if !h.canManageFunnelRoute(claims.UserID, rt) {
+				h.mu.Unlock()
+				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+				return
+			}
+			found = true
+			continue
 		}
+		filtered = append(filtered, rt)
+	}
+	if !found {
+		h.mu.Unlock()
+		http.Error(w, `{"error":"route not found"}`, http.StatusNotFound)
+		return
 	}
 	h.state.FunnelRoutes = filtered
 	h.saveStateLocked()

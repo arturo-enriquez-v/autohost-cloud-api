@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/infra"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/go-chi/chi/v5"
@@ -14,10 +15,60 @@ import (
 
 type ClusterHandler struct {
 	service *infra.ClusterManager
+	rbacSvc *identity.RBACService
 }
 
 func NewClusterHandler(service *infra.ClusterManager) *ClusterHandler {
 	return &ClusterHandler{service: service}
+}
+
+func (h *ClusterHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
+}
+
+// authorizeCluster loads the cluster from the URL and verifies the caller owns it (or is a global admin).
+// It writes the error response and returns ok=false when access is denied.
+func (h *ClusterHandler) authorizeCluster(w http.ResponseWriter, r *http.Request) (*infra.Cluster, bool) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.UserID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return nil, false
+	}
+	c, err := h.service.GetCluster(r.Context(), chi.URLParam(r, "clusterId"))
+	if err != nil || c == nil {
+		http.Error(w, "cluster not found", http.StatusNotFound)
+		return nil, false
+	}
+	if c.UserID != claims.UserID && !checkAdminAccess(h.rbacSvc, claims.UserID) {
+		// Same response as a missing cluster so IDs cannot be probed.
+		http.Error(w, "cluster not found", http.StatusNotFound)
+		return nil, false
+	}
+	return c, true
+}
+
+// authorizeClusterService verifies cluster ownership and that the service in the URL belongs to that cluster.
+func (h *ClusterHandler) authorizeClusterService(w http.ResponseWriter, r *http.Request) (*infra.ClusterService, bool) {
+	c, ok := h.authorizeCluster(w, r)
+	if !ok {
+		return nil, false
+	}
+	svc, err := h.service.GetService(r.Context(), chi.URLParam(r, "serviceId"))
+	if err != nil || svc == nil || svc.ClusterID != c.ID {
+		http.Error(w, "service not found", http.StatusNotFound)
+		return nil, false
+	}
+	return svc, true
+}
+
+// canEnrollNode checks the caller may hand a node over to Swarm orchestration. Joining a cluster lets the
+// cluster owner schedule arbitrary workloads on the node, so node-level update rights are required.
+func (h *ClusterHandler) canEnrollNode(userID, nodeID string) bool {
+	if h.rbacSvc == nil {
+		return false
+	}
+	ok, err := h.rbacSvc.HasNodePermission(userID, nodeID, identity.PermNodeUpdate)
+	return err == nil && ok
 }
 
 func (h *ClusterHandler) Routes() chi.Router {
@@ -82,6 +133,12 @@ func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name and manager_node_id are required", http.StatusBadRequest)
 		return
 	}
+	for _, nid := range append([]string{req.ManagerNodeID}, req.WorkerNodeIDs...) {
+		if !h.canEnrollNode(claims.UserID, nid) {
+			http.Error(w, "forbidden: insufficient permissions on node "+nid, http.StatusForbidden)
+			return
+		}
+	}
 
 	det, err := h.service.CreateCluster(r.Context(), claims.UserID, req.Name, req.ManagerNodeID, req.WorkerNodeIDs)
 	if err != nil {
@@ -95,8 +152,11 @@ func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ClusterHandler) GetByID(w http.ResponseWriter, r *http.Request) {
-	clusterID := chi.URLParam(r, "clusterId")
-	det, err := h.service.GetClusterWithDetails(r.Context(), clusterID)
+	c, ok := h.authorizeCluster(w, r)
+	if !ok {
+		return
+	}
+	det, err := h.service.GetClusterWithDetails(r.Context(), c.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -107,8 +167,11 @@ func (h *ClusterHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ClusterHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	clusterID := chi.URLParam(r, "clusterId")
-	if err := h.service.DeleteCluster(r.Context(), clusterID); err != nil {
+	c, ok := h.authorizeCluster(w, r)
+	if !ok {
+		return
+	}
+	if err := h.service.DeleteCluster(r.Context(), c.ID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -121,7 +184,11 @@ type addNodeReq struct {
 }
 
 func (h *ClusterHandler) AddNode(w http.ResponseWriter, r *http.Request) {
-	clusterID := chi.URLParam(r, "clusterId")
+	c, ok := h.authorizeCluster(w, r)
+	if !ok {
+		return
+	}
+	clusterID := c.ID
 	var req addNodeReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -134,6 +201,14 @@ func (h *ClusterHandler) AddNode(w http.ResponseWriter, r *http.Request) {
 	if req.Role == "" {
 		req.Role = infra.RoleWorker
 	}
+	if req.Role != infra.RoleWorker && req.Role != infra.RoleManager {
+		http.Error(w, "invalid role", http.StatusBadRequest)
+		return
+	}
+	if claims := middleware.GetClaims(r.Context()); claims == nil || !h.canEnrollNode(claims.UserID, req.NodeID) {
+		http.Error(w, "forbidden: insufficient permissions on node", http.StatusForbidden)
+		return
+	}
 
 	if err := h.service.AddNodeToCluster(r.Context(), clusterID, req.NodeID, req.Role); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -143,8 +218,17 @@ func (h *ClusterHandler) AddNode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ClusterHandler) RemoveNode(w http.ResponseWriter, r *http.Request) {
-	clusterID := chi.URLParam(r, "clusterId")
+	c, ok := h.authorizeCluster(w, r)
+	if !ok {
+		return
+	}
+	clusterID := c.ID
 	nodeID := chi.URLParam(r, "nodeId")
+	// Only members of this cluster can be told to leave it (RemoveNodeFromCluster dispatches swarm.leave).
+	if member, err := h.service.IsClusterMember(r.Context(), clusterID, nodeID); err != nil || !member {
+		http.Error(w, "node is not a member of this cluster", http.StatusNotFound)
+		return
+	}
 	if err := h.service.RemoveNodeFromCluster(r.Context(), clusterID, nodeID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -161,7 +245,11 @@ type createServiceReq struct {
 }
 
 func (h *ClusterHandler) CreateService(w http.ResponseWriter, r *http.Request) {
-	clusterID := chi.URLParam(r, "clusterId")
+	c, ok := h.authorizeCluster(w, r)
+	if !ok {
+		return
+	}
+	clusterID := c.ID
 	var req createServiceReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -188,7 +276,11 @@ type scaleServiceReq struct {
 }
 
 func (h *ClusterHandler) ScaleService(w http.ResponseWriter, r *http.Request) {
-	serviceID := chi.URLParam(r, "serviceId")
+	svc, ok := h.authorizeClusterService(w, r)
+	if !ok {
+		return
+	}
+	serviceID := svc.ID
 	var req scaleServiceReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -208,7 +300,11 @@ func (h *ClusterHandler) ScaleService(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ClusterHandler) DeleteService(w http.ResponseWriter, r *http.Request) {
-	serviceID := chi.URLParam(r, "serviceId")
+	svc, ok := h.authorizeClusterService(w, r)
+	if !ok {
+		return
+	}
+	serviceID := svc.ID
 	if err := h.service.DeleteService(r.Context(), serviceID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -217,7 +313,11 @@ func (h *ClusterHandler) DeleteService(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ClusterHandler) GetAutoscaling(w http.ResponseWriter, r *http.Request) {
-	serviceID := chi.URLParam(r, "serviceId")
+	svc, ok := h.authorizeClusterService(w, r)
+	if !ok {
+		return
+	}
+	serviceID := svc.ID
 	policy, err := h.service.GetAutoscaling(r.Context(), serviceID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -232,7 +332,11 @@ func (h *ClusterHandler) GetAutoscaling(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *ClusterHandler) ConfigureAutoscaling(w http.ResponseWriter, r *http.Request) {
-	serviceID := chi.URLParam(r, "serviceId")
+	svc, ok := h.authorizeClusterService(w, r)
+	if !ok {
+		return
+	}
+	serviceID := svc.ID
 	var policy infra.AutoscalePolicy
 	if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)

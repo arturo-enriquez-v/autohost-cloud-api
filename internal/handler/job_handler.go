@@ -143,6 +143,11 @@ func (h *JobHandler) Dispatch(w http.ResponseWriter, r *http.Request) {
 // GetJob returns the current status of a job.
 // GET /v1/jobs/{id}
 func (h *JobHandler) GetJob(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil || claims.UserID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	id := chi.URLParam(r, "id")
 	j, err := h.jobService.GetByID(id)
 	if err != nil {
@@ -151,6 +156,16 @@ func (h *JobHandler) GetJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, "could not get job", http.StatusInternalServerError)
+		return
+	}
+	// Job output can contain sensitive data: require jobs:read on the job's node.
+	// Respond 404 (not 403) so job IDs of other tenants cannot be probed.
+	if h.rbacSvc == nil {
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, j.NodeID, identity.PermJobsRead); err != nil || !ok {
+		http.Error(w, "job not found", http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

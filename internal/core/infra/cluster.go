@@ -230,6 +230,44 @@ func (s *ClusterManager) CreateCluster(ctx context.Context, userID, name string,
 }
 
 // GetClusterWithDetails returns a cluster with all nodes and deployed services.
+// GetCluster returns the bare cluster record (used for authorization checks).
+func (s *ClusterManager) GetCluster(ctx context.Context, clusterID string) (*Cluster, error) {
+	c, err := s.repo.GetClusterByID(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	if c == nil {
+		return nil, ErrClusterNotFound
+	}
+	return c, nil
+}
+
+// GetService returns a cluster service record (used for authorization checks).
+func (s *ClusterManager) GetService(ctx context.Context, serviceID string) (*ClusterService, error) {
+	svc, err := s.repo.GetClusterServiceByID(ctx, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	if svc == nil {
+		return nil, ErrServiceNotFound
+	}
+	return svc, nil
+}
+
+// IsClusterMember reports whether nodeID belongs to clusterID.
+func (s *ClusterManager) IsClusterMember(ctx context.Context, clusterID, nodeID string) (bool, error) {
+	nodes, err := s.repo.GetClusterNodes(ctx, clusterID)
+	if err != nil {
+		return false, err
+	}
+	for _, n := range nodes {
+		if n.NodeID == nodeID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (s *ClusterManager) GetClusterWithDetails(ctx context.Context, clusterID string) (*ClusterWithDetails, error) {
 	c, err := s.repo.GetClusterByID(ctx, clusterID)
 	if err != nil {

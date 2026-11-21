@@ -21,11 +21,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
@@ -107,6 +109,41 @@ type CloudflareTunnelHandler struct {
 	tunnelCmd    *exec.Cmd
 	tunnelLogs   []string
 	proxyServer  *http.Server
+	rbacSvc      *identity.RBACService
+}
+
+func (h *CloudflareTunnelHandler) SetRBACService(rbac *identity.RBACService) {
+	h.rbacSvc = rbac
+}
+
+// cfHostnameRe matches a DNS hostname (labels of letters, digits and hyphens).
+var cfHostnameRe = regexp.MustCompile(`^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// cfSubdomainRe matches the left-hand part of a hostname ("@" means the base domain itself).
+var cfSubdomainRe = regexp.MustCompile(`^(?:@|[a-z0-9](?:[a-z0-9.-]{0,200}[a-z0-9])?)$`)
+
+// cfLabelSanitizer replaces characters that are not valid in a DNS label.
+var cfLabelSanitizer = regexp.MustCompile(`[^a-z0-9-]+`)
+
+// requireCFAdmin enforces that platform-wide tunnel settings are only changed by global admins.
+func (h *CloudflareTunnelHandler) requireCFAdmin(w http.ResponseWriter, userID string) bool {
+	if !checkAdminAccess(h.rbacSvc, userID) {
+		http.Error(w, "forbidden: admin only", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// canManageCFRoute reports whether userID may modify a tunnel route (admin, or network:manage on its node).
+func (h *CloudflareTunnelHandler) canManageCFRoute(userID string, rt *CloudflareTunnelRoute) bool {
+	if checkAdminAccess(h.rbacSvc, userID) {
+		return true
+	}
+	if h.rbacSvc == nil || rt == nil || rt.TargetNodeID == "" {
+		return false
+	}
+	ok, err := h.rbacSvc.HasNodePermission(userID, rt.TargetNodeID, identity.PermNetworkManage)
+	return err == nil && ok
 }
 
 func NewCloudflareTunnelHandler(
@@ -494,6 +531,23 @@ func (h *CloudflareTunnelHandler) GetStatus(w http.ResponseWriter, r *http.Reque
 		resp.Routes = []*CloudflareTunnelRoute{}
 	}
 
+	// Non-admins only see routes on nodes they can read, and never the login URL or raw tunnel logs.
+	if !checkAdminAccess(h.rbacSvc, claims.UserID) {
+		visible := make([]*CloudflareTunnelRoute, 0, len(resp.Routes))
+		for _, rt := range resp.Routes {
+			if h.rbacSvc == nil {
+				break
+			}
+			if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, rt.TargetNodeID, identity.PermNetworkRead); err == nil && ok {
+				visible = append(visible, rt)
+			}
+		}
+		resp.Routes = visible
+		resp.LoginURL = ""
+		resp.LoginError = ""
+		resp.RecentLogs = []string{}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
@@ -508,6 +562,9 @@ func (h *CloudflareTunnelHandler) StartLogin(w http.ResponseWriter, r *http.Requ
 	claims := middleware.GetClaims(r.Context())
 	if claims == nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !h.requireCFAdmin(w, claims.UserID) {
 		return
 	}
 
@@ -809,6 +866,9 @@ func (h *CloudflareTunnelHandler) StartQuickTunnel(w http.ResponseWriter, r *htt
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if !h.requireCFAdmin(w, claims.UserID) {
+		return
+	}
 
 	binPath, err := h.ensureBinary()
 	if err != nil {
@@ -905,6 +965,9 @@ func (h *CloudflareTunnelHandler) UpdateConfig(w http.ResponseWriter, r *http.Re
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if !h.requireCFAdmin(w, claims.UserID) {
+		return
+	}
 
 	var req updateTunnelConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -916,6 +979,10 @@ func (h *CloudflareTunnelHandler) UpdateConfig(w http.ResponseWriter, r *http.Re
 	cleanDomain = strings.TrimPrefix(cleanDomain, "https://")
 	cleanDomain = strings.TrimPrefix(cleanDomain, "http://")
 	cleanDomain = strings.TrimSuffix(cleanDomain, "/")
+	if cleanDomain != "" && !cfHostnameRe.MatchString(cleanDomain) {
+		http.Error(w, "invalid base_domain", http.StatusBadRequest)
+		return
+	}
 
 	h.mu.Lock()
 	h.state.BaseDomain = cleanDomain
@@ -938,6 +1005,9 @@ func (h *CloudflareTunnelHandler) Disconnect(w http.ResponseWriter, r *http.Requ
 	claims := middleware.GetClaims(r.Context())
 	if claims == nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !h.requireCFAdmin(w, claims.UserID) {
 		return
 	}
 
@@ -1001,7 +1071,7 @@ func (h *CloudflareTunnelHandler) UpsertRoute(w http.ResponseWriter, r *http.Req
 		http.Error(w, "target node not found", http.StatusNotFound)
 		return
 	}
-	if targetNode.OwnerID == nil || *targetNode.OwnerID != claims.UserID {
+	if !checkNodeAccess(h.rbacSvc, targetNode, claims.UserID, identity.PermNetworkManage) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -1009,15 +1079,11 @@ func (h *CloudflareTunnelHandler) UpsertRoute(w http.ResponseWriter, r *http.Req
 	// Determine target IP: prefer Tailscale VPN IP (100.x.x.x), fallback to loopback for local Master node or IPLocal
 	targetIP := ""
 	if targetNode.IPVPN != nil && strings.TrimSpace(*targetNode.IPVPN) != "" {
-		targetIP = strings.TrimSpace(*targetNode.IPVPN)
+		targetIP = hostIPOnly(*targetNode.IPVPN)
 	} else if targetNode.IsLocal {
 		targetIP = "127.0.0.1"
 	} else if strings.TrimSpace(targetNode.IPLocal) != "" {
-		targetIP = strings.TrimSpace(targetNode.IPLocal)
-	}
-	// Strip CIDR suffix if present (e.g. "100.122.24.42/32" -> "100.122.24.42")
-	if idx := strings.IndexByte(targetIP, '/'); idx != -1 {
-		targetIP = targetIP[:idx]
+		targetIP = hostIPOnly(targetNode.IPLocal)
 	}
 	if targetIP == "" {
 		http.Error(w, "target node has no reachable Tailscale or local IP", http.StatusBadRequest)
@@ -1045,11 +1111,37 @@ func (h *CloudflareTunnelHandler) UpsertRoute(w http.ResponseWriter, r *http.Req
 		if sub != "" && sub != "@" {
 			fullDomain = sub + ".local"
 		} else {
-			fullDomain = fmt.Sprintf("%s-%d.local", strings.ToLower(targetNode.Hostname), req.Port)
+			label := strings.Trim(cfLabelSanitizer.ReplaceAllString(strings.ToLower(targetNode.Hostname), "-"), "-")
+			if label == "" {
+				label = "node"
+			}
+			fullDomain = fmt.Sprintf("%s-%d.local", label, req.Port)
 		}
 	}
 
-	upstream := fmt.Sprintf("%s:%d", targetIP, req.Port)
+	// The domain ends up in cloudflared's YAML config and in `cloudflared tunnel route dns --overwrite-dns`.
+	if sub != "" && !cfSubdomainRe.MatchString(sub) {
+		http.Error(w, "invalid subdomain", http.StatusBadRequest)
+		return
+	}
+	if base != "" && !cfHostnameRe.MatchString(base) {
+		http.Error(w, "invalid base_domain", http.StatusBadRequest)
+		return
+	}
+	if !cfHostnameRe.MatchString(fullDomain) {
+		http.Error(w, "invalid domain", http.StatusBadRequest)
+		return
+	}
+	// Only admins may change the platform-wide base domain through a route request.
+	h.mu.RLock()
+	currentBase := h.state.BaseDomain
+	h.mu.RUnlock()
+	if base != "" && currentBase != "" && base != currentBase && !checkAdminAccess(h.rbacSvc, claims.UserID) {
+		http.Error(w, "forbidden: only admins can change the tunnel base domain", http.StatusForbidden)
+		return
+	}
+
+	upstream := net.JoinHostPort(targetIP, strconv.Itoa(req.Port))
 	now := time.Now().UTC()
 
 	route := &CloudflareTunnelRoute{
@@ -1076,6 +1168,11 @@ func (h *CloudflareTunnelHandler) UpsertRoute(w http.ResponseWriter, r *http.Req
 	replaced := false
 	for i, existing := range h.state.Routes {
 		if strings.EqualFold(existing.Domain, fullDomain) {
+			if !h.canManageCFRoute(claims.UserID, existing) {
+				h.mu.Unlock()
+				http.Error(w, "forbidden: domain is already routed to a node you cannot manage", http.StatusForbidden)
+				return
+			}
 			route.CreatedAt = existing.CreatedAt
 			h.state.Routes[i] = route
 			replaced = true
@@ -1152,10 +1249,23 @@ func (h *CloudflareTunnelHandler) DeleteRoute(w http.ResponseWriter, r *http.Req
 
 	h.mu.Lock()
 	filtered := make([]*CloudflareTunnelRoute, 0, len(h.state.Routes))
+	found := false
 	for _, rt := range h.state.Routes {
-		if !strings.EqualFold(rt.Domain, domain) {
-			filtered = append(filtered, rt)
+		if strings.EqualFold(rt.Domain, domain) {
+			if !h.canManageCFRoute(claims.UserID, rt) {
+				h.mu.Unlock()
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			found = true
+			continue
 		}
+		filtered = append(filtered, rt)
+	}
+	if !found {
+		h.mu.Unlock()
+		http.Error(w, "route not found", http.StatusNotFound)
+		return
 	}
 	h.state.Routes = filtered
 	h.saveStateLocked()

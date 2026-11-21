@@ -74,3 +74,13 @@ func (s *NodeCommandService) ListByNode(nodeID string) ([]*NodeCommand, error) {
 func (s *NodeCommandService) Delete(id string) error {
 	return s.repo.Delete(id)
 }
+
+// DeleteForNode removes a command only if it belongs to nodeID.
+// A missing command and a command owned by another node both return ErrCommandNotFound.
+func (s *NodeCommandService) DeleteForNode(id, nodeID string) error {
+	cmd, err := s.repo.FindByID(id)
+	if err != nil || cmd == nil || cmd.NodeID != nodeID {
+		return ErrCommandNotFound
+	}
+	return s.repo.Delete(id)
+}

@@ -129,6 +129,12 @@ func NewRouter(p RouterParams) *chi.Mux {
 		if p.VMHandler != nil {
 			p.VMHandler.SetRBACService(p.RBACService)
 		}
+		if p.ClusterHandler != nil {
+			p.ClusterHandler.SetRBACService(p.RBACService)
+		}
+		if p.CloudflareTunnelHandler != nil {
+			p.CloudflareTunnelHandler.SetRBACService(p.RBACService)
+		}
 	}
 
 	r.Use(middleware.Logger)
