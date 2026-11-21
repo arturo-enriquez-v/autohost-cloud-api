@@ -83,9 +83,38 @@ func (m *PKIManager) CACertPEM() string {
 	return string(m.caCertPEM)
 }
 
+// EnrollmentClientCertTTL is the lifetime of client certificates issued at enrollment. It stays long by
+// default because agents older than the renewal feature never renew their certificate.
+func EnrollmentClientCertTTL() time.Duration {
+	return durationFromEnv("GRPC_ENROLL_CERT_TTL", 365*24*time.Hour)
+}
+
+// RenewedClientCertTTL is the lifetime of client certificates issued through renewal
+// (POST /v1/enrollments/renew-cert). Agents renew when a third of the lifetime remains.
+func RenewedClientCertTTL() time.Duration {
+	return durationFromEnv("GRPC_RENEWED_CERT_TTL", 90*24*time.Hour)
+}
+
+func durationFromEnv(key string, def time.Duration) time.Duration {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= time.Hour {
+			return d
+		}
+		log.Printf("[PKI] ignoring invalid %s=%q (must be a Go duration >= 1h)", key, v)
+	}
+	return def
+}
+
 // SignClientCSR validates a PEM-encoded PKCS#10 Certificate Signing Request from a node
-// and signs a client certificate bound to the given nodeID (CommonName = nodeID).
+// and signs a client certificate bound to the given nodeID (CommonName = nodeID), valid for the
+// enrollment lifetime.
 func (m *PKIManager) SignClientCSR(csrPEM []byte, nodeID string) ([]byte, error) {
+	return m.SignClientCSRWithTTL(csrPEM, nodeID, EnrollmentClientCertTTL())
+}
+
+// SignClientCSRWithTTL is SignClientCSR with an explicit lifetime. The identity always comes from nodeID
+// (the authenticated caller), never from the CSR subject.
+func (m *PKIManager) SignClientCSRWithTTL(csrPEM []byte, nodeID string, ttl time.Duration) ([]byte, error) {
 	nodeID = strings.TrimSpace(nodeID)
 	if nodeID == "" {
 		return nil, errors.New("pki: nodeID is required to sign client certificate")
@@ -130,7 +159,7 @@ func (m *PKIManager) SignClientCSR(csrPEM []byte, nodeID string) ([]byte, error)
 		DNSNames:              []string{nodeID},
 		URIs:                  []*url.URL{spiffeURI},
 		NotBefore:             now.Add(-5 * time.Minute),
-		NotAfter:              now.Add(365 * 24 * time.Hour),
+		NotAfter:              now.Add(ttl),
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,

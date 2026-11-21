@@ -160,7 +160,7 @@ func NewRouter(p RouterParams) *chi.Mux {
 		}
 		r.Mount("/nodes", p.NodeHandler.Routes())
 		r.Mount("/node-metrics", p.NodeMetricHandler.Routes(nodeAuthMiddleware))
-		r.Mount("/enrollments", p.EnrollmentHandler.Routes())
+		r.Mount("/enrollments", p.EnrollmentHandler.Routes(nodeAuthMiddleware))
 		r.Mount("/heartbeats", p.HeartbeatsHandler.Routes(nodeAuthMiddleware))
 		r.Mount("/node-commands", p.NodeCommandHandler.Routes(nodeAuthMiddleware))
 		r.Mount("/jobs", p.JobsHandler.Routes())

@@ -40,12 +40,18 @@ func NewEnrollmentHandler(service *node.EnrollmentService, nodeService *node.Nod
 	}
 }
 
-func (h *EnrollmentHandler) Routes() chi.Router {
+func (h *EnrollmentHandler) Routes(nodeAuthMiddleware func(http.Handler) http.Handler) chi.Router {
 	r := chi.NewRouter()
 
 	r.Group(func(protected chi.Router) {
 		protected.Use(middleware.Auth)
 		protected.Post("/generate", h.CreateEnrollToken)
+	})
+
+	// Agent endpoint: renew the node's mTLS client certificate (authenticated with the node token).
+	r.Group(func(nodeRouter chi.Router) {
+		nodeRouter.Use(nodeAuthMiddleware)
+		nodeRouter.Post("/renew-cert", h.RenewClientCert)
 	})
 
 	r.With(middleware.RateLimitByIP(enrollIPLimiter)).Post("/enroll", h.EnrollNode)
@@ -322,4 +328,52 @@ func cleanGRPCAddress(raw string) string {
 		return clean + ":443"
 	}
 	return clean + ":9090"
+}
+
+// renewCertLimiter caps certificate renewals per node (legitimate agents renew every few weeks).
+var renewCertLimiter = middleware.NewRateLimiter(10, time.Hour)
+
+// RenewClientCert signs a new mTLS client certificate for the authenticated node.
+// POST /v1/enrollments/renew-cert  {"csr_pem": "..."}
+//
+// The certificate identity (CN) is always the node ID bound to the caller's node token; the CSR subject is
+// ignored. Revoked or deleted nodes are rejected by the node auth middleware before reaching this handler.
+func (h *EnrollmentHandler) RenewClientCert(w http.ResponseWriter, r *http.Request) {
+	nodeToken := middleware.GetNodeToken(r.Context())
+	if nodeToken == nil || nodeToken.NodeID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if h.pki == nil || !platform.IsGRPCTLSEnabled() {
+		http.Error(w, "mTLS is not enabled on this server", http.StatusConflict)
+		return
+	}
+	if ok, retry := renewCertLimiter.Allow("node:" + nodeToken.NodeID); !ok {
+		middleware.WriteRateLimited(w, retry)
+		return
+	}
+
+	var req struct {
+		CSRPEM string `json:"csr_pem"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.CSRPEM) == "" {
+		http.Error(w, "csr_pem is required", http.StatusBadRequest)
+		return
+	}
+
+	ttl := platform.RenewedClientCertTTL()
+	certPEM, err := h.pki.SignClientCSRWithTTL([]byte(req.CSRPEM), nodeToken.NodeID, ttl)
+	if err != nil {
+		log.Printf("[WARN] renew client cert for node %s: %v", nodeToken.NodeID, err)
+		http.Error(w, "invalid certificate signing request", http.StatusBadRequest)
+		return
+	}
+	log.Printf("[PKI] renewed client certificate for node %s (valid %s)", nodeToken.NodeID, ttl)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"client_cert": string(certPEM),
+		"ca_cert":     h.pki.CACertPEM(),
+		"expires_at":  time.Now().Add(ttl).UTC().Format(time.RFC3339),
+	})
 }

@@ -68,3 +68,8 @@ func GetNodeToken(ctx context.Context) *node.NodeToken {
 	}
 	return nil
 }
+
+// ContextWithNodeToken returns ctx carrying an authenticated node token (used by tests and internal callers).
+func ContextWithNodeToken(ctx context.Context, nt *node.NodeToken) context.Context {
+	return context.WithValue(ctx, nodeTokenKey, nt)
+}
