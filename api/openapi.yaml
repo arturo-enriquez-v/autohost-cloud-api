@@ -72,6 +72,20 @@ tags:
     description: Docker containers on a node, streamed live from the agent.
   - name: Logs
     description: System logs (journald) of a node, streamed live from the agent.
+  - name: Files
+    description: |
+      Files in a node's shared folder. Every `path` is relative to that folder (`/` is its root); paths
+      that escape it, including through symlinks, are rejected. File errors are JSON (`{"error": ...}`).
+  - name: Terminal
+    description: Interactive root shell on a node, over a WebSocket.
+  - name: Backups
+    description: |
+      Container backups. A backup configuration is stored per node and container; each run creates a backup
+      record. Archives can be kept on the node, copied to the parent (the API's host) and/or replicated to
+      another node.
+
+      **Scheduled backups are not implemented yet**: `cron_expression` and `enabled` are stored, but backups
+      only run through `POST /v1/backups/run/{nodeId}/{containerName}`.
   - name: Node commands
     description: |
       Commands a node exposes to the dashboard: built-in ones and custom `.sh` scripts the agent discovers.
@@ -1877,6 +1891,877 @@ paths:
                 type: string
                 examples: [node streaming not available]
 
+  /v1/nodes/{nodeId}/files:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      tags: [Files]
+      operationId: listFiles
+      summary: List a directory
+      description: Requires `files:read`. Directories come first, then files, by name.
+      parameters:
+        - $ref: "#/components/parameters/FilePathQuery"
+      responses:
+        "200":
+          description: The directory listing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileListing"
+        "400":
+          $ref: "#/components/responses/FileError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/FileError"
+        "502":
+          $ref: "#/components/responses/FileAgentError"
+        "504":
+          $ref: "#/components/responses/FileAgentError"
+    delete:
+      tags: [Files]
+      operationId: deleteFile
+      summary: Delete a file or directory
+      description: Requires `files:delete`. Directories are deleted recursively. The shared folder root cannot be deleted.
+      parameters:
+        - $ref: "#/components/parameters/FilePathQuery"
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, deleted]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  deleted:
+                    type: string
+                    description: The deleted path.
+        "400":
+          $ref: "#/components/responses/FileError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/FileError"
+        "502":
+          $ref: "#/components/responses/FileAgentError"
+
+  /v1/nodes/{nodeId}/files/mkdir:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    post:
+      tags: [Files]
+      operationId: makeDirectory
+      summary: Create a directory
+      description: Requires `files:write`. Missing parent directories are created too.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                  examples: [/media/movies]
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, path]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  path:
+                    type: string
+        "400":
+          $ref: "#/components/responses/FileError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "502":
+          $ref: "#/components/responses/FileAgentError"
+
+  /v1/nodes/{nodeId}/files/rename:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    post:
+      tags: [Files]
+      operationId: renameFile
+      summary: Rename or move a file or directory
+      description: Requires `files:write`. Fails with `409` if `new_path` already exists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path, new_path]
+              properties:
+                path:
+                  type: string
+                new_path:
+                  type: string
+      responses:
+        "200":
+          description: Renamed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, new_path]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  new_path:
+                    type: string
+        "400":
+          $ref: "#/components/responses/FileError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/FileError"
+        "409":
+          $ref: "#/components/responses/FileError"
+        "502":
+          $ref: "#/components/responses/FileAgentError"
+
+  /v1/nodes/{nodeId}/files/upload:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    post:
+      tags: [Files]
+      operationId: uploadFile
+      summary: Upload a file
+      description: |
+        Requires `files:write`. Streams a `multipart/form-data` upload to the node without buffering it,
+        so there is no size limit beyond the node's disk. The target directory is the `path` query
+        parameter, or a `path` form field sent before the `file` field.
+      parameters:
+        - name: path
+          in: query
+          description: Target directory. Defaults to the shared folder root.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                path:
+                  type: string
+                  description: Target directory, if not given as a query parameter. Must come before `file`.
+                file:
+                  type: string
+                  format: binary
+            encoding:
+              file:
+                contentType: application/octet-stream
+      responses:
+        "201":
+          description: Uploaded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, path, size_bytes]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  path:
+                    type: string
+                    description: Path of the uploaded file.
+                  size_bytes:
+                    type: integer
+                    format: int64
+        "400":
+          $ref: "#/components/responses/FileError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "502":
+          $ref: "#/components/responses/FileAgentError"
+        "504":
+          $ref: "#/components/responses/FileAgentError"
+
+  /v1/nodes/{nodeId}/files/download:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      tags: [Files]
+      operationId: downloadFile
+      summary: Download a file
+      description: Requires `files:read`. Sent as an attachment.
+      parameters:
+        - $ref: "#/components/parameters/FilePathQueryRequired"
+      responses:
+        "200":
+          description: The file.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: '`attachment; filename="..."`'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/FileError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/FileError"
+        "502":
+          $ref: "#/components/responses/FileAgentError"
+
+  /v1/nodes/{nodeId}/files/stream:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      tags: [Files]
+      operationId: streamFile
+      summary: Stream a file inline (media playback)
+      description: |
+        Requires `files:read`. Like download, but served inline with a media type guessed from the extension
+        and support for `Range` requests (only the start offset is honored), so browsers can seek in audio
+        and video.
+      parameters:
+        - $ref: "#/components/parameters/FilePathQueryRequired"
+        - name: Range
+          in: header
+          schema:
+            type: string
+            examples: [bytes=1048576-]
+      responses:
+        "200":
+          description: The whole file.
+          content:
+            "*/*":
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: The file from the requested offset.
+          headers:
+            Content-Range:
+              schema:
+                type: string
+          content:
+            "*/*":
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/FileError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/FileError"
+        "502":
+          $ref: "#/components/responses/FileAgentError"
+
+  /v1/nodes/{nodeId}/files/transfer:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    post:
+      tags: [Files]
+      operationId: transferFile
+      summary: Copy a file to another node
+      description: |
+        Copies a file from this node's shared folder to another node's. Requires `files:read` on this node
+        and `files:write` on the target. If `target_path` is empty or ends with `/`, the source file name is
+        kept. Times out after 15 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source_path, target_node_id]
+              properties:
+                source_path:
+                  type: string
+                target_node_id:
+                  type: string
+                  format: uuid
+                target_path:
+                  type: string
+      responses:
+        "200":
+          description: Copied.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, source_node_id, target_node_id, source_path, target_path, size_bytes]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  source_node_id:
+                    type: string
+                    format: uuid
+                  target_node_id:
+                    type: string
+                    format: uuid
+                  source_path:
+                    type: string
+                  target_path:
+                    type: string
+                  size_bytes:
+                    type: integer
+                    format: int64
+        "400":
+          $ref: "#/components/responses/FileError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/FileError"
+        "502":
+          $ref: "#/components/responses/FileAgentError"
+        "504":
+          $ref: "#/components/responses/FileAgentError"
+
+  /v1/node-files/internal-transfer/{transferId}:
+    parameters:
+      - name: transferId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: token
+        in: query
+        description: "One-time ticket token. May be sent as `Authorization: Bearer <token>` instead."
+        schema:
+          type: string
+    get:
+      tags: [Files]
+      operationId: agentPullTransfer
+      summary: Download a transfer payload (agent)
+      description: |
+        Internal. The API gives agents a URL to this endpoint, with a short-lived ticket, when a file must
+        flow from the API to the node (uploads, node-to-node copies). Not meant to be called directly.
+      security: []
+      responses:
+        "200":
+          description: The file contents.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          description: Unknown or expired ticket.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      tags: [Files]
+      operationId: agentPushTransfer
+      summary: Upload a transfer payload (agent)
+      description: Internal. Counterpart of the GET for files flowing from the node to the API (downloads, streams, copies).
+      security: []
+      parameters:
+        - name: X-File-Size
+          in: header
+          description: Total size of the file, when streaming from an offset.
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Received.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+        "401":
+          description: Unknown or expired ticket.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/FileAgentError"
+
+  /v1/nodes/{nodeId}/terminal:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      tags: [Terminal]
+      operationId: openTerminal
+      summary: Open a terminal (WebSocket)
+      description: |
+        Requires `terminal:exec`, which gives a **root shell** on the node. Upgrade the connection to a
+        WebSocket; browsers authenticate with the `access_token` cookie or the `token` query parameter. The
+        `Origin` header, when present, must be an allowed origin.
+
+        **Messages from the server** are JSON text frames:
+        - `{"type": "connected", "session_id": "..."}` once the shell is ready;
+        - `{"type": "output", "data": "..."}` with terminal output (with `raw=1`, output is sent as
+          binary frames instead);
+        - `{"type": "exit", "exit_code": 0, "message": "..."}` when the shell ends;
+        - `{"type": "error", "message": "..."}`, e.g. when the node is offline;
+        - `{"type": "pong"}` in reply to a ping.
+
+        **Messages from the client**:
+        - `{"type": "input", "data": "ls\r"}` — keystrokes (binary frames and non-JSON text frames are
+          also treated as input);
+        - `{"type": "resize", "cols": 120, "rows": 40}`;
+        - `{"type": "ping"}`.
+      parameters:
+        - $ref: "#/components/parameters/TokenQuery"
+        - name: cols
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 80
+        - name: rows
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 24
+        - name: shell
+          in: query
+          description: Shell to run. Defaults to the agent's choice.
+          schema:
+            type: string
+            examples: [/bin/bash]
+        - name: cwd
+          in: query
+          description: Initial working directory.
+          schema:
+            type: string
+        - name: raw
+          in: query
+          description: Send output as binary frames instead of JSON `output` messages.
+          schema:
+            type: string
+            enum: ["1"]
+      responses:
+        "101":
+          description: Switching to the WebSocket protocol.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/backups/config/{nodeId}/{containerName}:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+      - $ref: "#/components/parameters/ContainerNamePath"
+    get:
+      tags: [Backups]
+      operationId: getBackupConfig
+      summary: Get a container's backup configuration
+      description: |
+        Requires `backups:read`. When the container has no configuration yet, returns the defaults with
+        `"configured": false` instead of `404`.
+      responses:
+        "200":
+          description: The configuration, or the defaults.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BackupConfig"
+                  - type: object
+                    required: [configured]
+                    properties:
+                      configured:
+                        type: boolean
+                        const: false
+                      storage_destination:
+                        type: string
+                        const: local
+                      replica_node_id:
+                        type: "null"
+                      backup_method:
+                        type: string
+                        const: volume
+                      retention_count:
+                        type: integer
+                        const: 7
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Backups]
+      operationId: setBackupConfig
+      summary: Create or update a container's backup configuration
+      description: |
+        Requires `backups:manage`, and `files:write` on the replica node when one is set. Unknown
+        `backup_method` and `storage_destination` values fall back to `volume` and `local`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BackupConfigRequest"
+      responses:
+        "200":
+          description: The saved configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupConfig"
+        "400":
+          description: Invalid container name, volume, PostgreSQL user or replica settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: replica_node_id is required for remote_node or local_and_replica storage
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Missing `backups:manage`, or `files:write` on the replica node.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/backups/records/{nodeId}/{containerName}:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+      - $ref: "#/components/parameters/ContainerNamePath"
+    get:
+      tags: [Backups]
+      operationId: listBackupRecords
+      summary: List a container's backups and restores
+      description: Requires `backups:read`. Includes deleted backups, which stay in the list as an audit log.
+      responses:
+        "200":
+          description: The 50 most recent backup records, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BackupRecord"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/backups/records/{recordId}:
+    parameters:
+      - $ref: "#/components/parameters/BackupRecordIDPath"
+    delete:
+      tags: [Backups]
+      operationId: deleteBackup
+      summary: Delete a backup
+      description: |
+        Requires `backups:manage` on the record's node. Deletes the archive from every location (node,
+        parent, replica) and marks the record `deleted`; it stays listed for auditing.
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          $ref: "#/components/responses/BackupNotFound"
+        "409":
+          description: The backup is still running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+        "501":
+          description: The archive is in object storage, which cannot be deleted from here yet.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: Some locations could not be cleaned (e.g. a node is offline).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/backups/run/{nodeId}/{containerName}:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+      - $ref: "#/components/parameters/ContainerNamePath"
+    post:
+      tags: [Backups]
+      operationId: runBackup
+      summary: Back up a container now
+      description: |
+        Requires `backups:create`. Creates a `running` record and dispatches the backup job to the node. If
+        the container has no configuration yet, one is created with defaults (volume backup, copied to the
+        parent). Follow progress through the record or its `job_id`.
+      responses:
+        "200":
+          description: The new backup record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupRecord"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/backups/restore/{recordId}:
+    parameters:
+      - $ref: "#/components/parameters/BackupRecordIDPath"
+    post:
+      tags: [Backups]
+      operationId: restoreBackup
+      summary: Restore a backup
+      description: |
+        Requires `backups:restore` on the record's node. Overwrites the container's data with the backup.
+        Creates a `restore` record and dispatches the restore job.
+      responses:
+        "200":
+          description: Restore started.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, job_id, record_id]
+                properties:
+                  status:
+                    type: string
+                    const: restoring
+                  job_id:
+                    type: string
+                    format: uuid
+                  record_id:
+                    type: string
+                    format: uuid
+                    description: ID of the new restore record.
+        "400":
+          description: The backup's configuration no longer exists.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [backup configuration missing]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No backup record with this ID.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [backup record not found]
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/backups/download/{recordId}:
+    parameters:
+      - $ref: "#/components/parameters/BackupRecordIDPath"
+    get:
+      tags: [Backups]
+      operationId: downloadBackup
+      summary: Download a backup archive
+      description: |
+        Requires `backups:create` on the record's node (a backup contains all the container's data). Served
+        from the parent copy, the source node or the replica, whichever is available first.
+      responses:
+        "200":
+          description: The archive.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          description: Unknown record, or the archive is not available in any location.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/backups/storage-usage:
+    get:
+      tags: [Backups]
+      operationId: getBackupStorageUsage
+      summary: Get disk usage of the parent backup storage
+      responses:
+        "200":
+          description: Usage of the filesystem holding parent backup copies.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageUsage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/backups/upload/{nodeId}/{recordId}:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+      - $ref: "#/components/parameters/BackupRecordIDPath"
+    post:
+      tags: [Backups]
+      operationId: uploadBackupToParent
+      summary: Upload a backup archive to the parent (agent)
+      description: |
+        The agent sends the archive of one of its own backup records. It is stored on the API's host, then
+        replicated if configured, and old archives are pruned by the retention count. Rejected with `507`
+        when the parent disk is 98% full.
+      security:
+        - nodeToken: []
+      parameters:
+        - name: filename
+          in: query
+          description: Archive file name. Defaults to `<recordId>.tar.gz`.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, parent_path, file_size_bytes]
+                properties:
+                  status:
+                    type: string
+                    const: replicated
+                  parent_path:
+                    type: string
+                  file_size_bytes:
+                    type: integer
+                    format: int64
+        "401":
+          $ref: "#/components/responses/NodeUnauthorized"
+        "403":
+          description: The token's node does not match `nodeId` or the record's node.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/BackupNotFound"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+        "507":
+          description: The parent's backup storage is full.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/backups/node-download/{nodeId}/{recordId}:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+      - $ref: "#/components/parameters/BackupRecordIDPath"
+    get:
+      tags: [Backups]
+      operationId: downloadBackupForRestore
+      summary: Download a backup archive for a restore (agent)
+      description: The node restoring one of its own backups fetches the parent or replica copy here.
+      security:
+        - nodeToken: []
+      responses:
+        "200":
+          description: The archive.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/NodeUnauthorized"
+        "403":
+          description: The token's node does not match `nodeId` or the record's node.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Unknown record, or no parent or replica copy is available.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1896,6 +2781,35 @@ components:
         Node token (`autohost-node_...`) issued to an agent at enrollment. Only accepted on agent routes.
 
   parameters:
+    FilePathQuery:
+      name: path
+      in: query
+      description: Path relative to the shared folder. Defaults to `/`.
+      schema:
+        type: string
+        default: /
+    FilePathQueryRequired:
+      name: path
+      in: query
+      required: true
+      description: Path of the file, relative to the shared folder.
+      schema:
+        type: string
+    ContainerNamePath:
+      name: containerName
+      in: path
+      required: true
+      description: Docker container name.
+      schema:
+        type: string
+    BackupRecordIDPath:
+      name: recordId
+      in: path
+      required: true
+      description: Backup record ID.
+      schema:
+        type: string
+        format: uuid
     ProjectIDPath:
       name: id
       in: path
@@ -1937,6 +2851,28 @@ components:
         format: uuid
 
   responses:
+    FileError:
+      description: Invalid path (400), not found (404) or already exists (409).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: invalid path
+    FileAgentError:
+      description: The node's agent failed (502), did not answer in time (504) or the transfer failed (500).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    BackupNotFound:
+      description: No backup record with this ID.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: backup record not found
     ProjectNotFound:
       description: No project with this ID.
       content:
@@ -2879,3 +3815,221 @@ components:
           type: string
         message:
           type: string
+
+    FileEntry:
+      type: object
+      required: [name, path, is_dir, size_bytes, modified_at, mode]
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+          description: Path relative to the shared folder.
+        is_dir:
+          type: boolean
+        size_bytes:
+          type: integer
+          format: int64
+        modified_at:
+          type: string
+          format: date-time
+        mode:
+          type: string
+          examples: [-rw-r--r--]
+
+    FileListing:
+      type: object
+      required: [node_id, current_path, entries]
+      properties:
+        node_id:
+          type: string
+          format: uuid
+        current_path:
+          type: string
+        base_dir:
+          type: string
+          description: Absolute path of the shared folder. Only for the API's own (local) node.
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/FileEntry"
+
+    BackupMethod:
+      type: string
+      description: |
+        `volume`: archive of the container's volumes. `pg_dump`: logical dump of a PostgreSQL container.
+        `image`: export of the container's image.
+      enum: [volume, pg_dump, image]
+
+    BackupStorageDestination:
+      type: string
+      description: |
+        `local`: kept on the node. `local_and_parent`: also copied to the API's host. `local_and_replica`:
+        also copied to `replica_node_id`. `remote_node`: stored on `replica_node_id`.
+      enum: [local, local_and_parent, local_and_replica, remote_node]
+
+    BackupConfigRequest:
+      type: object
+      properties:
+        volumes:
+          type: array
+          description: Volumes to back up, for the `volume` method.
+          items:
+            type: string
+        cron_expression:
+          type: string
+          default: 0 3 * * *
+          description: Stored for scheduled backups, which are not implemented yet.
+        retention_count:
+          type: integer
+          default: 7
+          description: Number of archives kept per location; older ones are pruned.
+        pause_container:
+          type: boolean
+          description: Pause the container while its volumes are archived, for a consistent copy.
+        backup_method:
+          $ref: "#/components/schemas/BackupMethod"
+        storage_destination:
+          $ref: "#/components/schemas/BackupStorageDestination"
+        replica_node_id:
+          type: [string, "null"]
+          format: uuid
+          description: Required for `local_and_replica` and `remote_node`. Must differ from the source node.
+        pg_user:
+          type: string
+          default: postgres
+          description: PostgreSQL user for `pg_dump`.
+        enabled:
+          type: boolean
+          description: Stored for scheduled backups, which are not implemented yet.
+
+    BackupConfig:
+      type: object
+      required: [id, user_id, node_id, container_name, volumes, cron_expression, retention_count, pause_container, backup_method, storage_destination, pg_user, enabled, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        container_name:
+          type: string
+        volumes:
+          type: array
+          items:
+            type: string
+        cron_expression:
+          type: string
+        retention_count:
+          type: integer
+        pause_container:
+          type: boolean
+        backup_method:
+          $ref: "#/components/schemas/BackupMethod"
+        storage_destination:
+          $ref: "#/components/schemas/BackupStorageDestination"
+        replica_node_id:
+          type: string
+          format: uuid
+        pg_user:
+          type: string
+        storage_credential_id:
+          type: string
+          format: uuid
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    BackupRecord:
+      type: object
+      required: [id, backup_config_id, node_id, user_id, container_name, storage_destination, file_size_bytes, backup_method, trigger_type, status, started_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        backup_config_id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+        container_name:
+          type: string
+        storage_destination:
+          $ref: "#/components/schemas/BackupStorageDestination"
+        local_path:
+          type: string
+          description: Archive location on the node.
+        parent_path:
+          type: string
+          description: Archive location on the API's host.
+        replica_node_id:
+          type: string
+          format: uuid
+        replica_path:
+          type: string
+          description: Archive location in the replica node's shared folder.
+        s3_key:
+          type: string
+        file_size_bytes:
+          type: integer
+          format: int64
+        backup_method:
+          $ref: "#/components/schemas/BackupMethod"
+        trigger_type:
+          type: string
+          description: '`manual` for backups, `restore` for restores.'
+          examples: [manual]
+        status:
+          type: string
+          enum: [running, completed, failed, deleted]
+        error_message:
+          type: string
+        user_email:
+          type: string
+          description: Who triggered it (or deleted it, for deleted backups).
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    StorageUsage:
+      type: object
+      required: [path, total_bytes, used_bytes, available_bytes, usage_percent, warning_high]
+      properties:
+        path:
+          type: string
+        total_bytes:
+          type: integer
+          format: int64
+        used_bytes:
+          type: integer
+          format: int64
+        available_bytes:
+          type: integer
+          format: int64
+        usage_percent:
+          type: number
+        warning_high:
+          type: boolean
+          description: True at 85% usage or more.
