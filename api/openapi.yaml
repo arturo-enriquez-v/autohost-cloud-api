@@ -1,0 +1,2881 @@
+openapi: 3.1.0
+info:
+  title: AutoHost Cloud API
+  version: 1.0.0
+  summary: REST API of the AutoHost control plane.
+  description: |
+    REST API used by the AutoHost web app, the CLI and the node agent.
+
+    ## Authentication
+    - **Users** send a JWT access token as `Authorization: Bearer <token>`. Browser sessions may send it
+      in the `access_token` cookie instead, and WebSocket/SSE connections as the `token` (or
+      `access_token`) query parameter.
+    - **Node agents** send their node token as `Authorization: Bearer <node_token>` on agent-only routes.
+
+    Access tokens are short-lived; renew them with `POST /v1/auth/refresh`. Refresh tokens are rotated:
+    every refresh returns a new pair and invalidates the old refresh token.
+
+    ## Errors
+    Most errors are returned as **plain text** (`text/plain`) with a short message. Some newer endpoints and
+    every rate-limit response use JSON: `{"error": "<message>"}`.
+
+    ## Rate limits
+    Sensitive endpoints are rate limited per client IP (and login also per account). When a limit is hit
+    the API answers `429` with a `Retry-After` header in seconds.
+
+    ## Coverage
+    This spec is being written module by module. `internal/server/openapi_coverage_test.go` fails when a
+    route exists in the router but not here (unless its module is still listed as pending), or when the
+    spec documents a route that no longer exists.
+  license:
+    name: AGPL-3.0-only
+    identifier: AGPL-3.0-only
+
+servers:
+  - url: /
+    description: This server
+
+tags:
+  - name: Health
+    description: Liveness probe.
+  - name: Auth
+    description: Registration, login, token refresh and the current user's profile.
+  - name: Nodes
+    description: |
+      Machines running the AutoHost agent. Listings only include nodes the caller can read: admins see every
+      node, other users see the nodes their project memberships or node grants give them `node:read` on.
+      Every node in a response carries the caller's effective `role_preset` and `permissions` on it.
+  - name: Enrollment
+    description: |
+      Adding a machine to AutoHost. A user creates a one-time enrollment token, the agent exchanges it for a
+      node ID and a node token, and from then on the agent authenticates with that node token.
+  - name: Agent
+    description: |
+      Liveness and metric reports sent by the agent over REST with its node token. Agents connected over
+      gRPC report the same data on their stream instead; these endpoints are the HTTP fallback.
+  - name: Node metrics
+    description: Metric history and live metric streams for the dashboard.
+  - name: Users
+    description: |
+      User accounts and their permissions. Except for the catalog, `my-permissions` and reading one's own
+      user, every operation requires the global `admin` role.
+  - name: Jobs
+    description: |
+      Commands executed on a node. A job is created `pending`, sent to the node if it is connected, and
+      moves to `running` and then `completed` or `failed` as the agent reports back over gRPC.
+  - name: Projects
+    description: |
+      Groups of nodes. Members of a project get access to its nodes through their membership (`all_nodes`
+      with a default role) and/or explicit per-node grants. Only admins create projects; a project can be
+      managed (members, nodes) by its owner or any admin.
+  - name: Containers
+    description: Docker containers on a node, streamed live from the agent.
+  - name: Logs
+    description: System logs (journald) of a node, streamed live from the agent.
+  - name: Node commands
+    description: |
+      Commands a node exposes to the dashboard: built-in ones and custom `.sh` scripts the agent discovers.
+      The agent registers them; users list them to run jobs.
+
+security:
+  - bearerAuth: []
+  - cookieAuth: []
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      operationId: getHealth
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: The API process is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, service]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+                  service:
+                    type: string
+                    examples: [autohost-cloud-api]
+
+  /v1/auth/setup-status:
+    get:
+      tags: [Auth]
+      operationId: getSetupStatus
+      summary: Get the server's setup and registration status
+      description: |
+        Public endpoint the login screen calls to decide what to show: the first-run setup form (no users
+        yet), a registration form, and/or the Google sign-in button.
+      security: []
+      responses:
+        "200":
+          description: Current setup status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetupStatus"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/auth/register:
+    post:
+      tags: [Auth]
+      operationId: register
+      summary: Create an account and sign in
+      description: |
+        Creates a user with email and password and returns a token pair. Allowed when the server has no
+        users yet (the first user becomes the admin) or when `ALLOW_REGISTRATION=true`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Account created; the user is signed in.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400":
+          description: Malformed JSON, or email/password missing.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [email and password required]
+        "403":
+          description: Public registration is disabled on this server.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [public registration is disabled on this server]
+        "409":
+          description: An account with this email already exists.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [email already exists]
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Sign in with email and password
+      description: Rate limited per client IP (30/min) and per email (10 attempts per 15 min).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Signed in.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400":
+          $ref: "#/components/responses/BadJSON"
+        "401":
+          description: Wrong email or password.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [invalid credentials]
+        "403":
+          description: The account has been deactivated by an admin.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [user account is deactivated]
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshTokens
+      summary: Exchange a refresh token for a new token pair
+      description: |
+        Rotates the refresh token: the one sent is invalidated and a new pair is returned. Rate limited per
+        client IP (120/min).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshTokenRequest"
+      responses:
+        "200":
+          description: New token pair.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "401":
+          description: Missing, invalid, expired or already used refresh token.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [invalid or expired refresh token]
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Revoke a refresh token
+      description: |
+        Revokes the given refresh token. Always answers `204`, even when the body is missing or the token is
+        unknown, so clients can call it unconditionally. Access tokens stay valid until they expire.
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshTokenRequest"
+      responses:
+        "204":
+          description: Done.
+
+  /v1/auth/oauth/google:
+    post:
+      tags: [Auth]
+      operationId: loginWithGoogle
+      summary: Sign in with a Google ID token
+      description: |
+        Verifies a Google ID token and signs the user in, creating the account on first login when
+        registration is allowed. Only available when the server has `GOOGLE_CLIENT_ID` configured
+        (see `google_oauth_enabled` in the setup status).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id_token]
+              properties:
+                id_token:
+                  type: string
+                  description: ID token returned by Google Identity Services.
+      responses:
+        "200":
+          description: Signed in.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400":
+          description: Malformed JSON or `id_token` missing.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [id_token required]
+        "403":
+          description: The account does not exist and public registration is disabled.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [public registration is disabled on this server]
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/auth/me:
+    get:
+      tags: [Auth]
+      operationId: getCurrentUser
+      summary: Get the signed-in user
+      description: |
+        Returns the user's profile together with their project memberships and per-node permissions. If the
+        user record cannot be loaded, a reduced profile built from the token claims is returned instead
+        (only `uid`, `email`, `name` and `avatar_url`).
+      responses:
+        "200":
+          description: The signed-in user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/auth/profile:
+    put:
+      tags: [Auth]
+      operationId: updateProfile
+      summary: Update the signed-in user's profile
+      description: Only the fields sent are changed. Returns the updated user, in the same shape as `GET /v1/auth/me`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                avatar_url:
+                  type: string
+                  format: uri
+      responses:
+        "200":
+          description: The updated user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "400":
+          description: Malformed JSON.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [invalid request body]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          description: The profile could not be updated.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [could not update profile]
+
+  /v1/nodes:
+    get:
+      tags: [Nodes]
+      operationId: listNodes
+      summary: List the nodes the caller can see
+      responses:
+        "200":
+          description: Visible nodes. Empty array when there are none.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Node"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+    put:
+      tags: [Nodes]
+      operationId: updateNodeLegacy
+      summary: Rename a node (ID in the body)
+      deprecated: true
+      description: Use `PUT /v1/nodes/{id}` instead. Same behavior, but the node ID is sent in the body.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                hostname:
+                  type: string
+      responses:
+        "200":
+          description: The updated node (without the caller's `role_preset`/`permissions`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Node"
+        "400":
+          $ref: "#/components/responses/BadRequestJSON"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          $ref: "#/components/responses/NodeNotFoundJSON"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/nodes/with-metrics:
+    get:
+      tags: [Nodes]
+      operationId: listNodesWithMetrics
+      summary: List visible nodes with their latest metrics
+      description: Same visibility rules as `GET /v1/nodes`; each node also carries its most recent metric sample.
+      responses:
+        "200":
+          description: Visible nodes with their latest metric, when one exists.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NodeWithMetrics"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/nodes/{id}:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPath"
+    get:
+      tags: [Nodes]
+      operationId: getNode
+      summary: Get a node
+      description: Requires `node:read` on the node.
+      responses:
+        "200":
+          description: The node with its latest metric and the caller's effective permissions on it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeWithMetrics"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          $ref: "#/components/responses/NodeNotFoundJSON"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+    put:
+      tags: [Nodes]
+      operationId: updateNode
+      summary: Rename a node
+      description: |
+        Only `hostname` can be changed; an empty hostname leaves it unchanged. Requires `node:update` on the
+        node.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hostname:
+                  type: string
+      responses:
+        "200":
+          description: The updated node (without the caller's `role_preset`/`permissions`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Node"
+        "400":
+          $ref: "#/components/responses/BadRequestJSON"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          $ref: "#/components/responses/NodeNotFoundJSON"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+    delete:
+      tags: [Nodes]
+      operationId: deleteNode
+      summary: Delete a node
+      description: |
+        Revokes the node's tokens, so its agent can no longer authenticate, and deletes the node. Requires
+        `node:delete` on the node. The agent itself is not uninstalled from the machine.
+      responses:
+        "204":
+          description: Node deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          $ref: "#/components/responses/NodeNotFoundJSON"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/enrollments/generate:
+    post:
+      tags: [Enrollment]
+      operationId: createEnrollToken
+      summary: Create an enrollment token
+      description: |
+        Creates a single-use token, valid for 1 hour, that an agent exchanges for its node credentials with
+        `POST /v1/enrollments/enroll`. The node will belong to the calling user. The plain token is only
+        returned here; the server stores a hash.
+
+        The response also suggests the URL agents should use to reach this API, in this order:
+        `API_PUBLIC_URL` if set; otherwise the local node's VPN (Tailscale) IP or LAN IP with the published
+        API port (`API_PORT`, else `PORT`, else 8080); otherwise `NEXT_PUBLIC_API_URL`; otherwise the
+        request's host.
+      responses:
+        "201":
+          description: Token created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnrollToken"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          description: The token could not be generated or stored.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [could not create token]
+
+  /v1/enrollments/enroll:
+    post:
+      tags: [Enrollment]
+      operationId: enrollNode
+      summary: Enroll a node (agent)
+      description: |
+        Called by the agent with an enrollment token. Consumes the token, registers the node under the user
+        who created the token and returns the node's credentials. Rate limited per client IP (20/min).
+
+        - If `ip_local` is missing or not a valid IP, the request's source IP is used instead.
+        - If `hostname` is empty, a name like `node-1a2b3c4d` is generated.
+        - When gRPC mTLS is enabled, the response includes the CA and a client certificate. If `csr_pem` is
+          sent, the server signs it and the private key never leaves the agent; otherwise the server
+          generates the key pair and returns `client_key`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnrollNodeRequest"
+      responses:
+        "201":
+          description: Node enrolled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnrollNodeResponse"
+        "400":
+          description: Malformed JSON, `enroll_token` missing, or the CSR could not be signed.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [missing enroll_token]
+        "401":
+          description: The enrollment token is unknown, expired or already used.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [token already used]
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          description: The node, its token or its certificate could not be created.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [failed to create node]
+
+  /v1/enrollments/renew-cert:
+    post:
+      tags: [Enrollment]
+      operationId: renewClientCert
+      summary: Renew the node's mTLS client certificate (agent)
+      description: |
+        Signs a new client certificate for the calling node. The certificate's identity is always the node
+        bound to the node token; the CSR subject is ignored. Validity defaults to 90 days
+        (`GRPC_RENEWED_CERT_TTL`). Rate limited to 10 renewals per node per hour.
+      security:
+        - nodeToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [csr_pem]
+              properties:
+                csr_pem:
+                  type: string
+                  description: PEM-encoded certificate signing request.
+      responses:
+        "200":
+          description: New certificate.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [client_cert, ca_cert, expires_at]
+                properties:
+                  client_cert:
+                    type: string
+                    description: PEM-encoded client certificate.
+                  ca_cert:
+                    type: string
+                    description: PEM-encoded CA certificate.
+                  expires_at:
+                    type: string
+                    format: date-time
+        "400":
+          description: '`csr_pem` missing or not a valid CSR.'
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [csr_pem is required]
+        "401":
+          $ref: "#/components/responses/NodeUnauthorized"
+        "409":
+          description: gRPC mTLS is not enabled on this server.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [mTLS is not enabled on this server]
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /v1/heartbeats/heartbeat:
+    post:
+      tags: [Agent]
+      operationId: sendHeartbeat
+      summary: Report that the node is alive (agent)
+      description: Updates the node's `last_seen_at`. The node is taken from the token; no body is needed.
+      security:
+        - nodeToken: []
+      responses:
+        "200":
+          $ref: "#/components/responses/StatusOK"
+        "401":
+          $ref: "#/components/responses/NodeUnauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/heartbeats/version:
+    post:
+      tags: [Agent]
+      operationId: reportAgentVersion
+      summary: Report the agent version (agent)
+      security:
+        - nodeToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version:
+                  type: string
+                  examples: [v1.8.0]
+      responses:
+        "200":
+          $ref: "#/components/responses/StatusOK"
+        "400":
+          description: Malformed JSON or `version` missing.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [invalid request body]
+        "401":
+          $ref: "#/components/responses/NodeUnauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/node-metrics/metrics:
+    post:
+      tags: [Agent]
+      operationId: postNodeMetrics
+      summary: Report a metric sample (agent)
+      description: |
+        Stores a metric sample for the calling node. `node_id` and `collected_at` in the body are ignored:
+        the node comes from the token and the timestamp is the time of receipt. If the node has alert
+        thresholds configured, exceeding one sends a Telegram notification (at most once per cooldown
+        window per metric) and records an alert event.
+      security:
+        - nodeToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NodeMetricReport"
+      responses:
+        "201":
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+        "400":
+          $ref: "#/components/responses/BadJSON"
+        "401":
+          $ref: "#/components/responses/NodeUnauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/node-metrics/{nodeId}/history:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      tags: [Node metrics]
+      operationId: getNodeMetricHistory
+      summary: Get aggregated metric history
+      description: |
+        Returns metrics averaged per time bucket, oldest first. Requires `metrics:read` on the node.
+        Invalid `from`/`to` values are ignored and their defaults used.
+      parameters:
+        - name: from
+          in: query
+          description: Start of the range (RFC 3339). Defaults to 7 days ago.
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          description: End of the range (RFC 3339). Defaults to now.
+          schema:
+            type: string
+            format: date-time
+        - name: bucket
+          in: query
+          description: Aggregation granularity. Unknown values fall back to `hour`.
+          schema:
+            type: string
+            enum: [minute, hour, day]
+            default: hour
+      responses:
+        "200":
+          description: One point per bucket that has data.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NodeMetricHistoryPoint"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/node-metrics/{nodeId}/live:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      tags: [Node metrics]
+      operationId: streamNodeMetrics
+      summary: Stream live metrics (Server-Sent Events)
+      description: |
+        Opens a Server-Sent Events stream with every metric sample the node sends over gRPC. Requires
+        `metrics:read` on the node. Browsers can authenticate with the `access_token` cookie or the `token`
+        query parameter, since `EventSource` cannot set headers.
+
+        The stream sends:
+        - `: connected` once, as soon as the stream opens;
+        - `: keepalive` comments every 30 seconds;
+        - `event: metric` with a `LiveNodeMetric` JSON object as `data`, for each sample.
+      parameters:
+        - $ref: "#/components/parameters/TokenQuery"
+      responses:
+        "200":
+          description: Event stream. It stays open until the client disconnects.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                : connected
+
+                event: metric
+                data: {"cpu_usage_percent":12.5,"memory_usage_percent":41.2,"disk_usage_percent":63.0,"uptime_seconds":86400,"collected_at":"2026-11-21T10:00:00Z"}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/node-commands:
+    get:
+      tags: [Node commands]
+      operationId: listOwnNodeCommands
+      summary: List the calling node's commands (agent)
+      security:
+        - nodeToken: []
+      responses:
+        "200":
+          description: Commands registered by the node.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NodeCommand"
+        "401":
+          $ref: "#/components/responses/NodeUnauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Node commands]
+      operationId: registerNodeCommand
+      summary: Register or update a command (agent)
+      description: |
+        Upserts a command for the calling node, keyed by name. `type` defaults to `default`.
+      security:
+        - nodeToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  examples: [restart-nginx]
+                description:
+                  type: string
+                type:
+                  $ref: "#/components/schemas/CommandType"
+                script_path:
+                  type: string
+                  description: Path of the script on the node. Only for `custom` commands.
+      responses:
+        "201":
+          description: The stored command.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeCommand"
+        "400":
+          description: Malformed JSON, or `name` missing.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [name is required]
+        "401":
+          $ref: "#/components/responses/NodeUnauthorized"
+        "500":
+          description: The command could not be stored.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [could not register command]
+
+  /v1/node-commands/{id}:
+    delete:
+      tags: [Node commands]
+      operationId: deleteNodeCommand
+      summary: Delete one of the calling node's commands (agent)
+      security:
+        - nodeToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Command ID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/NodeUnauthorized"
+        "404":
+          description: No command with this ID belongs to the calling node.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [command not found]
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/node-commands/node/{nodeID}:
+    get:
+      tags: [Node commands]
+      operationId: listNodeCommands
+      summary: List a node's commands
+      description: Requires `jobs:read` on the node.
+      parameters:
+        - name: nodeID
+          in: path
+          required: true
+          description: Node ID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Commands available on the node.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NodeCommand"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/jobs:
+    post:
+      tags: [Jobs]
+      operationId: dispatchJob
+      summary: Run a command on a node
+      description: |
+        Creates a job and sends it to the node. If the node is not connected, the job is still created and
+        stays `pending`.
+
+        Only allow-listed commands can be dispatched here; each requires a node permission:
+
+        | Command | Permission |
+        |---|---|
+        | `container.list`, `container.stats.<name>`, `container.logs.<name>` | `containers:read` |
+        | `container.{start,stop,restart,remove}.<name>` | `containers:action` |
+        | `app.{start,stop,restart}` (params `{"app_name": "..."}`) | `containers:action` |
+        | `app.remove` (params `{"app_name": "..."}`) | `containers:deploy` |
+        | `vm.list` | `vms:read` |
+        | `vm.{start,stop,reboot}.<name>` | `vms:action` |
+        | `vm.destroy.<name>` | `vms:manage` |
+        | `caddy.status` | `network:read` |
+        | `docker.install` | `node:update` |
+        | `swarm.info`, `swarm.tasks.list`, custom scripts (`[A-Za-z0-9_-]+`) | `jobs:run` |
+
+        Other commands (backups, VM creation, marketplace installs...) have dedicated endpoints and are
+        rejected here. Only `app.*` commands accept `params`. Container actions on a locked container are
+        rejected with `403`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [node_id, command_name]
+              properties:
+                node_id:
+                  type: string
+                  format: uuid
+                command_name:
+                  type: string
+                  examples: [container.restart.nginx]
+                command_type:
+                  $ref: "#/components/schemas/CommandType"
+                params:
+                  type: string
+                  description: JSON-encoded parameters, as a string. Only for `app.*` commands.
+                  examples: ['{"app_name":"nextcloud"}']
+      responses:
+        "201":
+          description: Job created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400":
+          description: Missing fields, a command that is not allowed here, or invalid params.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [this command cannot be dispatched directly; use its dedicated endpoint]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Missing the command's permission on the node, or the container is locked.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["action blocked: container 'db' is locked"]
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/jobs/{id}:
+    get:
+      tags: [Jobs]
+      operationId: getJob
+      summary: Get a job
+      description: |
+        Requires `jobs:read` on the job's node. Jobs on nodes the caller cannot read answer `404`, like
+        unknown IDs, so job IDs cannot be probed.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Job ID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Unknown job, or not visible to the caller.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [job not found]
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/jobs/node/{nodeID}:
+    get:
+      tags: [Jobs]
+      operationId: listNodeJobs
+      summary: List a node's jobs
+      description: Requires `jobs:read` on the node.
+      parameters:
+        - name: nodeID
+          in: path
+          required: true
+          description: Node ID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The node's jobs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/users:
+    get:
+      tags: [Users]
+      operationId: listUsers
+      summary: List users (admin)
+      responses:
+        "200":
+          description: Every user with their permissions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/AdminRequired"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+    post:
+      tags: [Users]
+      operationId: createUser
+      summary: Create a user (admin)
+      description: Creates an account and, optionally, its project memberships and node permissions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: The created user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          description: Malformed JSON, email or password missing, or invalid role.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: email and password are required
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/AdminRequired"
+        "404":
+          description: A node in `node_permissions` does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: An account with this email already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: email already exists
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/users/permissions-catalog:
+    get:
+      tags: [Users]
+      operationId: getPermissionsCatalog
+      summary: Get the roles and permissions catalog
+      description: Global roles, node permission presets and every granular permission, grouped by module, with labels for the UI.
+      responses:
+        "200":
+          description: The catalog.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PermissionsCatalog"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/users/my-permissions:
+    get:
+      tags: [Users]
+      operationId: getMyPermissions
+      summary: Get the caller's own permissions
+      responses:
+        "200":
+          description: The caller with their permissions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/UserNotFound"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/UserIDPath"
+    get:
+      tags: [Users]
+      operationId: getUser
+      summary: Get a user (admin or self)
+      responses:
+        "200":
+          description: The user with their permissions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/AdminRequired"
+        "404":
+          $ref: "#/components/responses/UserNotFound"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+    put:
+      tags: [Users]
+      operationId: updateUser
+      summary: Update a user (admin)
+      description: |
+        Only the fields sent are changed. An empty `password` is ignored. `projects` and
+        `node_permissions`, when sent, replace the user's current ones. The last active admin cannot be
+        demoted or deactivated.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: The updated user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          description: Malformed JSON, invalid role, or the change would leave no active admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: cannot remove or deactivate the last active administrator
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/AdminRequired"
+        "404":
+          $ref: "#/components/responses/UserNotFound"
+        "409":
+          description: Another account already uses this email.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+    delete:
+      tags: [Users]
+      operationId: deleteUser
+      summary: Delete a user (admin)
+      description: Deletes the account and revokes its sessions and permissions. Admins cannot delete themselves or the last active admin.
+      responses:
+        "204":
+          description: Deleted.
+        "400":
+          description: Deleting yourself or the last active admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: cannot delete your own account
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/AdminRequired"
+        "404":
+          $ref: "#/components/responses/UserNotFound"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/users/{id}/permissions:
+    parameters:
+      - $ref: "#/components/parameters/UserIDPath"
+    put:
+      tags: [Users]
+      operationId: setUserPermissions
+      summary: Replace a user's permissions (admin)
+      description: Replaces all of the user's project memberships and node permissions with the ones sent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                projects:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/ProjectMembershipInput"
+                node_permissions:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/NodePermissionGrantInput"
+      responses:
+        "200":
+          description: The user with their new permissions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequestJSON"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/AdminRequired"
+        "404":
+          $ref: "#/components/responses/UserNotFound"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/users/{id}/nodes/{nodeId}/permissions:
+    parameters:
+      - $ref: "#/components/parameters/UserIDPath"
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    put:
+      tags: [Users]
+      operationId: setUserNodePermission
+      summary: Set a user's permissions on one node (admin)
+      description: |
+        Creates or replaces the user's grant on the node. If the node belongs to a project the user is not a
+        member of, the user is added to it as a `viewer` without access to its other nodes.
+
+        `role_preset` picks a preset's permissions. Sending `permissions` that differ from the preset makes
+        the grant `custom`. An unknown preset becomes `custom` if `permissions` are sent, `viewer` otherwise.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                project_id:
+                  type: string
+                  format: uuid
+                  description: Defaults to the node's project.
+                role_preset:
+                  $ref: "#/components/schemas/NodeRolePreset"
+                permissions:
+                  type: array
+                  items:
+                    type: string
+                    examples: ["containers:read"]
+      responses:
+        "200":
+          description: The grant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodePermissionGrant"
+        "400":
+          $ref: "#/components/responses/BadRequestJSON"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/AdminRequired"
+        "404":
+          description: Unknown user or node.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: node not found
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+    delete:
+      tags: [Users]
+      operationId: removeUserNodePermission
+      summary: Remove a user's permissions on one node (admin)
+      description: Removes the user's explicit grant on the node. Access through a project membership that covers all its nodes is not affected.
+      responses:
+        "204":
+          description: Removed (also when there was no grant).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/AdminRequired"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/projects:
+    get:
+      tags: [Projects]
+      operationId: listProjects
+      summary: List the projects the caller can see
+      description: Admins see every project; other users see the projects they are a member of or have node grants in.
+      responses:
+        "200":
+          description: Visible projects.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Projects]
+      operationId: createProject
+      summary: Create a project (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectNameRequest"
+      responses:
+        "201":
+          description: Project created; the caller is its owner.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          $ref: "#/components/responses/NameRequired"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Only admins can create projects.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["forbidden: only administrators can create projects"]
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/projects/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectIDPath"
+    get:
+      tags: [Projects]
+      operationId: getProject
+      summary: Get a project
+      description: Allowed for the owner, admins and project members.
+      responses:
+        "200":
+          description: The project.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/ProjectNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Projects]
+      operationId: renameProject
+      summary: Rename a project (owner or admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectNameRequest"
+      responses:
+        "200":
+          description: The renamed project.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          $ref: "#/components/responses/NameRequired"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/ProjectNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Projects]
+      operationId: deleteProject
+      summary: Delete a project (owner or admin)
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/ProjectNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/projects/{id}/nodes/{nodeId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectIDPath"
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    put:
+      tags: [Projects]
+      operationId: addNodeToProject
+      summary: Move a node into a project
+      description: |
+        Requires managing the project (owner or admin) and `node:update` on the node, since project members
+        inherit access to it. A node belongs to at most one project, so this moves it out of its current one.
+      responses:
+        "204":
+          description: Done.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/ProjectNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Projects]
+      operationId: removeNodeFromProject
+      summary: Remove a node from a project
+      description: Requires managing the project and `node:update` on the node. The node must belong to this project.
+      responses:
+        "204":
+          description: Done.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Unknown project, or the node is not in this project.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [node not found in this project]
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/projects/{id}/members:
+    parameters:
+      - $ref: "#/components/parameters/ProjectIDPath"
+    get:
+      tags: [Projects]
+      operationId: listProjectMembers
+      summary: List project members (owner or admin)
+      responses:
+        "200":
+          description: Members with their role and node grants in the project.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProjectMember"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/ProjectNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Projects]
+      operationId: setProjectMember
+      summary: Add or update a project member (owner or admin)
+      description: |
+        Sets the user's membership: a default role, optionally applied to every node of the project
+        (`all_nodes`), plus optional grants on specific nodes. Every node in `node_permissions` must belong
+        to this project; otherwise nothing is changed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                default_role:
+                  $ref: "#/components/schemas/NodeRolePreset"
+                all_nodes:
+                  type: boolean
+                default_permissions:
+                  type: array
+                  items:
+                    type: string
+                node_permissions:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/NodePermissionGrantInput"
+      responses:
+        "204":
+          description: Done.
+        "400":
+          description: '`user_id` missing, or a node in `node_permissions` is not in this project.'
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [node does not belong to this project]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Unknown project, user or node.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [user not found]
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/projects/{id}/members/{userId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectIDPath"
+      - name: userId
+        in: path
+        required: true
+        description: User ID.
+        schema:
+          type: string
+          format: uuid
+    delete:
+      tags: [Projects]
+      operationId: removeProjectMember
+      summary: Remove a project member (owner or admin)
+      description: Removes the membership and the user's node grants within the project.
+      responses:
+        "204":
+          description: Done.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/ProjectNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/node-containers/{nodeId}/stream:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      tags: [Containers]
+      operationId: streamContainers
+      summary: Stream the node's containers (Server-Sent Events)
+      description: |
+        Requires `containers:read`. Opening the stream asks the agent to start reporting its containers;
+        closing it stops the reports. Events:
+        - `containers`: a `ContainerList` snapshot, sent whenever the containers change. When Redis is
+          available, the latest snapshot is sent right away.
+        - `server-error`: `{"message": "..."}` when the node is not connected.
+        - `: connected` and `: ping` comments (every 30 seconds).
+      parameters:
+        - $ref: "#/components/parameters/TokenQuery"
+      responses:
+        "200":
+          description: Event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                : connected
+
+                event: containers
+                data: {"containers":[{"id":"3f2a","name":"nginx","image":"nginx:1.27","state":"running","status":"Up 2 hours","cpu":"0.12%","mem":"12MiB / 1.9GiB","memPerc":"0.61%"}]}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/node-containers/{nodeId}/metrics:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      tags: [Containers]
+      operationId: getContainerMetricHistory
+      summary: Get a container's metric history
+      description: |
+        Requires `containers:read`. Identify the container by name or ID. Invalid `from`/`to` values are
+        ignored and their defaults used.
+      parameters:
+        - name: container_name
+          in: query
+          description: Container name. `name` is accepted as an alias.
+          schema:
+            type: string
+        - name: container_id
+          in: query
+          description: Container ID. `containerId` is accepted as an alias.
+          schema:
+            type: string
+        - name: from
+          in: query
+          description: Start of the range (RFC 3339). Defaults to 7 days ago.
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          description: End of the range (RFC 3339). Defaults to now.
+          schema:
+            type: string
+            format: date-time
+        - name: bucket
+          in: query
+          description: Aggregation granularity. Unknown values fall back to `hour`.
+          schema:
+            type: string
+            enum: [minute, hour, day]
+            default: hour
+      responses:
+        "200":
+          description: One point per bucket that has data.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ContainerMetricHistoryPoint"
+        "400":
+          description: Neither `container_name` nor `container_id` was given.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [container_name or container_id parameter is required]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/node-containers/{nodeId}/settings:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      tags: [Containers]
+      operationId: getContainerSettings
+      summary: Get the node's container settings
+      description: Requires `containers:read`.
+      responses:
+        "200":
+          description: Display order and locked containers.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Containers]
+      operationId: updateContainerSettings
+      summary: Update the node's container settings
+      description: |
+        Requires `containers:settings`. Replaces the display order and the set of locked containers. Locked
+        containers cannot be started, stopped, restarted or removed through `POST /v1/jobs`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sort_order:
+                  type: array
+                  description: Container names in display order.
+                  items:
+                    type: string
+                locked_containers:
+                  type: object
+                  description: Container name → locked.
+                  additionalProperties:
+                    type: boolean
+      responses:
+        "200":
+          description: The saved settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerSettings"
+        "400":
+          description: Malformed JSON.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [invalid request body]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/node-logs/{nodeId}/stream:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      tags: [Logs]
+      operationId: streamNodeLogs
+      summary: Stream the node's system logs (Server-Sent Events)
+      description: |
+        Requires `logs:read`. Opening the stream asks the agent to follow journald, starting with the last
+        `lines` entries. Events:
+        - unnamed (`message`) events whose `data` is a `LogEntry`;
+        - `server-error`: `{"message": "..."}` when the node is not connected;
+        - `: connected` and `: ping` comments (every 5 seconds).
+      parameters:
+        - $ref: "#/components/parameters/TokenQuery"
+        - name: unit
+          in: query
+          description: Only logs of this systemd unit. All units when empty.
+          schema:
+            type: string
+            examples: [autohost-agent]
+        - name: lines
+          in: query
+          description: Number of past entries to send first.
+          schema:
+            type: integer
+            minimum: 0
+            default: 100
+      responses:
+        "200":
+          description: Event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                : connected
+
+                data: {"timestamp_us":1763719200000000,"unit":"autohost-agent","message":"connected to gRPC"}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Log streaming is not available on this server.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [node streaming not available]
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: User access token from login, register, refresh or Google sign-in.
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: access_token
+      description: Same access token, set as a cookie by the web app.
+    nodeToken:
+      type: http
+      scheme: bearer
+      description: |
+        Node token (`autohost-node_...`) issued to an agent at enrollment. Only accepted on agent routes.
+
+  parameters:
+    ProjectIDPath:
+      name: id
+      in: path
+      required: true
+      description: Project ID.
+      schema:
+        type: string
+        format: uuid
+    UserIDPath:
+      name: id
+      in: path
+      required: true
+      description: User ID.
+      schema:
+        type: string
+        format: uuid
+    NodeIDPathNodeId:
+      name: nodeId
+      in: path
+      required: true
+      description: Node ID.
+      schema:
+        type: string
+        format: uuid
+    TokenQuery:
+      name: token
+      in: query
+      required: false
+      description: Access token, for clients that cannot send headers (EventSource, WebSocket).
+      schema:
+        type: string
+    NodeIDPath:
+      name: id
+      in: path
+      required: true
+      description: Node ID.
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    ProjectNotFound:
+      description: No project with this ID.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: [project not found]
+    NameRequired:
+      description: Malformed JSON or `name` missing.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: [name is required]
+    AdminRequired:
+      description: The operation requires the global `admin` role.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: admin privileges required
+    UserNotFound:
+      description: No user with this ID.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: user not found
+    StatusOK:
+      description: Done.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StatusOK"
+    Forbidden:
+      description: The caller lacks the permission this operation needs on the node, or the node does not exist.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: [forbidden]
+    NodeUnauthorized:
+      description: Missing, malformed, unknown or revoked node token.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: [node token revoked]
+    BadRequestJSON:
+      description: Malformed request body or parameters.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: invalid request body
+    ForbiddenJSON:
+      description: The caller lacks the permission this operation needs on the resource.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: forbidden
+    NodeNotFoundJSON:
+      description: No node with this ID.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: node not found
+    InternalErrorJSON:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    BadJSON:
+      description: The request body is not valid JSON.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: [bad json]
+    Unauthorized:
+      description: Missing, invalid or expired access token.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: [token expired]
+    InternalError:
+      description: Unexpected server error.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: [internal error]
+    TooManyRequests:
+      description: Rate limit exceeded.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: too many requests, retry in 42 seconds
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    SetupStatus:
+      type: object
+      required: [needs_setup, allow_registration, google_oauth_enabled]
+      properties:
+        needs_setup:
+          type: boolean
+          description: True when no user exists yet; the first account to register becomes the admin.
+        allow_registration:
+          type: boolean
+          description: Whether `POST /v1/auth/register` is currently accepted.
+        google_oauth_enabled:
+          type: boolean
+          description: Whether Google sign-in is configured on this server.
+
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+        name:
+          type: string
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+
+    RefreshTokenRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+
+    TokenPair:
+      type: object
+      required: [access_token, refresh_token]
+      properties:
+        access_token:
+          type: string
+          description: Short-lived JWT for the `Authorization` header.
+        refresh_token:
+          type: string
+          description: Opaque single-use token for `POST /v1/auth/refresh`.
+
+    Role:
+      type: string
+      enum: [admin, member]
+
+    NodeRolePreset:
+      type: string
+      description: Permission preset; `custom` means an explicit permission list.
+      enum: [admin, operator, editor, viewer, custom]
+
+    Node:
+      type: object
+      required: [id, hostname, ip_local, ip_vpn, os, arch, version_agent, owner_id, project_id, is_local, last_seen_at, created_at, updated_at, is_vm]
+      properties:
+        id:
+          type: string
+          format: uuid
+        hostname:
+          type: string
+        ip_local:
+          type: string
+          description: LAN IP reported by the agent. Empty when unknown.
+        ip_vpn:
+          type: [string, "null"]
+          description: VPN (Tailscale/Headscale) IP, when the node has joined the VPN.
+        os:
+          type: string
+          examples: [linux]
+        arch:
+          type: string
+          examples: [arm64]
+        version_agent:
+          type: string
+        owner_id:
+          type: [string, "null"]
+          format: uuid
+        project_id:
+          type: [string, "null"]
+          format: uuid
+        is_local:
+          type: boolean
+          description: True for the node running on the same machine as the API (self-hosted setups).
+        last_seen_at:
+          type: [string, "null"]
+          format: date-time
+          description: Last heartbeat from the agent.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        role_preset:
+          $ref: "#/components/schemas/NodeRolePreset"
+        permissions:
+          type: array
+          description: The caller's effective permissions on the node; `["*"]` means all.
+          items:
+            type: string
+            examples: ["node:read"]
+        is_vm:
+          type: boolean
+          description: True when the node is a VM managed by an AutoHost hypervisor.
+        vm_id:
+          type: string
+          format: uuid
+        host_node_id:
+          type: string
+          format: uuid
+          description: For VMs, the node hosting it.
+        host_hostname:
+          type: string
+
+    NodeWithMetrics:
+      allOf:
+        - $ref: "#/components/schemas/Node"
+        - type: object
+          properties:
+            last_metric:
+              $ref: "#/components/schemas/LastMetric"
+
+    LastMetric:
+      type: object
+      required: [cpu_usage_percent, memory_usage_percent, disk_usage_percent, collected_at]
+      properties:
+        cpu_usage_percent:
+          type: number
+        memory_usage_percent:
+          type: number
+        disk_usage_percent:
+          type: number
+        cpu_temp_celsius:
+          type: number
+          description: Omitted when the machine does not report a CPU temperature.
+        collected_at:
+          type: string
+          format: date-time
+
+    EnrollToken:
+      type: object
+      required: [token, expires_at]
+      properties:
+        token:
+          type: string
+          description: Plain enrollment token. Shown only once.
+        expires_at:
+          type: string
+          format: date-time
+        api_url:
+          type: string
+          description: Suggested URL for agents to reach this API.
+          examples: ["http://100.64.0.1:8080"]
+        tailscale_ip:
+          type: string
+          description: VPN IP of the local node, when it has one.
+
+    EnrollNodeRequest:
+      type: object
+      required: [enroll_token]
+      properties:
+        enroll_token:
+          type: string
+        hostname:
+          type: string
+        ip_local:
+          type: string
+        os:
+          type: string
+        arch:
+          type: string
+        version_agent:
+          type: string
+        csr_pem:
+          type: string
+          description: Optional PEM-encoded CSR for the agent's mTLS client certificate.
+
+    EnrollNodeResponse:
+      type: object
+      required: [node_id, api_token, grpc_address]
+      properties:
+        node_id:
+          type: string
+          format: uuid
+        api_token:
+          type: string
+          description: Node token (`autohost-node_...`) for agent routes and gRPC. Shown only once.
+        grpc_address:
+          type: string
+          description: host:port of the gRPC endpoint the agent must connect to.
+          examples: ["api.example.com:443"]
+        ca_cert:
+          type: string
+          description: PEM-encoded CA certificate. Only when gRPC mTLS is enabled.
+        client_cert:
+          type: string
+          description: PEM-encoded client certificate. Only when gRPC mTLS is enabled.
+        client_key:
+          type: string
+          description: PEM-encoded private key. Only when mTLS is enabled and no `csr_pem` was sent.
+
+    CurrentUser:
+      type: object
+      required: [uid, email, name, avatar_url]
+      properties:
+        uid:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+          description: Empty string when not set.
+        avatar_url:
+          type: string
+          description: Empty string when not set.
+        role:
+          $ref: "#/components/schemas/Role"
+        is_admin:
+          type: boolean
+        is_active:
+          type: boolean
+        projects:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectMembership"
+        node_permissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/NodePermissionGrant"
+
+    ProjectMembership:
+      type: object
+      required: [id, project_id, user_id, default_role, all_nodes, default_permissions, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        project_name:
+          type: string
+        user_id:
+          type: string
+          format: uuid
+        default_role:
+          type: string
+          description: Role preset applied to the project's nodes.
+        all_nodes:
+          type: boolean
+          description: Whether the membership covers every node in the project.
+        default_permissions:
+          type: array
+          items:
+            type: string
+        added_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    NodePermissionGrant:
+      type: object
+      required: [id, user_id, node_id, role_preset, permissions, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        project_name:
+          type: string
+        node_id:
+          type: string
+          format: uuid
+        node_hostname:
+          type: string
+        role_preset:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+        granted_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    StatusOK:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+
+    NodeMetricReport:
+      type: object
+      properties:
+        cpu_usage_percent:
+          type: number
+        memory_total_bytes:
+          type: integer
+          format: int64
+        memory_used_bytes:
+          type: integer
+          format: int64
+        memory_available_bytes:
+          type: integer
+          format: int64
+        memory_usage_percent:
+          type: number
+        disk_total_bytes:
+          type: integer
+          format: int64
+        disk_used_bytes:
+          type: integer
+          format: int64
+        disk_available_bytes:
+          type: integer
+          format: int64
+        disk_usage_percent:
+          type: number
+        cpu_temp_celsius:
+          type: number
+
+    NodeMetricHistoryPoint:
+      type: object
+      required: [bucket, cpu_usage_percent, memory_usage_percent, disk_usage_percent]
+      properties:
+        bucket:
+          type: string
+          format: date-time
+          description: Start of the bucket.
+        cpu_usage_percent:
+          type: number
+        memory_usage_percent:
+          type: number
+        disk_usage_percent:
+          type: number
+        cpu_temp_celsius:
+          type: number
+          description: Omitted when the node does not report a CPU temperature.
+
+    LiveNodeMetric:
+      type: object
+      description: Payload of each `metric` event in the live stream.
+      properties:
+        cpu_usage_percent:
+          type: number
+        memory_total_bytes:
+          type: integer
+          format: int64
+        memory_used_bytes:
+          type: integer
+          format: int64
+        memory_available_bytes:
+          type: integer
+          format: int64
+        memory_usage_percent:
+          type: number
+        disk_total_bytes:
+          type: integer
+          format: int64
+        disk_used_bytes:
+          type: integer
+          format: int64
+        disk_available_bytes:
+          type: integer
+          format: int64
+        disk_usage_percent:
+          type: number
+        uptime_seconds:
+          type: integer
+          format: int64
+        cpu_temp_celsius:
+          type: number
+        collected_at:
+          type: string
+          format: date-time
+
+    CommandType:
+      type: string
+      enum: [default, custom, install_app, swarm]
+
+    NodeCommand:
+      type: object
+      description: A command available on a node.
+      required: [id, node_id, name, description, type, script_path, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          $ref: "#/components/schemas/CommandType"
+        script_path:
+          type: string
+          description: Script path on the node; empty for non-custom commands.
+        created_at:
+          type: string
+          format: date-time
+
+    JobStatus:
+      type: string
+      enum: [pending, running, completed, failed]
+
+    Job:
+      type: object
+      description: A command execution on a node. Job parameters are never returned, since they may contain secrets.
+      required: [id, node_id, command_name, command_type, status, output, error, created_at, started_at, finished_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        command_name:
+          type: string
+          examples: [container.restart.nginx]
+        command_type:
+          $ref: "#/components/schemas/CommandType"
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        output:
+          type: string
+          description: Command output reported by the agent. Empty until the job finishes.
+        error:
+          type: string
+          description: Error message when the job failed.
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: [string, "null"]
+          format: date-time
+        finished_at:
+          type: [string, "null"]
+          format: date-time
+
+    User:
+      type: object
+      description: A user with their global role, project memberships and per-node permissions.
+      required: [id, email, name, avatar_url, role, is_admin, is_active, created_at, updated_at, projects, node_permissions]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        avatar_url:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        is_admin:
+          type: boolean
+        is_active:
+          type: boolean
+        created_by:
+          type: string
+          format: uuid
+          description: Admin who created the account; absent for self-registered users.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        projects:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectMembership"
+        node_permissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/NodePermissionGrant"
+
+    ProjectMembershipInput:
+      type: object
+      required: [project_id]
+      properties:
+        project_id:
+          type: string
+          format: uuid
+        default_role:
+          $ref: "#/components/schemas/NodeRolePreset"
+        all_nodes:
+          type: boolean
+          description: Grant `default_role` on every node of the project, including future ones.
+        default_permissions:
+          type: array
+          items:
+            type: string
+
+    NodePermissionGrantInput:
+      type: object
+      required: [node_id]
+      properties:
+        node_id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        role_preset:
+          $ref: "#/components/schemas/NodeRolePreset"
+        permissions:
+          type: array
+          items:
+            type: string
+
+    CreateUserRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        password:
+          type: string
+          format: password
+        role:
+          allOf:
+            - $ref: "#/components/schemas/Role"
+          default: member
+        is_active:
+          type: boolean
+          default: true
+        projects:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectMembershipInput"
+        node_permissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/NodePermissionGrantInput"
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        password:
+          type: string
+          format: password
+        role:
+          $ref: "#/components/schemas/Role"
+        is_active:
+          type: boolean
+        projects:
+          type: array
+          description: When present, replaces the user's project memberships.
+          items:
+            $ref: "#/components/schemas/ProjectMembershipInput"
+        node_permissions:
+          type: array
+          description: When present, replaces the user's node permissions.
+          items:
+            $ref: "#/components/schemas/NodePermissionGrantInput"
+
+    RoleOption:
+      type: object
+      required: [id, name, description]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+
+    PermissionItem:
+      type: object
+      required: [key, label, description]
+      properties:
+        key:
+          type: string
+          examples: ["containers:action"]
+        label:
+          type: string
+        description:
+          type: string
+        danger:
+          type: boolean
+          description: True for permissions that allow destructive or privileged actions.
+
+    PermissionsCatalog:
+      type: object
+      required: [global_roles, node_presets, modules]
+      properties:
+        global_roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/RoleOption"
+        node_presets:
+          type: array
+          items:
+            $ref: "#/components/schemas/RoleOption"
+        modules:
+          type: array
+          items:
+            type: object
+            required: [module, label, description, permissions]
+            properties:
+              module:
+                type: string
+              label:
+                type: string
+              description:
+                type: string
+              permissions:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PermissionItem"
+
+    Project:
+      type: object
+      required: [id, user_id, name, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+          description: Owner of the project.
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ProjectNameRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+
+    ProjectMember:
+      type: object
+      required: [user_id, email, name, avatar_url, role, is_active, project_id, default_role, all_nodes, default_permissions, node_permissions, added_at]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        avatar_url:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        is_active:
+          type: boolean
+        project_id:
+          type: string
+          format: uuid
+        default_role:
+          $ref: "#/components/schemas/NodeRolePreset"
+        all_nodes:
+          type: boolean
+        default_permissions:
+          type: array
+          items:
+            type: string
+        node_permissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/NodePermissionGrant"
+        added_at:
+          type: string
+          format: date-time
+
+    Container:
+      type: object
+      required: [id, name, image, state, status]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        image:
+          type: string
+        state:
+          type: string
+          examples: [running]
+        status:
+          type: string
+          examples: [Up 2 hours]
+        cpu:
+          type: string
+          description: CPU usage as reported by Docker, e.g. `0.12%`.
+        mem:
+          type: string
+          description: Memory usage as reported by Docker, e.g. `12MiB / 1.9GiB`.
+        memPerc:
+          type: string
+          description: Memory usage percentage as reported by Docker. Note the camelCase name.
+
+    ContainerList:
+      type: object
+      required: [containers]
+      properties:
+        containers:
+          type: array
+          items:
+            $ref: "#/components/schemas/Container"
+        error:
+          type: string
+          description: Set when the agent could not list containers (e.g. Docker is not running).
+
+    ContainerMetricHistoryPoint:
+      type: object
+      required: [bucket, cpu_usage_percent, memory_usage_percent, memory_usage_bytes, state]
+      properties:
+        bucket:
+          type: string
+          format: date-time
+        cpu_usage_percent:
+          type: number
+        memory_usage_percent:
+          type: number
+        memory_usage_bytes:
+          type: integer
+          format: int64
+        state:
+          type: string
+
+    ContainerSettings:
+      type: object
+      required: [node_id, sort_order, locked_containers]
+      properties:
+        id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        sort_order:
+          type: array
+          items:
+            type: string
+        locked_containers:
+          type: object
+          additionalProperties:
+            type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    LogEntry:
+      type: object
+      required: [timestamp_us, unit, message]
+      properties:
+        timestamp_us:
+          type: integer
+          format: int64
+          description: Entry time in microseconds since the Unix epoch.
+        unit:
+          type: string
+        message:
+          type: string

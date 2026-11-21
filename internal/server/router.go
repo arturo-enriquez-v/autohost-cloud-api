@@ -151,6 +151,10 @@ func NewRouter(p RouterParams) *chi.Mux {
 		w.Write([]byte(`{"status":"ok","service":"autohost-cloud-api"}`))
 	})
 
+	if apiDocsEnabled() {
+		mountDocs(r)
+	}
+
 	nodeAuthMiddleware := handlerMiddleware.NodeAuth(p.NodeTokenService)
 
 	r.Route("/v1", func(r chi.Router) {
