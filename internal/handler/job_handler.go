@@ -167,16 +167,14 @@ func (h *JobHandler) GetJob(w http.ResponseWriter, r *http.Request) {
 // GET /v1/jobs/node/{nodeID}
 func (h *JobHandler) ListByNode(w http.ResponseWriter, r *http.Request) {
 	nodeID := chi.URLParam(r, "nodeID")
-	if h.rbacSvc != nil {
-		claims := middleware.GetClaims(r.Context())
-		if claims == nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermJobsRead); err != nil || !ok {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermJobsRead); err != nil || !ok {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
 	}
 	jobs, err := h.jobService.ListByNode(nodeID)
 	if err != nil {

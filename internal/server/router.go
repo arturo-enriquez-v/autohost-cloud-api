@@ -23,7 +23,7 @@ type RouterParams struct {
 
 	AuthHandler             *handler.AuthHandler
 	UserHandler             *handler.UserHandler `optional:"true"`
-	RBACService             *identity.RBACService `optional:"true"`
+	RBACService             *identity.RBACService
 	NodeService             *node.NodeService `optional:"true"`
 	NodeHandler             *handler.NodeHandler
 	NodeMetricHandler     *handler.NodeMetricHandler

@@ -198,16 +198,14 @@ func (h *BackupHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	nodeID := chi.URLParam(r, "nodeId")
 	containerName := chi.URLParam(r, "containerName")
 
-	if h.rbacSvc != nil {
-		claims := middleware.GetClaims(r.Context())
-		if claims == nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermBackupsRead); err != nil || !ok {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermBackupsRead); err != nil || !ok {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
 	}
 
 	cfg, err := h.backupSvc.GetConfigByContainer(nodeID, containerName)
@@ -253,11 +251,9 @@ func (h *BackupHandler) UpsertConfig(w http.ResponseWriter, r *http.Request) {
 	nodeID := chi.URLParam(r, "nodeId")
 	containerName := chi.URLParam(r, "containerName")
 
-	if h.rbacSvc != nil {
-		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermBackupsManage); err != nil || !ok {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
+	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermBackupsManage); err != nil || !ok {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
 	}
 
 	var req upsertConfigRequest
@@ -306,11 +302,9 @@ func (h *BackupHandler) UpsertConfig(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, "replica_node_id cannot be the same as the source node", http.StatusBadRequest)
 			return
 		}
-		if h.rbacSvc != nil {
-			if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, rid, identity.PermFilesWrite); err != nil || !ok {
-				writeJSONError(w, "forbidden: no write permission on selected replica node", http.StatusForbidden)
-				return
-			}
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, rid, identity.PermFilesWrite); err != nil || !ok {
+			writeJSONError(w, "forbidden: no write permission on selected replica node", http.StatusForbidden)
+			return
 		}
 		replicaNodeID = &rid
 	}
@@ -359,16 +353,14 @@ func (h *BackupHandler) ListRecords(w http.ResponseWriter, r *http.Request) {
 	nodeID := chi.URLParam(r, "nodeId")
 	containerName := chi.URLParam(r, "containerName")
 
-	if h.rbacSvc != nil {
-		claims := middleware.GetClaims(r.Context())
-		if claims == nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermBackupsRead); err != nil || !ok {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermBackupsRead); err != nil || !ok {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
 	}
 
 	recs, err := h.backupSvc.ListRecordsByContainer(nodeID, containerName)
@@ -656,11 +648,9 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 	nodeID := chi.URLParam(r, "nodeId")
 	containerName := chi.URLParam(r, "containerName")
 
-	if h.rbacSvc != nil {
-		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermBackupsCreate); err != nil || !ok {
-			writeJSONError(w, "forbidden", http.StatusForbidden)
-			return
-		}
+	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermBackupsCreate); err != nil || !ok {
+		writeJSONError(w, "forbidden", http.StatusForbidden)
+		return
 	}
 
 	cfg, err := h.backupSvc.GetConfigByContainer(nodeID, containerName)
@@ -783,11 +773,9 @@ func (h *BackupHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.rbacSvc != nil {
-		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, rec.NodeID, identity.PermBackupsRestore); err != nil || !ok {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
+	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, rec.NodeID, identity.PermBackupsRestore); err != nil || !ok {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
 	}
 
 	cfg, err := h.backupSvc.GetConfigByID(rec.BackupConfigID)

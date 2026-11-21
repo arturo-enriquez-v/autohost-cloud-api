@@ -67,13 +67,11 @@ func (h *VMHandler) createVM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ownerID := claims.UserID
-	if h.rbacSvc != nil {
-		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermVMsManage); err != nil || !ok {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
-		ownerID = h.vmService.ResolveHostOwnerID(nodeID, claims.UserID)
+	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermVMsManage); err != nil || !ok {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
 	}
+	ownerID = h.vmService.ResolveHostOwnerID(nodeID, claims.UserID)
 
 	var req infra.CreateVMRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -101,13 +99,11 @@ func (h *VMHandler) listVMs(w http.ResponseWriter, r *http.Request) {
 
 	nodeID := chi.URLParam(r, "nodeId")
 	ownerID := claims.UserID
-	if h.rbacSvc != nil {
-		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermVMsRead); err != nil || !ok {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
-		ownerID = h.vmService.ResolveHostOwnerID(nodeID, claims.UserID)
+	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermVMsRead); err != nil || !ok {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
 	}
+	ownerID = h.vmService.ResolveHostOwnerID(nodeID, claims.UserID)
 
 	list, err := h.vmService.ListByHost(r.Context(), nodeID, ownerID)
 	if err != nil {

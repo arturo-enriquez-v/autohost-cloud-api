@@ -93,21 +93,19 @@ func (h *NodeTerminalHandler) HandleTerminalWS(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if h.nodeSvc != nil {
-		n, err := h.nodeSvc.GetByID(nodeID)
-		if err != nil || n == nil {
-			http.Error(w, "node not found", http.StatusNotFound)
-			return
-		}
-		if h.rbacSvc != nil {
-			if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermTerminalExec) {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-		} else if n.OwnerID != nil && *n.OwnerID != claims.UserID {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
+	// A root shell on the node: fail closed if the node cannot be resolved or access cannot be proven.
+	if h.nodeSvc == nil {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	n, err := h.nodeSvc.GetByID(nodeID)
+	if err != nil || n == nil {
+		http.Error(w, "node not found", http.StatusNotFound)
+		return
+	}
+	if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermTerminalExec) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
 	}
 
 	cols := uint32(80)

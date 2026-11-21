@@ -100,11 +100,9 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.rbacSvc != nil {
-		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, req.NodeID, identity.PermContainersDeploy); err != nil || !ok {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
+	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, req.NodeID, identity.PermContainersDeploy); err != nil || !ok {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
 	}
 
 	var composeStr string
@@ -191,16 +189,14 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 // GET /v1/marketplace/apps/node/{nodeID}
 func (h *MarketplaceHandler) ListNodeApps(w http.ResponseWriter, r *http.Request) {
 	nodeID := chi.URLParam(r, "nodeID")
-	if h.rbacSvc != nil {
-		claims := middleware.GetClaims(r.Context())
-		if claims == nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermContainersRead); err != nil || !ok {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermContainersRead); err != nil || !ok {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
 	}
 	apps, err := h.marketplaceRepo.FindByNodeID(nodeID)
 	if err != nil {

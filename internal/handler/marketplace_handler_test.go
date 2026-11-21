@@ -109,6 +109,7 @@ func TestMarketplaceHandler_DeployApp_AuthRequired(t *testing.T) {
 
 func TestMarketplaceHandler_DeployApp_ValidatesCatalog(t *testing.T) {
 	h := NewMarketplaceHandler(nil, &mockMarketplaceRepo{}, nil)
+	h.SetRBACService(newOwnerRBAC("user-1", "node-1"))
 
 	body := []byte(`{"node_id": "node-1", "app_name": "unknown_app_xyz"}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/marketplace/apps/deploy", bytes.NewReader(body))
@@ -132,6 +133,7 @@ func TestMarketplaceHandler_DeployApp_SuccessSelfHosted(t *testing.T) {
 	disp := &mockParamDispatcher{}
 
 	h := NewMarketplaceHandler(jobService, appRepo, disp)
+	h.SetRBACService(newOwnerRBAC("user-1", "node-1"))
 
 	body := []byte(`{"node_id": "node-1", "app_name": "joplin", "env_vars": {"service-name": "joplin", "port": "22300"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/marketplace/apps/deploy", bytes.NewReader(body))
