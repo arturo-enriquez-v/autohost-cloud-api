@@ -250,7 +250,7 @@ func (h *BackupHandler) UpsertConfig(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		log.Printf("[ERROR] upsert backup config: %v", err)
-		writeJSONError(w, fmt.Sprintf("failed to save backup config: %v", err), http.StatusInternalServerError)
+		writeJSONError(w, "failed to save backup config", http.StatusInternalServerError)
 		return
 	}
 
@@ -377,7 +377,7 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 		})
 		if err != nil {
 			log.Printf("[ERROR] auto-initialize backup config failed: %v", err)
-			writeJSONError(w, fmt.Sprintf("could not initialize backup config: %v", err), http.StatusInternalServerError)
+			writeJSONError(w, "could not initialize backup config", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -408,7 +408,7 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 	})
 	if err != nil {
 		log.Printf("[ERROR] create backup record failed: %v", err)
-		writeJSONError(w, fmt.Sprintf("could not initiate backup record: %v", err), http.StatusInternalServerError)
+		writeJSONError(w, "could not initiate backup record", http.StatusInternalServerError)
 		return
 	}
 
@@ -452,7 +452,7 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		_ = h.backupSvc.UpdateRecordStatus(rec.ID, "failed", "", "", "", 0, strPtr(err.Error()))
 		log.Printf("[ERROR] dispatch backup job failed: %v", err)
-		writeJSONError(w, fmt.Sprintf("failed to dispatch backup job: %v", err), http.StatusInternalServerError)
+		writeJSONError(w, "failed to dispatch backup job", http.StatusInternalServerError)
 		return
 	}
 
@@ -547,7 +547,7 @@ func (h *BackupHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		log.Printf("[ERROR] create restore record failed: %v", err)
-		writeJSONError(w, fmt.Sprintf("could not initiate restore record: %v", err), http.StatusInternalServerError)
+		writeJSONError(w, "could not initiate restore record", http.StatusInternalServerError)
 		return
 	}
 

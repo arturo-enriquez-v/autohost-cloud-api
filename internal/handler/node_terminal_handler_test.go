@@ -20,7 +20,6 @@ func TestNodeTerminalRoutes_Routing(t *testing.T) {
 
 	r := chi.NewRouter()
 	r.Route("/v1", func(r chi.Router) {
-		r.Mount("/node-terminal", h.Routes())
 		r.Mount("/nodes/{nodeId}/terminal", h.NodeScopedRoutes())
 	})
 

@@ -46,26 +46,12 @@ func NewNodeFileHandler(files *filetransfer.Service, nodeSvc *node.NodeService) 
 // SharedFiles returns the file transfer service (used by the backup file manager).
 func (h *NodeFileHandler) SharedFiles() *filetransfer.Service { return h.files }
 
-func (h *NodeFileHandler) Routes() http.Handler {
+// InternalTransferRoutes serves the agent-to-master transfer endpoints, authenticated with a one-time
+// ticket token in the URL. User-facing file routes live under /v1/nodes/{nodeId}/files (NodeScopedRoutes).
+func (h *NodeFileHandler) InternalTransferRoutes() http.Handler {
 	r := chi.NewRouter()
-
-	// Internal agent-to-master transfer endpoints (secured with one-time ticket token)
 	r.Get("/internal-transfer/{transferId}", h.AgentPullTransfer)
 	r.Post("/internal-transfer/{transferId}", h.AgentPushTransfer)
-
-	// User-authenticated endpoints
-	r.Group(func(protected chi.Router) {
-		protected.Use(middleware.Auth)
-		protected.With(h.nodePerm(identity.PermFilesRead)).Get("/{nodeId}", h.ListFiles)
-		protected.With(h.nodePerm(identity.PermFilesWrite)).Post("/{nodeId}/mkdir", h.MakeDirectory)
-		protected.With(h.nodePerm(identity.PermFilesWrite)).Post("/{nodeId}/rename", h.RenameFile)
-		protected.With(h.nodePerm(identity.PermFilesDelete)).Delete("/{nodeId}", h.DeleteFile)
-		protected.With(h.nodePerm(identity.PermFilesWrite)).Post("/{nodeId}/upload", h.UploadFile)
-		protected.With(h.nodePerm(identity.PermFilesRead)).Get("/{nodeId}/download", h.DownloadFile)
-		protected.With(h.nodePerm(identity.PermFilesRead)).Get("/{nodeId}/stream", h.StreamFile)
-		protected.With(h.nodePerm(identity.PermFilesRead)).Post("/{nodeId}/transfer", h.TransferBetweenNodes)
-	})
-
 	return r
 }
 
@@ -119,7 +105,10 @@ func (h *NodeFileHandler) authorizeNode(w http.ResponseWriter, r *http.Request, 
 }
 
 func writeFileError(w http.ResponseWriter, msg string, code int) {
-	http.Error(w, fmt.Sprintf(`{"error":%q}`, msg), code)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 // writeFileOpError maps a filetransfer error to an HTTP status, keeping its message.

@@ -53,22 +53,12 @@ func NewNodeTerminalHandler(grpc *grpcserver.NodeAgentServer, nodeSvc *node.Node
 	}
 }
 
-func (h *NodeTerminalHandler) Routes() http.Handler {
-	r := chi.NewRouter()
-	r.Group(func(protected chi.Router) {
-		protected.Use(middleware.Auth)
-		protected.With(h.nodePerm(identity.PermTerminalExec)).Get("/{nodeId}", h.HandleTerminalWS)
-		protected.With(h.nodePerm(identity.PermTerminalExec)).Get("/{nodeId}/ws", h.HandleTerminalWS)
-	})
-	return r
-}
-
+// NodeScopedRoutes serves the terminal WebSocket at /v1/nodes/{nodeId}/terminal.
 func (h *NodeTerminalHandler) NodeScopedRoutes() http.Handler {
 	r := chi.NewRouter()
 	r.Group(func(protected chi.Router) {
 		protected.Use(middleware.Auth)
 		protected.With(h.nodePerm(identity.PermTerminalExec)).Get("/", h.HandleTerminalWS)
-		protected.With(h.nodePerm(identity.PermTerminalExec)).Get("/ws", h.HandleTerminalWS)
 	})
 	return r
 }

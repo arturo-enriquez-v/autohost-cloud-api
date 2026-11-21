@@ -23,7 +23,6 @@ var pendingDocPrefixes = []string{
 	"/v1/nodes/{nodeId}/files",
 	"/v1/nodes/{nodeId}/terminal",
 	"/v1/nodes/{nodeId}/vms",
-	"/v1/node-terminal",
 	"/v1/node-files",
 	"/v1/file-shares",
 	"/v1/public-shares",
