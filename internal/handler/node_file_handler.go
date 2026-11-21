@@ -155,10 +155,16 @@ func (h *NodeFileHandler) resolveMasterBaseURL(r *http.Request) string {
 	if h.nodeSvc != nil {
 		if localNode, err := h.nodeSvc.FindLocalNode(); err == nil && localNode != nil {
 			if localNode.IPVPN != nil && *localNode.IPVPN != "" {
-				return fmt.Sprintf("http://%s:8080", *localNode.IPVPN)
+				ip := strings.Split(strings.TrimSpace(*localNode.IPVPN), "/")[0]
+				if ip != "" {
+					return fmt.Sprintf("http://%s:8080", ip)
+				}
 			}
 			if localNode.IPLocal != "" {
-				return fmt.Sprintf("http://%s:8080", localNode.IPLocal)
+				ip := strings.Split(strings.TrimSpace(localNode.IPLocal), "/")[0]
+				if ip != "" {
+					return fmt.Sprintf("http://%s:8080", ip)
+				}
 			}
 		}
 	}
@@ -1136,3 +1142,259 @@ func (h *NodeFileHandler) AgentPushTransfer(w http.ResponseWriter, r *http.Reque
 	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
+// ResolveMasterBaseURL returns the base HTTP URL that connected node agents can use to reach this server.
+func (h *NodeFileHandler) ResolveMasterBaseURL(r *http.Request) string {
+	return h.resolveMasterBaseURL(r)
+}
+
+// PullNodeSharedFileToLocal pulls a file from a node's shared directory into a destination path on the parent server disk.
+func (h *NodeFileHandler) PullNodeSharedFileToLocal(ctx context.Context, baseURL string, sourceNode *node.Node, sourceRelPath, destLocalPath string) (int64, error) {
+	if err := os.MkdirAll(filepath.Dir(destLocalPath), 0755); err != nil {
+		return 0, err
+	}
+	if sourceNode.IsLocal {
+		absSrc, _, err := platform.SafeSharedPath(platform.SharedFilesDir(), sourceRelPath)
+		if err != nil {
+			return 0, err
+		}
+		info, err := os.Stat(absSrc)
+		if err != nil || info.IsDir() {
+			return 0, fmt.Errorf("source file not found or is a directory")
+		}
+		if absSrc != destLocalPath {
+			if err := copyLocalFile(absSrc, destLocalPath); err != nil {
+				return 0, err
+			}
+		}
+		return info.Size(), nil
+	}
+
+	pushTicket := h.createTicket(destLocalPath)
+	defer h.removeTicket(pushTicket.ID)
+
+	pushURL := fmt.Sprintf("%s/v1/node-files/internal-transfer/%s?token=%s", strings.TrimRight(baseURL, "/"), pushTicket.ID, pushTicket.Token)
+	if _, err := h.grpc.ExecuteFileOperation(ctx, sourceNode.ID, pb.FileOpType_FILE_OP_PUSH_TO_URL, sourceRelPath, pushURL, pushTicket.Token); err != nil {
+		return 0, fmt.Errorf("pull from source node failed: %w", err)
+	}
+	var sizeBytes int64
+	if info, err := os.Stat(destLocalPath); err == nil {
+		sizeBytes = info.Size()
+	}
+	return sizeBytes, nil
+}
+
+// DeleteNodeSharedFile deletes a file from a node's shared directory.
+func (h *NodeFileHandler) DeleteNodeSharedFile(ctx context.Context, targetNode *node.Node, relPath string) error {
+	if targetNode.IsLocal {
+		absPath, _, err := platform.SafeSharedPath(platform.SharedFilesDir(), relPath)
+		if err != nil {
+			return err
+		}
+		return os.Remove(absPath)
+	}
+	_, err := h.grpc.ExecuteFileOperation(ctx, targetNode.ID, pb.FileOpType_FILE_OP_DELETE, relPath, "", "")
+	return err
+}
+
+// isSharedNotExistErr reports whether an error from a (local or remote) shared folder operation means
+// the path does not exist, as opposed to the node being unreachable or another failure.
+func isSharedNotExistErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if os.IsNotExist(err) || errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no such file or directory") ||
+		strings.Contains(msg, "cannot find the file") ||
+		strings.Contains(msg, "cannot find the path")
+}
+
+// ListNodeSharedFileNames returns the set of regular file names inside relDir of a node's shared folder.
+// A directory that does not exist yields an empty set and no error. Any other failure (node offline,
+// timeout, permission error) is returned so callers can treat the state as unknown.
+func (h *NodeFileHandler) ListNodeSharedFileNames(ctx context.Context, targetNode *node.Node, relDir string) (map[string]struct{}, error) {
+	names := make(map[string]struct{})
+	if targetNode.IsLocal {
+		absPath, _, err := platform.SafeSharedPath(platform.SharedFilesDir(), relDir)
+		if err != nil {
+			return nil, err
+		}
+		entries, err := os.ReadDir(absPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return names, nil
+			}
+			return nil, err
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				names[e.Name()] = struct{}{}
+			}
+		}
+		return names, nil
+	}
+
+	res, err := h.grpc.ExecuteFileOperation(ctx, targetNode.ID, pb.FileOpType_FILE_OP_LIST, relDir, "", "")
+	if err != nil {
+		if res != nil && isSharedNotExistErr(err) {
+			return names, nil
+		}
+		return nil, err
+	}
+	for _, e := range res.GetEntries() {
+		if !e.GetIsDir() {
+			names[e.GetName()] = struct{}{}
+		}
+	}
+	return names, nil
+}
+
+// DeleteNodeSharedFileIfExists deletes a file from a node's shared directory, treating a missing file as success.
+func (h *NodeFileHandler) DeleteNodeSharedFileIfExists(ctx context.Context, targetNode *node.Node, relPath string) error {
+	if err := h.DeleteNodeSharedFile(ctx, targetNode, relPath); err != nil && !isSharedNotExistErr(err) {
+		return err
+	}
+	return nil
+}
+
+// StreamSharedFileAttachment streams a file from a node's shared directory directly to an HTTP response as an attachment.
+func (h *NodeFileHandler) StreamSharedFileAttachment(w http.ResponseWriter, r *http.Request, n *node.Node, relPath, filename string) error {
+	if filename == "" {
+		filename = filepath.Base(relPath)
+	}
+
+	if n.IsLocal {
+		absPath, _, err := platform.SafeSharedPath(platform.SharedFilesDir(), relPath)
+		if err != nil {
+			return err
+		}
+		info, err := os.Stat(absPath)
+		if err != nil || info.IsDir() {
+			return fmt.Errorf("file not found on local node shared folder")
+		}
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+		http.ServeFile(w, r, absPath)
+		return nil
+	}
+
+	pr, pw := io.Pipe()
+	ticket := h.createPipeTicket(pr, pw)
+	defer h.removeTicket(ticket.ID)
+
+	transferURL := fmt.Sprintf("%s/v1/node-files/internal-transfer/%s?token=%s",
+		h.resolveMasterBaseURL(r), ticket.ID, ticket.Token)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Minute)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := h.grpc.ExecuteFileOperation(ctx, n.ID, pb.FileOpType_FILE_OP_PUSH_TO_URL, relPath, transferURL, ticket.Token)
+		if err != nil {
+			_ = pw.CloseWithError(err)
+			errCh <- err
+		} else {
+			errCh <- nil
+		}
+	}()
+
+	select {
+	case <-ticket.StartedCh:
+	case err := <-errCh:
+		if err != nil {
+			_ = pr.Close()
+			return err
+		}
+	case <-time.After(25 * time.Second):
+		_ = pw.CloseWithError(errors.New("timeout waiting for remote agent to initiate stream"))
+		_ = pr.Close()
+		return errors.New("timeout waiting for remote agent to initiate stream")
+	case <-ctx.Done():
+		_ = pw.CloseWithError(ctx.Err())
+		_ = pr.Close()
+		return ctx.Err()
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	if ticket.ContentLen > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(ticket.ContentLen, 10))
+	}
+	w.WriteHeader(http.StatusOK)
+
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	_, _ = io.Copy(w, pr)
+	_ = pr.Close()
+	return nil
+}
+
+// PushLocalFileToNodeShared delivers a file from the parent server disk to a node's shared directory.
+func (h *NodeFileHandler) PushLocalFileToNodeShared(ctx context.Context, baseURL string, targetNode *node.Node, localSrcPath, targetRelPath string) error {
+	if targetNode.IsLocal {
+		absDst, _, err := platform.SafeSharedPath(platform.SharedFilesDir(), targetRelPath)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(absDst), 0755); err != nil {
+			return err
+		}
+		if localSrcPath == absDst {
+			return nil
+		}
+		return copyLocalFile(localSrcPath, absDst)
+	}
+
+	pullTicket := h.createTicket(localSrcPath)
+	defer h.removeTicket(pullTicket.ID)
+
+	pullURL := fmt.Sprintf("%s/v1/node-files/internal-transfer/%s?token=%s", strings.TrimRight(baseURL, "/"), pullTicket.ID, pullTicket.Token)
+	_, err := h.grpc.ExecuteFileOperation(ctx, targetNode.ID, pb.FileOpType_FILE_OP_PULL_FROM_URL, targetRelPath, pullURL, pullTicket.Token)
+	return err
+}
+
+// TransferSharedFile transfers a file from sourceNode's shared directory to targetNode's shared directory.
+func (h *NodeFileHandler) TransferSharedFile(ctx context.Context, baseURL string, sourceNode *node.Node, sourceRelPath string, targetNode *node.Node, targetRelPath string) (int64, error) {
+	baseDir := platform.SharedFilesDir()
+	var sourceLocalFile string
+	var cleanupStaging bool
+
+	if sourceNode.IsLocal {
+		absSrc, _, err := platform.SafeSharedPath(baseDir, sourceRelPath)
+		if err != nil {
+			return 0, err
+		}
+		info, err := os.Stat(absSrc)
+		if err != nil || info.IsDir() {
+			return 0, fmt.Errorf("source file not found or is a directory")
+		}
+		sourceLocalFile = absSrc
+	} else {
+		sourceLocalFile = stageFilePath(filepath.Base(sourceRelPath))
+		cleanupStaging = true
+		defer func() {
+			if cleanupStaging {
+				_ = os.Remove(sourceLocalFile)
+			}
+		}()
+
+		pushTicket := h.createTicket(sourceLocalFile)
+		defer h.removeTicket(pushTicket.ID)
+
+		pushURL := fmt.Sprintf("%s/v1/node-files/internal-transfer/%s?token=%s", strings.TrimRight(baseURL, "/"), pushTicket.ID, pushTicket.Token)
+		if _, err := h.grpc.ExecuteFileOperation(ctx, sourceNode.ID, pb.FileOpType_FILE_OP_PUSH_TO_URL, sourceRelPath, pushURL, pushTicket.Token); err != nil {
+			return 0, fmt.Errorf("pull from source node failed: %w", err)
+		}
+	}
+
+	var sizeBytes int64
+	if info, err := os.Stat(sourceLocalFile); err == nil {
+		sizeBytes = info.Size()
+	}
+
+	if err := h.PushLocalFileToNodeShared(ctx, baseURL, targetNode, sourceLocalFile, targetRelPath); err != nil {
+		return sizeBytes, fmt.Errorf("push to target node failed: %w", err)
+	}
+	return sizeBytes, nil
+}

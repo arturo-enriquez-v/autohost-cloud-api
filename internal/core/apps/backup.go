@@ -41,6 +41,7 @@ type BackupConfig struct {
 	PauseContainer      bool            `db:"pause_container"       json:"pause_container"`
 	BackupMethod        string          `db:"backup_method"         json:"backup_method"`
 	StorageDestination  string          `db:"storage_destination"  json:"storage_destination"`
+	ReplicaNodeID       *string         `db:"replica_node_id"      json:"replica_node_id,omitempty"`
 	PgUser              string          `db:"pg_user"               json:"pg_user"`
 	StorageCredentialID *string         `db:"storage_credential_id" json:"storage_credential_id,omitempty"`
 	Enabled             bool            `db:"enabled"               json:"enabled"`
@@ -58,6 +59,8 @@ type BackupRecord struct {
 	StorageDestination string     `db:"storage_destination" json:"storage_destination"`
 	LocalPath          *string    `db:"local_path"          json:"local_path,omitempty"`
 	ParentPath         *string    `db:"parent_path"         json:"parent_path,omitempty"`
+	ReplicaNodeID      *string    `db:"replica_node_id"     json:"replica_node_id,omitempty"`
+	ReplicaPath        *string    `db:"replica_path"        json:"replica_path,omitempty"`
 	S3Key              *string    `db:"s3_key"              json:"s3_key,omitempty"`
 	FileSizeBytes      int64      `db:"file_size_bytes"     json:"file_size_bytes"`
 	BackupMethod       string     `db:"backup_method"       json:"backup_method"`
@@ -86,17 +89,27 @@ type BackupRepository interface {
 	UpdateRecordStatus(id string, status string, s3Key, localPath, parentPath string, fileSize int64, errMsg *string) error
 	UpdateRecordByJobID(jobID string, status string, s3Key, localPath, parentPath string, fileSize int64, errMsg *string) error
 	UpdateRecordParentPath(id string, parentPath string, fileSize int64) error
+	UpdateRecordReplica(id string, replicaNodeID string, replicaPath string) error
+	ClearRecordLocalPath(id string) error
+	UpdateRecordLocations(id string, localPath, parentPath, replicaPath *string) error
+	MarkRecordDeleted(id string, reason string) error
 	UpdateRecordJobID(id string, jobID string) error
 	ListRecordsByContainer(nodeID, containerName string) ([]*BackupRecord, error)
 	GetRecordByID(id string) (*BackupRecord, error)
+	GetRecordByJobID(jobID string) (*BackupRecord, error)
 }
 
 type BackupService struct {
-	repo BackupRepository
+	repo           BackupRepository
+	onJobCompleted func(jobID string)
 }
 
 func NewBackupService(repo BackupRepository) *BackupService {
 	return &BackupService{repo: repo}
+}
+
+func (s *BackupService) SetOnJobCompleted(fn func(jobID string)) {
+	s.onJobCompleted = fn
 }
 
 func (s *BackupService) CreateCredential(cred *StorageCredential) (*StorageCredential, error) {
@@ -136,11 +149,38 @@ func (s *BackupService) UpdateRecordStatus(id string, status string, s3Key, loca
 }
 
 func (s *BackupService) UpdateRecordByJobID(jobID string, status string, s3Key, localPath, parentPath string, fileSize int64, errMsg *string) error {
-	return s.repo.UpdateRecordByJobID(jobID, status, s3Key, localPath, parentPath, fileSize, errMsg)
+	err := s.repo.UpdateRecordByJobID(jobID, status, s3Key, localPath, parentPath, fileSize, errMsg)
+	if err == nil && status == "completed" && s.onJobCompleted != nil {
+		go s.onJobCompleted(jobID)
+	}
+	return err
 }
 
 func (s *BackupService) UpdateRecordParentPath(id string, parentPath string, fileSize int64) error {
 	return s.repo.UpdateRecordParentPath(id, parentPath, fileSize)
+}
+
+func (s *BackupService) UpdateRecordReplica(id string, replicaNodeID string, replicaPath string) error {
+	return s.repo.UpdateRecordReplica(id, replicaNodeID, replicaPath)
+}
+
+func (s *BackupService) ClearRecordLocalPath(id string) error {
+	return s.repo.ClearRecordLocalPath(id)
+}
+
+// UpdateRecordLocations overwrites the three storage location columns (nil clears a column).
+func (s *BackupService) UpdateRecordLocations(id string, localPath, parentPath, replicaPath *string) error {
+	return s.repo.UpdateRecordLocations(id, localPath, parentPath, replicaPath)
+}
+
+// MarkRecordDeleted flags a backup whose archive no longer exists on any storage location.
+// The row is kept so it still shows up in the activity/audit log.
+func (s *BackupService) MarkRecordDeleted(id string, reason string) error {
+	return s.repo.MarkRecordDeleted(id, reason)
+}
+
+func (s *BackupService) GetRecordByJobID(jobID string) (*BackupRecord, error) {
+	return s.repo.GetRecordByJobID(jobID)
 }
 
 func (s *BackupService) UpdateRecordJobID(id string, jobID string) error {

@@ -4,7 +4,9 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -22,18 +24,16 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/go-chi/chi/v5"
 )
 
 type BackupHandler struct {
-	backupSvc  *apps.BackupService
-	jobSvc     *jobs.JobService
-	dispatcher dispatcher.ParamDispatcher
-	nodeSvc    *node.NodeService
-	rbacSvc    *identity.RBACService
+	backupSvc       *apps.BackupService
+	jobSvc          *jobs.JobService
+	dispatcher      dispatcher.ParamDispatcher
+	nodeSvc         *node.NodeService
+	rbacSvc         *identity.RBACService
+	nodeFileHandler *NodeFileHandler
 }
 
 func (h *BackupHandler) SetRBACService(rbac *identity.RBACService) {
@@ -45,12 +45,115 @@ func NewBackupHandler(
 	jobSvc *jobs.JobService,
 	disp dispatcher.ParamDispatcher,
 	nodeSvc *node.NodeService,
+	nodeFileHandler *NodeFileHandler,
 ) *BackupHandler {
-	return &BackupHandler{
-		backupSvc:  backupSvc,
-		jobSvc:     jobSvc,
-		dispatcher: disp,
-		nodeSvc:    nodeSvc,
+	bh := &BackupHandler{
+		backupSvc:       backupSvc,
+		jobSvc:          jobSvc,
+		dispatcher:      disp,
+		nodeSvc:         nodeSvc,
+		nodeFileHandler: nodeFileHandler,
+	}
+	if backupSvc != nil {
+		backupSvc.SetOnJobCompleted(bh.HandlePostBackupReplication)
+	}
+	return bh
+}
+
+// HandlePostBackupReplication runs asynchronously when a backup job finishes on a node agent.
+// It uses gRPC file operations over the node's shared folder to replicate or move the backup
+// to the parent server and/or the selected replica node.
+func (h *BackupHandler) HandlePostBackupReplication(jobID string) {
+	if h.backupSvc == nil || h.nodeFileHandler == nil || h.nodeSvc == nil {
+		return
+	}
+
+	rec, err := h.backupSvc.GetRecordByJobID(jobID)
+	if err != nil || rec == nil || rec.TriggerType == "restore" {
+		return
+	}
+	if rec.LocalPath == nil || *rec.LocalPath == "" {
+		return
+	}
+
+	dest := strings.ToLower(strings.TrimSpace(rec.StorageDestination))
+	hasReplicaNode := rec.ReplicaNodeID != nil && strings.TrimSpace(*rec.ReplicaNodeID) != ""
+	needsParentCopy := dest == "local_and_parent" && (rec.ParentPath == nil || *rec.ParentPath == "")
+	needsReplicaCopy := hasReplicaNode && (rec.ReplicaPath == nil || *rec.ReplicaPath == "")
+
+	if !needsParentCopy && !needsReplicaCopy && dest != "remote_node" {
+		return
+	}
+
+	srcNode, err := h.nodeSvc.GetByID(rec.NodeID)
+	if err != nil || srcNode == nil {
+		log.Printf("[BACKUP] post-backup replication: source node %s not found: %v", rec.NodeID, err)
+		return
+	}
+
+	filename := filepath.Base(*rec.LocalPath)
+	srcRelPath := extractSharedBackupRelPath(*rec.LocalPath, rec.ContainerName)
+	baseURL := h.nodeFileHandler.ResolveMasterBaseURL(nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	// 1. Pull to parent disk if needed for local_and_parent
+	if needsParentCopy {
+		targetDir := filepath.Join(platform.BackupsDir(), "nodes", rec.NodeID, rec.ContainerName)
+		targetPath := filepath.Join(targetDir, filename)
+		sizeBytes, err := h.nodeFileHandler.PullNodeSharedFileToLocal(ctx, baseURL, srcNode, srcRelPath, targetPath)
+		if err != nil {
+			log.Printf("[ERROR] post-backup pull to parent for record %s failed: %v", rec.ID, err)
+		} else {
+			_ = h.backupSvc.UpdateRecordParentPath(rec.ID, targetPath, sizeBytes)
+			rec.ParentPath = &targetPath
+			if cfg, err := h.backupSvc.GetConfigByID(rec.BackupConfigID); err == nil && cfg.RetentionCount > 0 {
+				h.cleanupOldReplicas(targetDir, cfg.RetentionCount)
+			}
+			log.Printf("[BACKUP] pulled backup %s to parent path %s", rec.ID, targetPath)
+		}
+	}
+
+	// 2. Replicate to target replica node if configured
+	replicaSucceeded := rec.ReplicaPath != nil && *rec.ReplicaPath != ""
+	if needsReplicaCopy {
+		replicaNodeID := strings.TrimSpace(*rec.ReplicaNodeID)
+		replicaNode, err := h.nodeSvc.GetByID(replicaNodeID)
+		if err != nil || replicaNode == nil {
+			log.Printf("[ERROR] post-backup replica node %s not found: %v", replicaNodeID, err)
+			return
+		}
+		replicaRelPath := fmt.Sprintf("/backup/%s/%s", rec.ContainerName, filename)
+
+		var repErr error
+		if rec.ParentPath != nil && *rec.ParentPath != "" {
+			if _, statErr := os.Stat(*rec.ParentPath); statErr == nil {
+				repErr = h.nodeFileHandler.PushLocalFileToNodeShared(ctx, baseURL, replicaNode, *rec.ParentPath, replicaRelPath)
+			}
+		}
+		if repErr != nil || rec.ParentPath == nil || *rec.ParentPath == "" {
+			_, repErr = h.nodeFileHandler.TransferSharedFile(ctx, baseURL, srcNode, srcRelPath, replicaNode, replicaRelPath)
+		}
+
+		if repErr != nil {
+			log.Printf("[ERROR] post-backup transfer of %s to replica node %s failed: %v", rec.ID, replicaNodeID, repErr)
+			return
+		}
+
+		_ = h.backupSvc.UpdateRecordReplica(rec.ID, replicaNodeID, replicaRelPath)
+		replicaSucceeded = true
+		log.Printf("[BACKUP] transferred backup %s to replica node %s (%s)", rec.ID, replicaNodeID, replicaRelPath)
+	}
+
+	// 3. If destination is remote_node only and replica succeeded, remove the source node copy
+	if dest == "remote_node" && replicaSucceeded {
+		if err := h.nodeFileHandler.DeleteNodeSharedFile(ctx, srcNode, srcRelPath); err != nil {
+			log.Printf("[WARN] failed to delete temporary source backup %s on node %s: %v", srcRelPath, rec.NodeID, err)
+		} else {
+			_ = h.backupSvc.ClearRecordLocalPath(rec.ID)
+			log.Printf("[BACKUP] removed source copy %s on node %s (remote_node mode)", srcRelPath, rec.NodeID)
+		}
 	}
 }
 
@@ -76,6 +179,7 @@ func (h *BackupHandler) Routes(nodeAuthMiddleware func(http.Handler) http.Handle
 
 		// Records
 		userRouter.Get("/records/{nodeId}/{containerName}", h.ListRecords)
+		userRouter.Delete("/records/{recordId}", h.DeleteRecord)
 
 		// Run / Restore / Download Actions
 		userRouter.Post("/run/{nodeId}/{containerName}", h.RunManualBackup)
@@ -85,31 +189,6 @@ func (h *BackupHandler) Routes(nodeAuthMiddleware func(http.Handler) http.Handle
 	})
 
 	return r
-}
-
-func getSystemR2Credential() *apps.StorageCredential {
-	accountID := os.Getenv("R2_ACCOUNT_ID")
-	accessKey := os.Getenv("R2_ACCESS_KEY_ID")
-	secretKey := os.Getenv("R2_SECRET_ACCESS_KEY")
-	bucketRaw := os.Getenv("R2_BUCKET_NAME")
-
-	if accountID == "" || accessKey == "" || secretKey == "" || bucketRaw == "" {
-		return nil
-	}
-
-	bucketName := strings.Split(strings.TrimSpace(bucketRaw), "/")[0]
-
-	return &apps.StorageCredential{
-		ID:              "system-managed-r2",
-		Name:            "Autohost Cloud Storage (Incluido)",
-		Provider:        "r2",
-		Endpoint:        fmt.Sprintf("https://%s.r2.cloudflarestorage.com", accountID),
-		Bucket:          bucketName,
-		Region:          "auto",
-		AccessKeyID:     accessKey,
-		SecretAccessKey: secretKey,
-		IsDefault:       true,
-	}
 }
 
 // ─── Config Handlers ────────────────────────────────────────────────────────
@@ -136,7 +215,8 @@ func (h *BackupHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{
 				"configured":          false,
-				"storage_destination": "local_and_parent",
+				"storage_destination": "local",
+				"replica_node_id":     nil,
 				"backup_method":       "volume",
 				"retention_count":     7,
 			})
@@ -157,6 +237,7 @@ type upsertConfigRequest struct {
 	PauseContainer     bool     `json:"pause_container"`
 	BackupMethod       string   `json:"backup_method"`
 	StorageDestination string   `json:"storage_destination"`
+	ReplicaNodeID      *string  `json:"replica_node_id"`
 	PgUser             string   `json:"pg_user"`
 	Enabled            bool     `json:"enabled"`
 }
@@ -200,8 +281,31 @@ func (h *BackupHandler) UpsertConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	storageDest := strings.ToLower(strings.TrimSpace(req.StorageDestination))
-	if storageDest != "local" && storageDest != "s3" {
-		storageDest = "local_and_parent"
+	switch storageDest {
+	case "local", "local_and_parent", "local_and_replica", "remote_node":
+	default:
+		storageDest = "local"
+	}
+
+	var replicaNodeID *string
+	if req.ReplicaNodeID != nil && strings.TrimSpace(*req.ReplicaNodeID) != "" {
+		rid := strings.TrimSpace(*req.ReplicaNodeID)
+		if rid == nodeID {
+			writeJSONError(w, "replica_node_id cannot be the same as the source node", http.StatusBadRequest)
+			return
+		}
+		if h.rbacSvc != nil {
+			if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, rid, identity.PermFilesWrite); err != nil || !ok {
+				writeJSONError(w, "forbidden: no write permission on selected replica node", http.StatusForbidden)
+				return
+			}
+		}
+		replicaNodeID = &rid
+	}
+
+	if (storageDest == "remote_node" || storageDest == "local_and_replica") && replicaNodeID == nil {
+		writeJSONError(w, "replica_node_id is required for remote_node or local_and_replica storage", http.StatusBadRequest)
+		return
 	}
 
 	pgUser := req.PgUser
@@ -219,12 +323,13 @@ func (h *BackupHandler) UpsertConfig(w http.ResponseWriter, r *http.Request) {
 		PauseContainer:     req.PauseContainer,
 		BackupMethod:       backupMethod,
 		StorageDestination: storageDest,
+		ReplicaNodeID:      replicaNodeID,
 		PgUser:             pgUser,
 		Enabled:            req.Enabled,
 	})
 	if err != nil {
 		log.Printf("[ERROR] upsert backup config: %v", err)
-		http.Error(w, "failed to save backup config", http.StatusInternalServerError)
+		writeJSONError(w, fmt.Sprintf("failed to save backup config: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -256,8 +361,259 @@ func (h *BackupHandler) ListRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.reconcileRecordFiles(r.Context(), recs)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(recs)
+}
+
+// fileState is the result of checking a single storage location of a backup archive.
+type fileState int
+
+const (
+	fileUnknown fileState = iota // could not verify (node offline, timeout, ...)
+	filePresent
+	fileMissing
+)
+
+// reconcileRecordFiles checks every completed backup record against the storage locations it points to
+// (source node shared folder, parent server disk, replica node shared folder). Locations whose archive was
+// removed (manually, or by retention cleanup) are cleared, and records left without any archive are marked
+// as "deleted" so they disappear from the restorable snapshots while remaining in the audit log.
+// Locations that cannot be verified (e.g. node offline) are left untouched.
+func (h *BackupHandler) reconcileRecordFiles(ctx context.Context, recs []*apps.BackupRecord) {
+	if h.nodeSvc == nil || h.nodeFileHandler == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	nodes := map[string]*node.Node{}
+	nodeMissing := map[string]bool{}
+	getNode := func(id string) *node.Node {
+		if n, ok := nodes[id]; ok {
+			return n
+		}
+		if nodeMissing[id] {
+			return nil
+		}
+		n, err := h.nodeSvc.GetByID(id)
+		if err != nil || n == nil {
+			nodeMissing[id] = true
+			return nil
+		}
+		nodes[id] = n
+		return n
+	}
+
+	type dirListing struct {
+		names map[string]struct{}
+		ok    bool
+	}
+	listings := map[string]dirListing{}
+	checkShared := func(nodeID, relPath string) fileState {
+		n := getNode(nodeID)
+		if n == nil {
+			return fileUnknown
+		}
+		relPath = filepath.ToSlash(filepath.Clean("/" + relPath))
+		dir, name := filepath.ToSlash(filepath.Dir(relPath)), filepath.Base(relPath)
+		key := nodeID + "|" + dir
+		l, cached := listings[key]
+		if !cached {
+			names, err := h.nodeFileHandler.ListNodeSharedFileNames(ctx, n, dir)
+			if err != nil {
+				log.Printf("[BACKUP] reconcile: cannot list %s on node %s: %v", dir, nodeID, err)
+			}
+			l = dirListing{names: names, ok: err == nil}
+			listings[key] = l
+		}
+		if !l.ok {
+			return fileUnknown
+		}
+		if _, found := l.names[name]; found {
+			return filePresent
+		}
+		return fileMissing
+	}
+
+	for _, rec := range recs {
+		if rec == nil || rec.Status != "completed" || rec.TriggerType == "restore" || rec.TriggerType == "download" {
+			continue
+		}
+		// Archives stored in object storage cannot be verified here; leave them alone.
+		if rec.S3Key != nil && *rec.S3Key != "" {
+			continue
+		}
+
+		hasLocal := rec.LocalPath != nil && *rec.LocalPath != ""
+		hasParent := rec.ParentPath != nil && *rec.ParentPath != ""
+		hasReplica := rec.ReplicaPath != nil && *rec.ReplicaPath != "" && rec.ReplicaNodeID != nil && *rec.ReplicaNodeID != ""
+		if !hasLocal && !hasParent && !hasReplica {
+			continue
+		}
+
+		states := []fileState{}
+		changed := false
+		localPath, parentPath, replicaPath := rec.LocalPath, rec.ParentPath, rec.ReplicaPath
+
+		if hasLocal {
+			st := checkShared(rec.NodeID, extractSharedBackupRelPath(*rec.LocalPath, rec.ContainerName))
+			states = append(states, st)
+			if st == fileMissing {
+				localPath, changed = nil, true
+			}
+		}
+		if hasParent {
+			st := fileUnknown
+			if _, err := os.Stat(*rec.ParentPath); err == nil {
+				st = filePresent
+			} else if os.IsNotExist(err) {
+				st = fileMissing
+			}
+			states = append(states, st)
+			if st == fileMissing {
+				parentPath, changed = nil, true
+			}
+		}
+		if hasReplica {
+			st := checkShared(*rec.ReplicaNodeID, *rec.ReplicaPath)
+			states = append(states, st)
+			if st == fileMissing {
+				replicaPath, changed = nil, true
+			}
+		}
+
+		allMissing := true
+		for _, st := range states {
+			if st != fileMissing {
+				allMissing = false
+				break
+			}
+		}
+
+		if allMissing {
+			reason := "backup archive no longer exists on any storage location"
+			if err := h.backupSvc.MarkRecordDeleted(rec.ID, reason); err != nil {
+				log.Printf("[BACKUP] reconcile: failed to mark record %s as deleted: %v", rec.ID, err)
+				continue
+			}
+			rec.Status = "deleted"
+			rec.ErrorMessage = &reason
+			log.Printf("[BACKUP] reconcile: record %s marked deleted (archive missing)", rec.ID)
+			continue
+		}
+
+		if changed {
+			if err := h.backupSvc.UpdateRecordLocations(rec.ID, localPath, parentPath, replicaPath); err != nil {
+				log.Printf("[BACKUP] reconcile: failed to update locations of record %s: %v", rec.ID, err)
+				continue
+			}
+			rec.LocalPath, rec.ParentPath, rec.ReplicaPath = localPath, parentPath, replicaPath
+		}
+	}
+}
+
+// DeleteRecord removes a backup archive from every storage location it lives on and marks the record
+// as deleted (the row is kept for the audit log).
+func (h *BackupHandler) DeleteRecord(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil {
+		writeJSONError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	recordID := chi.URLParam(r, "recordId")
+	rec, err := h.backupSvc.GetRecordByID(recordID)
+	if err != nil || rec == nil {
+		writeJSONError(w, "backup record not found", http.StatusNotFound)
+		return
+	}
+
+	if h.rbacSvc != nil {
+		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, rec.NodeID, identity.PermBackupsManage); err != nil || !ok {
+			writeJSONError(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	} else if rec.UserID != claims.UserID {
+		writeJSONError(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	if rec.Status == "running" {
+		writeJSONError(w, "cannot delete a backup that is still running", http.StatusConflict)
+		return
+	}
+	if rec.S3Key != nil && *rec.S3Key != "" {
+		writeJSONError(w, "deleting backups stored in object storage is not supported yet", http.StatusNotImplemented)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	var failures []string
+	localPath, parentPath, replicaPath := rec.LocalPath, rec.ParentPath, rec.ReplicaPath
+
+	if rec.LocalPath != nil && *rec.LocalPath != "" {
+		relPath := extractSharedBackupRelPath(*rec.LocalPath, rec.ContainerName)
+		srcNode, err := h.nodeSvc.GetByID(rec.NodeID)
+		if err == nil && srcNode != nil {
+			err = h.nodeFileHandler.DeleteNodeSharedFileIfExists(ctx, srcNode, relPath)
+		} else if err == nil {
+			err = errors.New("source node not found")
+		}
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("source node: %v", err))
+		} else {
+			localPath = nil
+		}
+	}
+
+	if rec.ParentPath != nil && *rec.ParentPath != "" {
+		if err := os.Remove(*rec.ParentPath); err != nil && !os.IsNotExist(err) {
+			failures = append(failures, fmt.Sprintf("parent server: %v", err))
+		} else {
+			parentPath = nil
+		}
+	}
+
+	if rec.ReplicaPath != nil && *rec.ReplicaPath != "" && rec.ReplicaNodeID != nil && *rec.ReplicaNodeID != "" {
+		replicaNode, err := h.nodeSvc.GetByID(*rec.ReplicaNodeID)
+		if err == nil && replicaNode != nil {
+			err = h.nodeFileHandler.DeleteNodeSharedFileIfExists(ctx, replicaNode, *rec.ReplicaPath)
+		} else if err == nil {
+			err = errors.New("replica node not found")
+		}
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("replica node: %v", err))
+		} else {
+			replicaPath = nil
+		}
+	}
+
+	if len(failures) > 0 {
+		// Persist what was actually removed so the record keeps pointing only at remaining copies.
+		_ = h.backupSvc.UpdateRecordLocations(rec.ID, localPath, parentPath, replicaPath)
+		writeJSONError(w, "failed to delete backup archive: "+strings.Join(failures, "; "), http.StatusBadGateway)
+		return
+	}
+
+	if err := h.backupSvc.MarkRecordDeleted(rec.ID, "deleted manually by "+deletedByLabel(claims)); err != nil {
+		writeJSONError(w, "archive removed but failed to update record", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+}
+
+func deletedByLabel(c *middleware.Claims) string {
+	if c.Email != "" {
+		return c.Email
+	}
+	return c.UserID
 }
 
 func writeJSONError(w http.ResponseWriter, msg string, code int) {
@@ -309,41 +665,16 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 	}
 
 	storageDest := cfg.StorageDestination
-	if storageDest == "" {
-		storageDest = "local_and_parent"
-	}
-
-	var cred *apps.StorageCredential
-	if storageDest == "s3" {
-		cred = getSystemR2Credential()
-		if cred == nil {
-			writeJSONError(w, "Cloudflare R2 storage not configured in server environment variables", http.StatusBadRequest)
-			return
-		}
+	if storageDest == "" || storageDest == "s3" {
+		storageDest = "local"
 	}
 
 	var vols []string
 	_ = json.Unmarshal(cfg.Volumes, &vols)
 
-	nowStr := time.Now().Format("2006-01-02_150405")
 	backupMethod := cfg.BackupMethod
 	if backupMethod != "pg_dump" && backupMethod != "image" {
 		backupMethod = "volume"
-	}
-
-	var s3KeyPtr *string
-	if storageDest == "s3" {
-		var ext string
-		switch backupMethod {
-		case "pg_dump":
-			ext = "sql.gz"
-		case "image":
-			ext = "image.tar.gz"
-		default:
-			ext = "tar.gz"
-		}
-		key := fmt.Sprintf("backups/users/%s/nodes/%s/apps/%s/%s/%s.%s", claims.UserID, nodeID, containerName, nowStr, containerName, ext)
-		s3KeyPtr = &key
 	}
 
 	rec, err := h.backupSvc.CreateRecord(&apps.BackupRecord{
@@ -352,7 +683,7 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 		UserID:             claims.UserID,
 		ContainerName:      containerName,
 		StorageDestination: storageDest,
-		S3Key:              s3KeyPtr,
+		ReplicaNodeID:      cfg.ReplicaNodeID,
 		BackupMethod:       backupMethod,
 		TriggerType:        "manual",
 		Status:             "running",
@@ -364,25 +695,21 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 	}
 
 	apiURL := resolveAPIURL(r)
+	if h.nodeFileHandler != nil {
+		apiURL = h.nodeFileHandler.ResolveMasterBaseURL(r)
+	}
 
 	var commandName string
 	paramsMap := map[string]any{
+		"node_id":             nodeID,
 		"container_name":      containerName,
 		"backup_record_id":    rec.ID,
 		"storage_destination": storageDest,
 		"retention_count":     cfg.RetentionCount,
 		"api_url":             apiURL,
 	}
-
-	if storageDest == "s3" && cred != nil && s3KeyPtr != nil {
-		paramsMap["s3"] = map[string]any{
-			"endpoint":          cred.Endpoint,
-			"bucket":            cred.Bucket,
-			"region":            cred.Region,
-			"access_key_id":     cred.AccessKeyID,
-			"secret_access_key": cred.SecretAccessKey,
-			"s3_key":            *s3KeyPtr,
-		}
+	if cfg.ReplicaNodeID != nil && *cfg.ReplicaNodeID != "" {
+		paramsMap["replica_node_id"] = *cfg.ReplicaNodeID
 	}
 
 	switch backupMethod {
@@ -448,6 +775,9 @@ func (h *BackupHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	apiURL := resolveAPIURL(r)
+	if h.nodeFileHandler != nil {
+		apiURL = h.nodeFileHandler.ResolveMasterBaseURL(r)
+	}
 
 	restoreMethod := rec.BackupMethod
 	if restoreMethod == "" {
@@ -461,21 +791,8 @@ func (h *BackupHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 	if rec.LocalPath != nil && *rec.LocalPath != "" {
 		paramsMap["local_path"] = *rec.LocalPath
 	}
-	if rec.ParentPath != nil && *rec.ParentPath != "" {
+	if (rec.ParentPath != nil && *rec.ParentPath != "") || (rec.ReplicaNodeID != nil && rec.ReplicaPath != nil && *rec.ReplicaPath != "") {
 		paramsMap["parent_download_url"] = fmt.Sprintf("%s/v1/backups/node-download/%s/%s", apiURL, rec.NodeID, rec.ID)
-	}
-
-	if rec.S3Key != nil && *rec.S3Key != "" {
-		if cred := getSystemR2Credential(); cred != nil {
-			paramsMap["s3"] = map[string]any{
-				"endpoint":          cred.Endpoint,
-				"bucket":            cred.Bucket,
-				"region":            cred.Region,
-				"access_key_id":     cred.AccessKeyID,
-				"secret_access_key": cred.SecretAccessKey,
-				"s3_key":            *rec.S3Key,
-			}
-		}
 	}
 
 	var restoreCommandName string
@@ -606,6 +923,29 @@ func (h *BackupHandler) UploadReplicatedBackup(w http.ResponseWriter, r *http.Re
 	// Update database with parent path and file size
 	_ = h.backupSvc.UpdateRecordParentPath(recordID, targetPath, n)
 
+	// Replicate to target replica node if configured
+	if rec.ReplicaNodeID != nil && *rec.ReplicaNodeID != "" && h.nodeFileHandler != nil && h.nodeSvc != nil {
+		replicaNodeID := *rec.ReplicaNodeID
+		replicaRelPath := fmt.Sprintf("/backup/%s/%s", rec.ContainerName, filename)
+		apiURL := resolveAPIURL(r)
+		if h.nodeFileHandler != nil {
+			apiURL = h.nodeFileHandler.ResolveMasterBaseURL(r)
+		}
+
+		if replicaNode, err := h.nodeSvc.GetByID(replicaNodeID); err == nil && replicaNode != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			go func() {
+				defer cancel()
+				if err := h.nodeFileHandler.PushLocalFileToNodeShared(ctx, apiURL, replicaNode, targetPath, replicaRelPath); err != nil {
+					log.Printf("[ERROR] replicate backup %s to node %s failed: %v", recordID, replicaNodeID, err)
+					return
+				}
+				_ = h.backupSvc.UpdateRecordReplica(recordID, replicaNodeID, replicaRelPath)
+				log.Printf("[BACKUP] replicated backup %s to node %s at %s", recordID, replicaNodeID, replicaRelPath)
+			}()
+		}
+	}
+
 	// Clean up old replicated backups on parent node if retention count is configured
 	if cfg, err := h.backupSvc.GetConfigByID(rec.BackupConfigID); err == nil && cfg.RetentionCount > 0 {
 		h.cleanupOldReplicas(targetDir, cfg.RetentionCount)
@@ -635,17 +975,22 @@ func (h *BackupHandler) DownloadForNode(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if rec.ParentPath == nil || *rec.ParentPath == "" {
-		writeJSONError(w, "no replicated backup file available on parent node", http.StatusNotFound)
-		return
+	if rec.ParentPath != nil && *rec.ParentPath != "" {
+		if _, err := os.Stat(*rec.ParentPath); err == nil {
+			http.ServeFile(w, r, *rec.ParentPath)
+			return
+		}
 	}
 
-	if _, err := os.Stat(*rec.ParentPath); err != nil {
-		writeJSONError(w, "replicated file not found on disk", http.StatusNotFound)
-		return
+	if rec.ReplicaNodeID != nil && *rec.ReplicaNodeID != "" && rec.ReplicaPath != nil && *rec.ReplicaPath != "" && h.nodeFileHandler != nil && h.nodeSvc != nil {
+		if replicaNode, err := h.nodeSvc.GetByID(*rec.ReplicaNodeID); err == nil && replicaNode != nil {
+			if err := h.nodeFileHandler.StreamSharedFileAttachment(w, r, replicaNode, *rec.ReplicaPath, filepath.Base(*rec.ReplicaPath)); err == nil {
+				return
+			}
+		}
 	}
 
-	http.ServeFile(w, r, *rec.ParentPath)
+	writeJSONError(w, "no replicated backup file available on parent or replica node", http.StatusNotFound)
 }
 
 func (h *BackupHandler) DownloadBackup(w http.ResponseWriter, r *http.Request) {
@@ -676,46 +1021,49 @@ func (h *BackupHandler) DownloadBackup(w http.ResponseWriter, r *http.Request) {
 	if rec.ParentPath != nil && *rec.ParentPath != "" {
 		if _, err := os.Stat(*rec.ParentPath); err == nil {
 			filename := filepath.Base(*rec.ParentPath)
-			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 			http.ServeFile(w, r, *rec.ParentPath)
 			return
 		}
 	}
 
-	// 2. If stored in S3/R2, generate presigned URL
-	if rec.S3Key != nil && *rec.S3Key != "" {
-		cred := getSystemR2Credential()
-		if cred != nil {
-			s3Client := s3.New(s3.Options{
-				Region:       cred.Region,
-				Credentials:  credentials.NewStaticCredentialsProvider(cred.AccessKeyID, cred.SecretAccessKey, ""),
-				BaseEndpoint: aws.String(cred.Endpoint),
-				UsePathStyle: true,
-			})
-
-			presignClient := s3.NewPresignClient(s3Client)
-			filename := filepath.Base(*rec.S3Key)
-			disposition := fmt.Sprintf("attachment; filename=\"%s\"", filename)
-
-			presignedReq, err := presignClient.PresignGetObject(r.Context(), &s3.GetObjectInput{
-				Bucket:                     aws.String(cred.Bucket),
-				Key:                        aws.String(*rec.S3Key),
-				ResponseContentDisposition: aws.String(disposition),
-			}, s3.WithPresignExpires(15*time.Minute))
-
-			if err == nil {
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]string{
-					"download_url": presignedReq.URL,
-					"filename":     filename,
-				})
+	// 2. If stored on the source node's shared directory, stream via gRPC/HTTP
+	if rec.LocalPath != nil && *rec.LocalPath != "" && h.nodeFileHandler != nil && h.nodeSvc != nil {
+		if srcNode, err := h.nodeSvc.GetByID(rec.NodeID); err == nil && srcNode != nil {
+			relPath := extractSharedBackupRelPath(*rec.LocalPath, rec.ContainerName)
+			filename := filepath.Base(*rec.LocalPath)
+			if err := h.nodeFileHandler.StreamSharedFileAttachment(w, r, srcNode, relPath, filename); err == nil {
 				return
+			} else {
+				log.Printf("[WARN] stream backup from source node %s (%s) failed: %v", rec.NodeID, relPath, err)
 			}
-			log.Printf("[ERROR] presign download URL failed: %v", err)
 		}
 	}
 
-	writeJSONError(w, "backup file is not available on parent server (stored locally on remote node)", http.StatusNotFound)
+	// 3. If replicated to another node's shared directory, stream from replica node
+	if rec.ReplicaNodeID != nil && *rec.ReplicaNodeID != "" && rec.ReplicaPath != nil && *rec.ReplicaPath != "" && h.nodeFileHandler != nil && h.nodeSvc != nil {
+		if replicaNode, err := h.nodeSvc.GetByID(*rec.ReplicaNodeID); err == nil && replicaNode != nil {
+			filename := filepath.Base(*rec.ReplicaPath)
+			if err := h.nodeFileHandler.StreamSharedFileAttachment(w, r, replicaNode, *rec.ReplicaPath, filename); err == nil {
+				return
+			} else {
+				log.Printf("[WARN] stream backup from replica node %s (%s) failed: %v", *rec.ReplicaNodeID, *rec.ReplicaPath, err)
+			}
+		}
+	}
+
+	writeJSONError(w, "backup file is not available on parent, source, or replica node", http.StatusNotFound)
+}
+
+func extractSharedBackupRelPath(localPath, containerName string) string {
+	cleaned := filepath.ToSlash(filepath.Clean(localPath))
+	if idx := strings.Index(cleaned, "/backup/"); idx != -1 {
+		return cleaned[idx:]
+	}
+	if strings.HasPrefix(cleaned, "backup/") {
+		return "/" + cleaned
+	}
+	return fmt.Sprintf("/backup/%s/%s", containerName, filepath.Base(localPath))
 }
 
 func (h *BackupHandler) cleanupOldReplicas(dir string, maxCount int) {
