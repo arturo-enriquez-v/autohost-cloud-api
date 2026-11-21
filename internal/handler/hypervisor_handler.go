@@ -63,7 +63,7 @@ func (h *HypervisorHandler) get(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
-		if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermVMsRead) {
+		if !checkNodeAccess(r.Context(), h.rbacSvc, n, claims.UserID, identity.PermVMsRead) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}

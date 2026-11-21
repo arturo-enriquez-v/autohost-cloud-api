@@ -61,7 +61,7 @@ func (h *ServiceMonitorHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.nodeSvc != nil {
-		if _, status := checkNodeIDAccess(h.rbac, h.nodeSvc, nodeID, claims.UserID, identity.PermMonitorsRead); status != http.StatusOK {
+		if _, status := checkNodeIDAccess(r.Context(), h.rbac, h.nodeSvc, nodeID, claims.UserID, identity.PermMonitorsRead); status != http.StatusOK {
 			http.Error(w, "forbidden", status)
 			return
 		}
@@ -113,7 +113,7 @@ func (h *ServiceMonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	ownerID := claims.UserID
 	if h.nodeSvc != nil {
-		n, status := checkNodeIDAccess(h.rbac, h.nodeSvc, req.NodeID, claims.UserID, identity.PermMonitorsManage)
+		n, status := checkNodeIDAccess(r.Context(), h.rbac, h.nodeSvc, req.NodeID, claims.UserID, identity.PermMonitorsManage)
 		if status != http.StatusOK {
 			http.Error(w, "forbidden", status)
 			return
@@ -175,7 +175,7 @@ func (h *ServiceMonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if existing.UserID != claims.UserID {
 		if h.nodeSvc != nil {
-			if _, status := checkNodeIDAccess(h.rbac, h.nodeSvc, existing.NodeID, claims.UserID, identity.PermMonitorsManage); status != http.StatusOK {
+			if _, status := checkNodeIDAccess(r.Context(), h.rbac, h.nodeSvc, existing.NodeID, claims.UserID, identity.PermMonitorsManage); status != http.StatusOK {
 				http.Error(w, "forbidden", status)
 				return
 			}
@@ -184,7 +184,7 @@ func (h *ServiceMonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if h.rbac != nil && h.nodeSvc != nil {
-		if _, status := checkNodeIDAccess(h.rbac, h.nodeSvc, existing.NodeID, claims.UserID, identity.PermMonitorsManage); status != http.StatusOK {
+		if _, status := checkNodeIDAccess(r.Context(), h.rbac, h.nodeSvc, existing.NodeID, claims.UserID, identity.PermMonitorsManage); status != http.StatusOK {
 			http.Error(w, "forbidden", status)
 			return
 		}
@@ -251,7 +251,7 @@ func (h *ServiceMonitorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	if monitor.UserID != claims.UserID {
 		if h.nodeSvc != nil {
-			if _, status := checkNodeIDAccess(h.rbac, h.nodeSvc, monitor.NodeID, claims.UserID, identity.PermMonitorsManage); status != http.StatusOK {
+			if _, status := checkNodeIDAccess(r.Context(), h.rbac, h.nodeSvc, monitor.NodeID, claims.UserID, identity.PermMonitorsManage); status != http.StatusOK {
 				http.Error(w, "forbidden", status)
 				return
 			}
@@ -260,7 +260,7 @@ func (h *ServiceMonitorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if h.rbac != nil && h.nodeSvc != nil {
-		if _, status := checkNodeIDAccess(h.rbac, h.nodeSvc, monitor.NodeID, claims.UserID, identity.PermMonitorsManage); status != http.StatusOK {
+		if _, status := checkNodeIDAccess(r.Context(), h.rbac, h.nodeSvc, monitor.NodeID, claims.UserID, identity.PermMonitorsManage); status != http.StatusOK {
 			http.Error(w, "forbidden", status)
 			return
 		}

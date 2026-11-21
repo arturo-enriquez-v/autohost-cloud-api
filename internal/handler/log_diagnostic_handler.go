@@ -70,7 +70,7 @@ func (h *LogDiagnosticHandler) Collect(w http.ResponseWriter, r *http.Request) {
 
 	// Verify the user owns or has logs:manage permission on the node.
 	if h.nodeSvc != nil {
-		if _, status := checkNodeIDAccess(h.rbac, h.nodeSvc, req.NodeID, claims.UserID, identity.PermLogsManage); status != http.StatusOK {
+		if _, status := checkNodeIDAccess(r.Context(), h.rbac, h.nodeSvc, req.NodeID, claims.UserID, identity.PermLogsManage); status != http.StatusOK {
 			if status == http.StatusNotFound {
 				response.RespondError(w, http.StatusNotFound, "node not found")
 			} else {

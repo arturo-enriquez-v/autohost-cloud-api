@@ -144,7 +144,7 @@ func (h *NodeFileHandler) authorizeNode(w http.ResponseWriter, r *http.Request, 
 	if len(requiredPerm) > 0 && requiredPerm[0] != "" {
 		perm = requiredPerm[0]
 	}
-	if !checkNodeAccess(h.rbacSvc, n, claims.UserID, perm) {
+	if !checkNodeAccess(r.Context(), h.rbacSvc, n, claims.UserID, perm) {
 		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 		return nil, false
 	}

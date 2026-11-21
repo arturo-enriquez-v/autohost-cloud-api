@@ -100,7 +100,7 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, req.NodeID, identity.PermContainersDeploy); err != nil || !ok {
+	if ok, err := h.rbacSvc.HasNodePermission(r.Context(), claims.UserID, req.NodeID, identity.PermContainersDeploy); err != nil || !ok {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -194,7 +194,7 @@ func (h *MarketplaceHandler) ListNodeApps(w http.ResponseWriter, r *http.Request
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermContainersRead); err != nil || !ok {
+	if ok, err := h.rbacSvc.HasNodePermission(r.Context(), claims.UserID, nodeID, identity.PermContainersRead); err != nil || !ok {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}

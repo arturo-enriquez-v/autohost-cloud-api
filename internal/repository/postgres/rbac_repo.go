@@ -39,9 +39,9 @@ func (r *RBACRepository) ListUsers() ([]*identity.User, error) {
 	return out, nil
 }
 
-func (r *RBACRepository) GetUserByID(id string) (*identity.User, error) {
+func (r *RBACRepository) GetUserByID(ctx context.Context, id string) (*identity.User, error) {
 	var model UserModel
-	err := r.db.GetContext(context.Background(), &model, `
+	err := r.db.GetContext(ctx, &model, `
 		SELECT id, email, name, avatar_url, role, is_active, created_by, password_hash, oauth_provider, oauth_provider_id, created_at, updated_at
 		FROM users
 		WHERE id = $1`, id)
@@ -185,9 +185,9 @@ func (r *RBACRepository) ListUserProjects(userID string) ([]*identity.ProjectMem
 	return out, nil
 }
 
-func (r *RBACRepository) GetProjectMembership(projectID, userID string) (*identity.ProjectMembership, error) {
+func (r *RBACRepository) GetProjectMembership(ctx context.Context, projectID, userID string) (*identity.ProjectMembership, error) {
 	var row projectMembershipRow
-	err := r.db.GetContext(context.Background(), &row, `
+	err := r.db.GetContext(ctx, &row, `
 		SELECT pm.id, pm.project_id, COALESCE(p.name, '') AS project_name, pm.user_id,
 		       pm.default_role, pm.all_nodes, pm.default_permissions, pm.added_by, pm.created_at, pm.updated_at
 		FROM project_members pm
@@ -307,7 +307,7 @@ func (r *RBACRepository) ListProjectMembers(projectID string) ([]*identity.Proje
 			avatar = *row.AvatarURL
 		}
 
-		allUserNodePerms, _ := r.ListUserNodePermissions(row.UserID)
+		allUserNodePerms, _ := r.ListUserNodePermissions(context.Background(), row.UserID)
 		projNodePerms := make([]*identity.NodePermissionGrant, 0)
 		for _, np := range allUserNodePerms {
 			if np.ProjectID != nil && *np.ProjectID == projectID {
@@ -372,9 +372,9 @@ func rowToNodePermission(row *nodePermissionRow) *identity.NodePermissionGrant {
 	}
 }
 
-func (r *RBACRepository) ListUserNodePermissions(userID string) ([]*identity.NodePermissionGrant, error) {
+func (r *RBACRepository) ListUserNodePermissions(ctx context.Context, userID string) ([]*identity.NodePermissionGrant, error) {
 	var rows []nodePermissionRow
-	err := r.db.SelectContext(context.Background(), &rows, `
+	err := r.db.SelectContext(ctx, &rows, `
 		SELECT unp.id, unp.user_id, COALESCE(unp.project_id, n.project_id) AS project_id,
 		       COALESCE(p.name, '') AS project_name, unp.node_id, COALESCE(n.hostname, '') AS node_hostname,
 		       unp.role_preset, unp.permissions, unp.granted_by, unp.created_at, unp.updated_at
@@ -393,9 +393,9 @@ func (r *RBACRepository) ListUserNodePermissions(userID string) ([]*identity.Nod
 	return out, nil
 }
 
-func (r *RBACRepository) GetUserNodePermission(userID, nodeID string) (*identity.NodePermissionGrant, error) {
+func (r *RBACRepository) GetUserNodePermission(ctx context.Context, userID, nodeID string) (*identity.NodePermissionGrant, error) {
 	var row nodePermissionRow
-	err := r.db.GetContext(context.Background(), &row, `
+	err := r.db.GetContext(ctx, &row, `
 		SELECT unp.id, unp.user_id, COALESCE(unp.project_id, n.project_id) AS project_id,
 		       COALESCE(p.name, '') AS project_name, unp.node_id, COALESCE(n.hostname, '') AS node_hostname,
 		       unp.role_preset, unp.permissions, unp.granted_by, unp.created_at, unp.updated_at
@@ -432,7 +432,7 @@ func (r *RBACRepository) UpsertUserNodePermission(g *identity.NodePermissionGran
 	if err != nil {
 		return nil, err
 	}
-	return r.GetUserNodePermission(g.UserID, g.NodeID)
+	return r.GetUserNodePermission(context.Background(), g.UserID, g.NodeID)
 }
 
 func (r *RBACRepository) DeleteUserNodePermission(userID, nodeID string) error {
@@ -482,12 +482,12 @@ func (r *RBACRepository) ReplaceUserNodePermissions(userID string, grants []*ide
 	return tx.Commit()
 }
 
-func (r *RBACRepository) GetNodeProjectAndOwner(nodeID string) (*string, *string, bool, error) {
+func (r *RBACRepository) GetNodeProjectAndOwner(ctx context.Context, nodeID string) (*string, *string, bool, error) {
 	var row struct {
 		ProjectID *string `db:"project_id"`
 		OwnerID   *string `db:"owner_id"`
 	}
-	err := r.db.GetContext(context.Background(), &row, `
+	err := r.db.GetContext(ctx, &row, `
 		SELECT project_id, owner_id FROM nodes WHERE id = $1`, nodeID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil, false, nil

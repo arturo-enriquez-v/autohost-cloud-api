@@ -46,7 +46,7 @@ func (h *NodeAlertHandler) GetByNode(w http.ResponseWriter, r *http.Request) {
 
 	// Verify the requesting user has alerts:read permission on this node.
 	n, err := h.nodeService.GetByID(nodeID)
-	if err != nil || n == nil || !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermAlertsRead) {
+	if err != nil || n == nil || !checkNodeAccess(r.Context(), h.rbacSvc, n, claims.UserID, identity.PermAlertsRead) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -88,7 +88,7 @@ func (h *NodeAlertHandler) UpsertByNode(w http.ResponseWriter, r *http.Request) 
 
 	// Verify the requesting user has alerts:manage permission on this node.
 	n, err := h.nodeService.GetByID(nodeID)
-	if err != nil || n == nil || !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermAlertsManage) {
+	if err != nil || n == nil || !checkNodeAccess(r.Context(), h.rbacSvc, n, claims.UserID, identity.PermAlertsManage) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}

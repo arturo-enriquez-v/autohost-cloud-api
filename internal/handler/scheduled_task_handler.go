@@ -4,6 +4,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -86,12 +87,12 @@ func (h *ScheduledTaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.nodeSvc != nil {
-		if _, status := checkNodeIDAccess(h.rbac, h.nodeSvc, req.NodeID, claims.UserID, identity.PermJobsManage); status != http.StatusOK {
+		if _, status := checkNodeIDAccess(r.Context(), h.rbac, h.nodeSvc, req.NodeID, claims.UserID, identity.PermJobsManage); status != http.StatusOK {
 			http.Error(w, "forbidden", status)
 			return
 		}
 	}
-	if status, msg := h.authorizeScheduledCommand(claims.UserID, req.NodeID, req.CommandName); status != http.StatusOK {
+	if status, msg := h.authorizeScheduledCommand(r.Context(), claims.UserID, req.NodeID, req.CommandName); status != http.StatusOK {
 		http.Error(w, msg, status)
 		return
 	}
@@ -135,7 +136,7 @@ type updateTaskRequest struct {
 
 // authorizeScheduledCommand applies the same allow-list as POST /v1/jobs (scheduled tasks never carry
 // params) and checks the caller holds the permission the command requires on the node.
-func (h *ScheduledTaskHandler) authorizeScheduledCommand(userID, nodeID, commandName string) (int, string) {
+func (h *ScheduledTaskHandler) authorizeScheduledCommand(ctx context.Context, userID, nodeID, commandName string) (int, string) {
 	perm, err := jobs.ResolveUserJobPermission(commandName, "")
 	if err != nil {
 		return http.StatusBadRequest, err.Error()
@@ -143,7 +144,7 @@ func (h *ScheduledTaskHandler) authorizeScheduledCommand(userID, nodeID, command
 	if h.rbac == nil {
 		return http.StatusForbidden, "forbidden"
 	}
-	if ok, err := h.rbac.HasNodePermission(userID, nodeID, perm); err != nil || !ok {
+	if ok, err := h.rbac.HasNodePermission(ctx, userID, nodeID, perm); err != nil || !ok {
 		return http.StatusForbidden, "forbidden"
 	}
 	return http.StatusOK, ""
@@ -180,7 +181,7 @@ func (h *ScheduledTaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if status, msg := h.authorizeScheduledCommand(claims.UserID, existing.NodeID, req.CommandName); status != http.StatusOK {
+	if status, msg := h.authorizeScheduledCommand(r.Context(), claims.UserID, existing.NodeID, req.CommandName); status != http.StatusOK {
 		http.Error(w, msg, status)
 		return
 	}

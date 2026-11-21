@@ -70,7 +70,7 @@ func (h *NodeLogHandler) streamLogs(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
-		if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermLogsRead) {
+		if !checkNodeAccess(r.Context(), h.rbacSvc, n, claims.UserID, identity.PermLogsRead) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}

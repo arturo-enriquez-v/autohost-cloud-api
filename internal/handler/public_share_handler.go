@@ -400,7 +400,7 @@ func (h *PublicShareHandler) ListOwnerShares(w http.ResponseWriter, r *http.Requ
 	out := make([]*SharedFolderLink, 0)
 	for _, s := range h.state.Shares {
 		if h.rbacSvc != nil {
-			if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, s.NodeID, identity.PermFilesShare); err != nil || !ok {
+			if ok, err := h.rbacSvc.HasNodePermission(r.Context(), claims.UserID, s.NodeID, identity.PermFilesShare); err != nil || !ok {
 				continue
 			}
 		} else if s.OwnerID != claims.UserID {
@@ -445,7 +445,7 @@ func (h *PublicShareHandler) CreateShare(w http.ResponseWriter, r *http.Request)
 		http.Error(w, `{"error":"node not found"}`, http.StatusNotFound)
 		return
 	}
-	if !checkNodeAccess(h.rbacSvc, targetNode, claims.UserID, identity.PermFilesShare) {
+	if !checkNodeAccess(r.Context(), h.rbacSvc, targetNode, claims.UserID, identity.PermFilesShare) {
 		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 		return
 	}
@@ -532,9 +532,9 @@ func (h *PublicShareHandler) UpdateShare(w http.ResponseWriter, r *http.Request)
 
 	shareID := chi.URLParam(r, "shareId")
 	var req struct {
-		Title         *string          `json:"title"`
-		Permission    *SharePermission `json:"permission"`
-		Password      *string          `json:"password"`
+		Title      *string          `json:"title"`
+		Permission *SharePermission `json:"permission"`
+		Password   *string          `json:"password"`
 		// RegeneratePassword issues a new random password (returned once in the response).
 		RegeneratePassword bool  `json:"regenerate_password"`
 		FunnelEnabled      *bool `json:"funnel_enabled"`
@@ -570,7 +570,7 @@ func (h *PublicShareHandler) UpdateShare(w http.ResponseWriter, r *http.Request)
 	for _, s := range h.state.Shares {
 		canManage := s.OwnerID == claims.UserID
 		if !canManage && h.rbacSvc != nil {
-			if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, s.NodeID, identity.PermFilesShare); err == nil && ok {
+			if ok, err := h.rbacSvc.HasNodePermission(r.Context(), claims.UserID, s.NodeID, identity.PermFilesShare); err == nil && ok {
 				canManage = true
 			}
 		}
@@ -633,7 +633,7 @@ func (h *PublicShareHandler) DeleteShare(w http.ResponseWriter, r *http.Request)
 	for _, s := range h.state.Shares {
 		canManage := s.OwnerID == claims.UserID
 		if !canManage && h.rbacSvc != nil {
-			if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, s.NodeID, identity.PermFilesShare); err == nil && ok {
+			if ok, err := h.rbacSvc.HasNodePermission(r.Context(), claims.UserID, s.NodeID, identity.PermFilesShare); err == nil && ok {
 				canManage = true
 			}
 		}
@@ -1144,14 +1144,14 @@ func (h *PublicShareHandler) syncHostTailscaleFunnel() {
 
 // canManageFunnelRoute reports whether userID may modify a funnel route: global admins, or users with
 // network:manage on the route's target node.
-func (h *PublicShareHandler) canManageFunnelRoute(userID string, rt *TailscaleFunnelRoute) bool {
-	if checkAdminAccess(h.rbacSvc, userID) {
+func (h *PublicShareHandler) canManageFunnelRoute(ctx context.Context, userID string, rt *TailscaleFunnelRoute) bool {
+	if checkAdminAccess(ctx, h.rbacSvc, userID) {
 		return true
 	}
 	if h.rbacSvc == nil || rt == nil || rt.TargetNodeID == "" {
 		return false
 	}
-	ok, err := h.rbacSvc.HasNodePermission(userID, rt.TargetNodeID, identity.PermNetworkManage)
+	ok, err := h.rbacSvc.HasNodePermission(ctx, userID, rt.TargetNodeID, identity.PermNetworkManage)
 	return err == nil && ok
 }
 
@@ -1169,7 +1169,7 @@ func (h *PublicShareHandler) GetFunnelStatus(w http.ResponseWriter, r *http.Requ
 	h.mu.RUnlock()
 
 	// Only expose routes targeting nodes the caller can see (admins see everything).
-	isAdmin := checkAdminAccess(h.rbacSvc, claims.UserID)
+	isAdmin := checkAdminAccess(r.Context(), h.rbacSvc, claims.UserID)
 	routes := make([]*TailscaleFunnelRoute, 0, len(allRoutes))
 	for _, rt := range allRoutes {
 		if isAdmin {
@@ -1177,7 +1177,7 @@ func (h *PublicShareHandler) GetFunnelStatus(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 		if h.rbacSvc != nil {
-			if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, rt.TargetNodeID, identity.PermNetworkRead); err == nil && ok {
+			if ok, err := h.rbacSvc.HasNodePermission(r.Context(), claims.UserID, rt.TargetNodeID, identity.PermNetworkRead); err == nil && ok {
 				routes = append(routes, rt)
 			}
 		}
@@ -1209,7 +1209,7 @@ func (h *PublicShareHandler) UpdateFunnelConfig(w http.ResponseWriter, r *http.R
 		return
 	}
 	// The funnel DNS name is a platform-wide setting of the master host.
-	if !checkAdminAccess(h.rbacSvc, claims.UserID) {
+	if !checkAdminAccess(r.Context(), h.rbacSvc, claims.UserID) {
 		http.Error(w, `{"error":"forbidden: admin only"}`, http.StatusForbidden)
 		return
 	}
@@ -1302,7 +1302,7 @@ func (h *PublicShareHandler) UpsertFunnelRoute(w http.ResponseWriter, r *http.Re
 		http.Error(w, `{"error":"target node not found"}`, http.StatusNotFound)
 		return
 	}
-	if !checkNodeAccess(h.rbacSvc, targetNode, claims.UserID, identity.PermNetworkManage) {
+	if !checkNodeAccess(r.Context(), h.rbacSvc, targetNode, claims.UserID, identity.PermNetworkManage) {
 		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 		return
 	}
@@ -1349,7 +1349,7 @@ func (h *PublicShareHandler) UpsertFunnelRoute(w http.ResponseWriter, r *http.Re
 	replaced := false
 	for i, existing := range h.state.FunnelRoutes {
 		if existing.FunnelPort == req.FunnelPort && existing.PathPrefix == cleanPrefix {
-			if !h.canManageFunnelRoute(claims.UserID, existing) {
+			if !h.canManageFunnelRoute(r.Context(), claims.UserID, existing) {
 				h.mu.Unlock()
 				http.Error(w, `{"error":"forbidden: this public path is already routed to a node you cannot manage"}`, http.StatusForbidden)
 				return
@@ -1391,7 +1391,7 @@ func (h *PublicShareHandler) DeleteFunnelRoute(w http.ResponseWriter, r *http.Re
 	found := false
 	for _, rt := range h.state.FunnelRoutes {
 		if rt.ID == routeID {
-			if !h.canManageFunnelRoute(claims.UserID, rt) {
+			if !h.canManageFunnelRoute(r.Context(), claims.UserID, rt) {
 				h.mu.Unlock()
 				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 				return

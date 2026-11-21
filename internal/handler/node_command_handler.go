@@ -141,7 +141,7 @@ func (h *NodeCommandHandler) ListByNodeID(w http.ResponseWriter, r *http.Request
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermJobsRead); err != nil || !ok {
+	if ok, err := h.rbacSvc.HasNodePermission(r.Context(), claims.UserID, nodeID, identity.PermJobsRead); err != nil || !ok {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}

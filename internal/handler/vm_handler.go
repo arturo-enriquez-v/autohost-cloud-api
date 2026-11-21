@@ -76,7 +76,7 @@ func (h *VMHandler) createVM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ownerID := claims.UserID
-	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermVMsManage); err != nil || !ok {
+	if ok, err := h.rbacSvc.HasNodePermission(r.Context(), claims.UserID, nodeID, identity.PermVMsManage); err != nil || !ok {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -108,7 +108,7 @@ func (h *VMHandler) listVMs(w http.ResponseWriter, r *http.Request) {
 
 	nodeID := chi.URLParam(r, "nodeId")
 	ownerID := claims.UserID
-	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermVMsRead); err != nil || !ok {
+	if ok, err := h.rbacSvc.HasNodePermission(r.Context(), claims.UserID, nodeID, identity.PermVMsRead); err != nil || !ok {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -142,7 +142,7 @@ func (h *VMHandler) getVM(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "vm not found", http.StatusNotFound)
 			return
 		}
-		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, v.HostNodeID, identity.PermVMsRead); err != nil || !ok {
+		if ok, err := h.rbacSvc.HasNodePermission(r.Context(), claims.UserID, v.HostNodeID, identity.PermVMsRead); err != nil || !ok {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -188,7 +188,7 @@ func (h *VMHandler) actionVM(w http.ResponseWriter, r *http.Request) {
 		if strings.EqualFold(strings.TrimSpace(body.Action), "destroy") {
 			reqPerm = identity.PermVMsManage
 		}
-		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, v.HostNodeID, reqPerm); err != nil || !ok {
+		if ok, err := h.rbacSvc.HasNodePermission(r.Context(), claims.UserID, v.HostNodeID, reqPerm); err != nil || !ok {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -219,7 +219,7 @@ func (h *VMHandler) deleteVM(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "vm not found", http.StatusNotFound)
 			return
 		}
-		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, v.HostNodeID, identity.PermVMsManage); err != nil || !ok {
+		if ok, err := h.rbacSvc.HasNodePermission(r.Context(), claims.UserID, v.HostNodeID, identity.PermVMsManage); err != nil || !ok {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}

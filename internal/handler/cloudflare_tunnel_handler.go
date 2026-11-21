@@ -103,8 +103,8 @@ var cfSubdomainRe = regexp.MustCompile(`^(?:@|[a-z0-9](?:[a-z0-9.-]{0,200}[a-z0-
 var cfLabelSanitizer = regexp.MustCompile(`[^a-z0-9-]+`)
 
 // requireCFAdmin enforces that platform-wide tunnel settings are only changed by global admins.
-func (h *CloudflareTunnelHandler) requireCFAdmin(w http.ResponseWriter, userID string) bool {
-	if !checkAdminAccess(h.rbacSvc, userID) {
+func (h *CloudflareTunnelHandler) requireCFAdmin(ctx context.Context, w http.ResponseWriter, userID string) bool {
+	if !checkAdminAccess(ctx, h.rbacSvc, userID) {
 		http.Error(w, "forbidden: admin only", http.StatusForbidden)
 		return false
 	}
@@ -112,14 +112,14 @@ func (h *CloudflareTunnelHandler) requireCFAdmin(w http.ResponseWriter, userID s
 }
 
 // canManageCFRoute reports whether userID may modify a tunnel route (admin, or network:manage on its node).
-func (h *CloudflareTunnelHandler) canManageCFRoute(userID string, rt *CloudflareTunnelRoute) bool {
-	if checkAdminAccess(h.rbacSvc, userID) {
+func (h *CloudflareTunnelHandler) canManageCFRoute(ctx context.Context, userID string, rt *CloudflareTunnelRoute) bool {
+	if checkAdminAccess(ctx, h.rbacSvc, userID) {
 		return true
 	}
 	if h.rbacSvc == nil || rt == nil || rt.TargetNodeID == "" {
 		return false
 	}
-	ok, err := h.rbacSvc.HasNodePermission(userID, rt.TargetNodeID, identity.PermNetworkManage)
+	ok, err := h.rbacSvc.HasNodePermission(ctx, userID, rt.TargetNodeID, identity.PermNetworkManage)
 	return err == nil && ok
 }
 
@@ -549,13 +549,13 @@ func (h *CloudflareTunnelHandler) GetStatus(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Non-admins only see routes on nodes they can read, and never the login URL or raw tunnel logs.
-	if !checkAdminAccess(h.rbacSvc, claims.UserID) {
+	if !checkAdminAccess(r.Context(), h.rbacSvc, claims.UserID) {
 		visible := make([]*CloudflareTunnelRoute, 0, len(resp.Routes))
 		for _, rt := range resp.Routes {
 			if h.rbacSvc == nil {
 				break
 			}
-			if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, rt.TargetNodeID, identity.PermNetworkRead); err == nil && ok {
+			if ok, err := h.rbacSvc.HasNodePermission(r.Context(), claims.UserID, rt.TargetNodeID, identity.PermNetworkRead); err == nil && ok {
 				visible = append(visible, rt)
 			}
 		}
@@ -581,7 +581,7 @@ func (h *CloudflareTunnelHandler) StartLogin(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if !h.requireCFAdmin(w, claims.UserID) {
+	if !h.requireCFAdmin(r.Context(), w, claims.UserID) {
 		return
 	}
 
@@ -883,7 +883,7 @@ func (h *CloudflareTunnelHandler) StartQuickTunnel(w http.ResponseWriter, r *htt
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if !h.requireCFAdmin(w, claims.UserID) {
+	if !h.requireCFAdmin(r.Context(), w, claims.UserID) {
 		return
 	}
 
@@ -982,7 +982,7 @@ func (h *CloudflareTunnelHandler) UpdateConfig(w http.ResponseWriter, r *http.Re
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if !h.requireCFAdmin(w, claims.UserID) {
+	if !h.requireCFAdmin(r.Context(), w, claims.UserID) {
 		return
 	}
 
@@ -1030,7 +1030,7 @@ func (h *CloudflareTunnelHandler) Disconnect(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if !h.requireCFAdmin(w, claims.UserID) {
+	if !h.requireCFAdmin(r.Context(), w, claims.UserID) {
 		return
 	}
 
@@ -1094,7 +1094,7 @@ func (h *CloudflareTunnelHandler) UpsertRoute(w http.ResponseWriter, r *http.Req
 		http.Error(w, "target node not found", http.StatusNotFound)
 		return
 	}
-	if !checkNodeAccess(h.rbacSvc, targetNode, claims.UserID, identity.PermNetworkManage) {
+	if !checkNodeAccess(r.Context(), h.rbacSvc, targetNode, claims.UserID, identity.PermNetworkManage) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -1159,7 +1159,7 @@ func (h *CloudflareTunnelHandler) UpsertRoute(w http.ResponseWriter, r *http.Req
 	h.mu.RLock()
 	currentBase := h.state.BaseDomain
 	h.mu.RUnlock()
-	if base != "" && currentBase != "" && base != currentBase && !checkAdminAccess(h.rbacSvc, claims.UserID) {
+	if base != "" && currentBase != "" && base != currentBase && !checkAdminAccess(r.Context(), h.rbacSvc, claims.UserID) {
 		http.Error(w, "forbidden: only admins can change the tunnel base domain", http.StatusForbidden)
 		return
 	}
@@ -1191,7 +1191,7 @@ func (h *CloudflareTunnelHandler) UpsertRoute(w http.ResponseWriter, r *http.Req
 	replaced := false
 	for i, existing := range h.state.Routes {
 		if strings.EqualFold(existing.Domain, fullDomain) {
-			if !h.canManageCFRoute(claims.UserID, existing) {
+			if !h.canManageCFRoute(r.Context(), claims.UserID, existing) {
 				h.mu.Unlock()
 				http.Error(w, "forbidden: domain is already routed to a node you cannot manage", http.StatusForbidden)
 				return
@@ -1280,7 +1280,7 @@ func (h *CloudflareTunnelHandler) DeleteRoute(w http.ResponseWriter, r *http.Req
 	found := false
 	for _, rt := range h.state.Routes {
 		if strings.EqualFold(rt.Domain, domain) {
-			if !h.canManageCFRoute(claims.UserID, rt) {
+			if !h.canManageCFRoute(r.Context(), claims.UserID, rt) {
 				h.mu.Unlock()
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return

@@ -4,6 +4,7 @@
 package identity
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
@@ -123,7 +124,7 @@ type ProjectMemberDetail struct {
 type RBACRepository interface {
 	// User CRUD
 	ListUsers() ([]*User, error)
-	GetUserByID(id string) (*User, error)
+	GetUserByID(ctx context.Context, id string) (*User, error)
 	GetUserByEmail(email string) (*User, error)
 	CreateUserWithRole(email, name, passwordHash, role string, isActive bool, createdBy *string) (*User, error)
 	UpdateUser(id string, email, name, passwordHash, role *string, isActive *bool) (*User, error)
@@ -133,22 +134,22 @@ type RBACRepository interface {
 
 	// Project Memberships
 	ListUserProjects(userID string) ([]*ProjectMembership, error)
-	GetProjectMembership(projectID, userID string) (*ProjectMembership, error)
+	GetProjectMembership(ctx context.Context, projectID, userID string) (*ProjectMembership, error)
 	UpsertProjectMembership(m *ProjectMembership) (*ProjectMembership, error)
 	DeleteProjectMembership(projectID, userID string) error
 	ReplaceUserProjects(userID string, memberships []*ProjectMembership) error
 	ListProjectMembers(projectID string) ([]*ProjectMemberDetail, error)
 
 	// Node Permissions
-	ListUserNodePermissions(userID string) ([]*NodePermissionGrant, error)
-	GetUserNodePermission(userID, nodeID string) (*NodePermissionGrant, error)
+	ListUserNodePermissions(ctx context.Context, userID string) ([]*NodePermissionGrant, error)
+	GetUserNodePermission(ctx context.Context, userID, nodeID string) (*NodePermissionGrant, error)
 	UpsertUserNodePermission(g *NodePermissionGrant) (*NodePermissionGrant, error)
 	DeleteUserNodePermission(userID, nodeID string) error
 	DeleteUserNodePermissionsByProject(userID, projectID string) error
 	ReplaceUserNodePermissions(userID string, grants []*NodePermissionGrant) error
 
 	// Lookup helpers for node/project resolution
-	GetNodeProjectAndOwner(nodeID string) (projectID *string, ownerID *string, exists bool, err error)
+	GetNodeProjectAndOwner(ctx context.Context, nodeID string) (projectID *string, ownerID *string, exists bool, err error)
 }
 
 // RBACService manages users, roles, project memberships, and granular per-node permission checks.
@@ -166,11 +167,11 @@ func (s *RBACService) GetCatalog() *PermissionsCatalog {
 }
 
 // IsAdmin returns true if the user exists, is active, and has the global "admin" role.
-func (s *RBACService) IsAdmin(userID string) (bool, error) {
+func (s *RBACService) IsAdmin(ctx context.Context, userID string) (bool, error) {
 	if userID == "" || s == nil || s.repo == nil {
 		return false, nil
 	}
-	u, err := s.repo.GetUserByID(userID)
+	u, err := s.repo.GetUserByID(ctx, userID)
 	if err != nil || u == nil {
 		return false, err
 	}
@@ -182,7 +183,7 @@ func (s *RBACService) IsAdmin(userID string) (bool, error) {
 
 // GetUserWithPermissions returns a user's profile enriched with their project assignments and node permissions.
 func (s *RBACService) GetUserWithPermissions(userID string) (*UserWithPermissions, error) {
-	u, err := s.repo.GetUserByID(userID)
+	u, err := s.repo.GetUserByID(context.Background(), userID)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +202,7 @@ func (s *RBACService) enrichUser(u *User) (*UserWithPermissions, error) {
 		projects = []*ProjectMembership{}
 	}
 
-	nodePerms, err := s.repo.ListUserNodePermissions(u.ID)
+	nodePerms, err := s.repo.ListUserNodePermissions(context.Background(), u.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +309,7 @@ func (s *RBACService) CreateUser(actorID string, in CreateUserInput) (*UserWithP
 
 // UpdateUser updates a user's attributes, password, global role, active status, and optionally replaces their permissions.
 func (s *RBACService) UpdateUser(actorID, targetUserID string, in UpdateUserInput) (*UserWithPermissions, error) {
-	target, err := s.repo.GetUserByID(targetUserID)
+	target, err := s.repo.GetUserByID(context.Background(), targetUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -398,7 +399,7 @@ func (s *RBACService) DeleteUser(actorID, targetUserID string) error {
 	if actorID != "" && actorID == targetUserID {
 		return ErrCannotDeleteSelf
 	}
-	target, err := s.repo.GetUserByID(targetUserID)
+	target, err := s.repo.GetUserByID(context.Background(), targetUserID)
 	if err != nil {
 		return err
 	}
@@ -422,7 +423,7 @@ func (s *RBACService) DeleteUser(actorID, targetUserID string) error {
 
 // SetUserPermissions replaces a user's project memberships and node permission grants.
 func (s *RBACService) SetUserPermissions(actorID, targetUserID string, projects []ProjectMembershipInput, nodePerms []NodePermissionGrantInput) (*UserWithPermissions, error) {
-	target, err := s.repo.GetUserByID(targetUserID)
+	target, err := s.repo.GetUserByID(context.Background(), targetUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -441,7 +442,7 @@ func (s *RBACService) UpsertNodePermission(actorID, targetUserID string, in Node
 	if in.NodeID == "" {
 		return nil, errors.New("node_id is required")
 	}
-	target, err := s.repo.GetUserByID(targetUserID)
+	target, err := s.repo.GetUserByID(context.Background(), targetUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -449,7 +450,7 @@ func (s *RBACService) UpsertNodePermission(actorID, targetUserID string, in Node
 		return nil, ErrUserNotFound
 	}
 
-	nodeProjID, _, exists, err := s.repo.GetNodeProjectAndOwner(in.NodeID)
+	nodeProjID, _, exists, err := s.repo.GetNodeProjectAndOwner(context.Background(), in.NodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -464,7 +465,7 @@ func (s *RBACService) UpsertNodePermission(actorID, targetUserID string, in Node
 
 	// If the node belongs to a project, ensure the user is also registered as a member of that project
 	if projectID != nil && *projectID != "" {
-		existingMem, _ := s.repo.GetProjectMembership(*projectID, targetUserID)
+		existingMem, _ := s.repo.GetProjectMembership(context.Background(), *projectID, targetUserID)
 		if existingMem == nil {
 			var addedBy *string
 			if actorID != "" {
@@ -504,7 +505,7 @@ func (s *RBACService) RemoveNodePermission(targetUserID, nodeID string) error {
 
 // AssignProjectMember adds or updates a user in a project and optionally sets node permissions in that project.
 func (s *RBACService) AssignProjectMember(actorID, projectID, targetUserID string, defaultRole string, allNodes bool, defaultPerms []string, nodePerms []NodePermissionGrantInput) error {
-	target, err := s.repo.GetUserByID(targetUserID)
+	target, err := s.repo.GetUserByID(context.Background(), targetUserID)
 	if err != nil {
 		return err
 	}
@@ -604,7 +605,7 @@ func (s *RBACService) replaceNodePermissions(actorID, userID string, inputs []No
 		}
 		seenNodes[nid] = true
 
-		nodeProjID, _, exists, err := s.repo.GetNodeProjectAndOwner(nid)
+		nodeProjID, _, exists, err := s.repo.GetNodeProjectAndOwner(context.Background(), nid)
 		if err != nil || !exists {
 			continue
 		}
@@ -640,12 +641,12 @@ func (s *RBACService) replaceNodePermissions(actorID, userID string, inputs []No
 }
 
 // GetEffectiveNodePermissions computes a user's effective role_preset and granular permissions on a node.
-func (s *RBACService) GetEffectiveNodePermissions(userID, nodeID string) (rolePreset string, permissions []string, allowed bool, err error) {
+func (s *RBACService) GetEffectiveNodePermissions(ctx context.Context, userID, nodeID string) (rolePreset string, permissions []string, allowed bool, err error) {
 	if userID == "" || nodeID == "" || s == nil || s.repo == nil {
 		return "", nil, false, nil
 	}
 
-	u, err := s.repo.GetUserByID(userID)
+	u, err := s.repo.GetUserByID(ctx, userID)
 	if err != nil {
 		return "", nil, false, err
 	}
@@ -659,7 +660,7 @@ func (s *RBACService) GetEffectiveNodePermissions(userID, nodeID string) (rolePr
 	}
 
 	// 2. Check node existence and direct ownership
-	nodeProjID, ownerID, exists, err := s.repo.GetNodeProjectAndOwner(nodeID)
+	nodeProjID, ownerID, exists, err := s.repo.GetNodeProjectAndOwner(ctx, nodeID)
 	if err != nil || !exists {
 		return "", nil, false, err
 	}
@@ -668,7 +669,7 @@ func (s *RBACService) GetEffectiveNodePermissions(userID, nodeID string) (rolePr
 	}
 
 	// 3. Explicit per-node permission grant
-	grant, err := s.repo.GetUserNodePermission(userID, nodeID)
+	grant, err := s.repo.GetUserNodePermission(ctx, userID, nodeID)
 	if err != nil {
 		return "", nil, false, err
 	}
@@ -679,7 +680,7 @@ func (s *RBACService) GetEffectiveNodePermissions(userID, nodeID string) (rolePr
 
 	// 4. Inherited project-wide access if the node belongs to a project where user has all_nodes = true
 	if nodeProjID != nil && *nodeProjID != "" {
-		pm, err := s.repo.GetProjectMembership(*nodeProjID, userID)
+		pm, err := s.repo.GetProjectMembership(ctx, *nodeProjID, userID)
 		if err != nil {
 			return "", nil, false, err
 		}
@@ -693,8 +694,8 @@ func (s *RBACService) GetEffectiveNodePermissions(userID, nodeID string) (rolePr
 }
 
 // HasNodePermission returns true if the user has the specified granular permission on the node.
-func (s *RBACService) HasNodePermission(userID, nodeID, requiredPerm string) (bool, error) {
-	_, perms, allowed, err := s.GetEffectiveNodePermissions(userID, nodeID)
+func (s *RBACService) HasNodePermission(ctx context.Context, userID, nodeID, requiredPerm string) (bool, error) {
+	_, perms, allowed, err := s.GetEffectiveNodePermissions(ctx, userID, nodeID)
 	if err != nil || !allowed {
 		return false, err
 	}
@@ -702,18 +703,18 @@ func (s *RBACService) HasNodePermission(userID, nodeID, requiredPerm string) (bo
 }
 
 // CanAccessProject checks whether a user is a global admin, or a member of the given project.
-func (s *RBACService) CanAccessProject(userID, projectID string) (isAdmin bool, isMember bool, err error) {
+func (s *RBACService) CanAccessProject(ctx context.Context, userID, projectID string) (isAdmin bool, isMember bool, err error) {
 	if userID == "" || projectID == "" || s == nil || s.repo == nil {
 		return false, false, nil
 	}
-	u, err := s.repo.GetUserByID(userID)
+	u, err := s.repo.GetUserByID(ctx, userID)
 	if err != nil || u == nil || !u.IsActive {
 		return false, false, err
 	}
 	if u.Role == RoleAdmin {
 		return true, true, nil
 	}
-	pm, err := s.repo.GetProjectMembership(projectID, userID)
+	pm, err := s.repo.GetProjectMembership(ctx, projectID, userID)
 	if err != nil {
 		return false, false, err
 	}
@@ -721,7 +722,7 @@ func (s *RBACService) CanAccessProject(userID, projectID string) (isAdmin bool, 
 		return false, true, nil
 	}
 	// Also check if user has any explicit node permission inside this project
-	grants, err := s.repo.ListUserNodePermissions(userID)
+	grants, err := s.repo.ListUserNodePermissions(ctx, userID)
 	if err == nil {
 		for _, g := range grants {
 			if g.ProjectID != nil && *g.ProjectID == projectID {

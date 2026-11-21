@@ -4,6 +4,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -56,7 +57,7 @@ func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.rbacSvc != nil {
-		if checkAdminAccess(h.rbacSvc, claims.UserID) {
+		if checkAdminAccess(r.Context(), h.rbacSvc, claims.UserID) {
 			projects, err := h.projectService.GetAll()
 			if err == nil && len(projects) > 0 {
 				w.Header().Set("Content-Type", "application/json")
@@ -117,7 +118,7 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if h.rbacSvc != nil && !checkAdminAccess(h.rbacSvc, claims.UserID) {
+	if h.rbacSvc != nil && !checkAdminAccess(r.Context(), h.rbacSvc, claims.UserID) {
 		http.Error(w, "forbidden: only administrators can create projects", http.StatusForbidden)
 		return
 	}
@@ -159,7 +160,7 @@ func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	allowed := p.UserID == claims.UserID
 	if !allowed && h.rbacSvc != nil {
-		isAdmin, isMember, _ := h.rbacSvc.CanAccessProject(claims.UserID, id)
+		isAdmin, isMember, _ := h.rbacSvc.CanAccessProject(r.Context(), claims.UserID, id)
 		allowed = isAdmin || isMember
 	}
 	if !allowed {
@@ -187,7 +188,7 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	var p *apps.Project
 	var err error
-	if h.rbacSvc != nil && checkAdminAccess(h.rbacSvc, claims.UserID) {
+	if h.rbacSvc != nil && checkAdminAccess(r.Context(), h.rbacSvc, claims.UserID) {
 		p, err = h.projectService.UpdateAsAdmin(id, req.Name)
 	} else {
 		p, err = h.projectService.Update(id, claims.UserID, req.Name)
@@ -216,7 +217,7 @@ func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	id := chi.URLParam(r, "id")
 	var err error
-	if h.rbacSvc != nil && checkAdminAccess(h.rbacSvc, claims.UserID) {
+	if h.rbacSvc != nil && checkAdminAccess(r.Context(), h.rbacSvc, claims.UserID) {
 		err = h.projectService.DeleteAsAdmin(id)
 	} else {
 		err = h.projectService.Delete(id, claims.UserID)
@@ -236,11 +237,11 @@ func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *ProjectHandler) canManageProject(userID string, p *apps.Project) bool {
+func (h *ProjectHandler) canManageProject(ctx context.Context, userID string, p *apps.Project) bool {
 	if p != nil && p.UserID == userID {
 		return true
 	}
-	return checkAdminAccess(h.rbacSvc, userID)
+	return checkAdminAccess(ctx, h.rbacSvc, userID)
 }
 
 func (h *ProjectHandler) AssignNode(w http.ResponseWriter, r *http.Request) {
@@ -261,7 +262,7 @@ func (h *ProjectHandler) AssignNode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not get project", http.StatusInternalServerError)
 		return
 	}
-	if !h.canManageProject(claims.UserID, p) {
+	if !h.canManageProject(r.Context(), claims.UserID, p) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -292,7 +293,7 @@ func (h *ProjectHandler) RemoveNode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not get project", http.StatusInternalServerError)
 		return
 	}
-	if !h.canManageProject(claims.UserID, p) {
+	if !h.canManageProject(r.Context(), claims.UserID, p) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -329,7 +330,7 @@ func (h *ProjectHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not get project", http.StatusInternalServerError)
 		return
 	}
-	if !h.canManageProject(claims.UserID, p) {
+	if !h.canManageProject(r.Context(), claims.UserID, p) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -378,7 +379,7 @@ func (h *ProjectHandler) AssignMember(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not get project", http.StatusInternalServerError)
 		return
 	}
-	if !h.canManageProject(claims.UserID, p) {
+	if !h.canManageProject(r.Context(), claims.UserID, p) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -426,7 +427,7 @@ func (h *ProjectHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not get project", http.StatusInternalServerError)
 		return
 	}
-	if !h.canManageProject(claims.UserID, p) {
+	if !h.canManageProject(r.Context(), claims.UserID, p) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}

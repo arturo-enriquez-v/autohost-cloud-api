@@ -4,6 +4,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
@@ -12,12 +13,12 @@ import (
 
 // checkNodeAccess verifies if userID has the required granular permission on node n.
 // When rbac is nil (e.g., in legacy unit tests), it falls back to strict OwnerID equality.
-func checkNodeAccess(rbac *identity.RBACService, n *node.Node, userID string, requiredPerm string) bool {
+func checkNodeAccess(ctx context.Context, rbac *identity.RBACService, n *node.Node, userID string, requiredPerm string) bool {
 	if userID == "" || n == nil {
 		return false
 	}
 	if rbac != nil {
-		ok, err := rbac.HasNodePermission(userID, n.ID, requiredPerm)
+		ok, err := rbac.HasNodePermission(ctx, userID, n.ID, requiredPerm)
 		if err == nil {
 			return ok
 		}
@@ -26,7 +27,7 @@ func checkNodeAccess(rbac *identity.RBACService, n *node.Node, userID string, re
 }
 
 // checkNodeIDAccess resolves the node (when nodeSvc is available) and checks granular permission via rbac.
-func checkNodeIDAccess(rbac *identity.RBACService, nodeSvc *node.NodeService, nodeID, userID, requiredPerm string) (*node.Node, int) {
+func checkNodeIDAccess(ctx context.Context, rbac *identity.RBACService, nodeSvc *node.NodeService, nodeID, userID, requiredPerm string) (*node.Node, int) {
 	if userID == "" {
 		return nil, http.StatusUnauthorized
 	}
@@ -35,13 +36,13 @@ func checkNodeIDAccess(rbac *identity.RBACService, nodeSvc *node.NodeService, no
 		if err != nil || n == nil {
 			return nil, http.StatusNotFound
 		}
-		if !checkNodeAccess(rbac, n, userID, requiredPerm) {
+		if !checkNodeAccess(ctx, rbac, n, userID, requiredPerm) {
 			return nil, http.StatusForbidden
 		}
 		return n, http.StatusOK
 	}
 	if rbac != nil {
-		ok, err := rbac.HasNodePermission(userID, nodeID, requiredPerm)
+		ok, err := rbac.HasNodePermission(ctx, userID, nodeID, requiredPerm)
 		if err != nil || !ok {
 			return nil, http.StatusForbidden
 		}
@@ -50,11 +51,11 @@ func checkNodeIDAccess(rbac *identity.RBACService, nodeSvc *node.NodeService, no
 }
 
 // checkAdminAccess verifies if userID is a global platform administrator.
-func checkAdminAccess(rbac *identity.RBACService, userID string) bool {
+func checkAdminAccess(ctx context.Context, rbac *identity.RBACService, userID string) bool {
 	if userID == "" || rbac == nil {
 		return false
 	}
-	ok, err := rbac.IsAdmin(userID)
+	ok, err := rbac.IsAdmin(ctx, userID)
 	return err == nil && ok
 }
 

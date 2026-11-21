@@ -5,6 +5,7 @@ package handler_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -42,7 +43,7 @@ func (m *mockRBACRepoHandler) ListUsers() ([]*identity.User, error) {
 	}
 	return out, nil
 }
-func (m *mockRBACRepoHandler) GetUserByID(id string) (*identity.User, error) {
+func (m *mockRBACRepoHandler) GetUserByID(_ context.Context, id string) (*identity.User, error) {
 	u, ok := m.users[id]
 	if !ok {
 		return nil, nil
@@ -116,7 +117,7 @@ func (m *mockRBACRepoHandler) ListUserProjects(userID string) ([]*identity.Proje
 	}
 	return out, nil
 }
-func (m *mockRBACRepoHandler) GetProjectMembership(projectID, userID string) (*identity.ProjectMembership, error) {
+func (m *mockRBACRepoHandler) GetProjectMembership(_ context.Context, projectID, userID string) (*identity.ProjectMembership, error) {
 	pm, ok := m.projects[userID+":"+projectID]
 	if !ok {
 		return nil, nil
@@ -148,7 +149,7 @@ func (m *mockRBACRepoHandler) ReplaceUserProjects(userID string, memberships []*
 func (m *mockRBACRepoHandler) ListProjectMembers(projectID string) ([]*identity.ProjectMemberDetail, error) {
 	return nil, nil
 }
-func (m *mockRBACRepoHandler) ListUserNodePermissions(userID string) ([]*identity.NodePermissionGrant, error) {
+func (m *mockRBACRepoHandler) ListUserNodePermissions(_ context.Context, userID string) ([]*identity.NodePermissionGrant, error) {
 	var out []*identity.NodePermissionGrant
 	for _, np := range m.nodePerms {
 		if np.UserID == userID {
@@ -158,7 +159,7 @@ func (m *mockRBACRepoHandler) ListUserNodePermissions(userID string) ([]*identit
 	}
 	return out, nil
 }
-func (m *mockRBACRepoHandler) GetUserNodePermission(userID, nodeID string) (*identity.NodePermissionGrant, error) {
+func (m *mockRBACRepoHandler) GetUserNodePermission(_ context.Context, userID, nodeID string) (*identity.NodePermissionGrant, error) {
 	np, ok := m.nodePerms[userID+":"+nodeID]
 	if !ok {
 		return nil, nil
@@ -196,7 +197,7 @@ func (m *mockRBACRepoHandler) ReplaceUserNodePermissions(userID string, grants [
 	}
 	return nil
 }
-func (m *mockRBACRepoHandler) GetNodeProjectAndOwner(nodeID string) (*string, *string, bool, error) {
+func (m *mockRBACRepoHandler) GetNodeProjectAndOwner(_ context.Context, nodeID string) (*string, *string, bool, error) {
 	owner, ok := m.nodeOwners[nodeID]
 	return m.nodeProjects[nodeID], owner, ok, nil
 }

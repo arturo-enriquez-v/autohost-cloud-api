@@ -43,7 +43,7 @@ func requireNodePerm(rbac func() *identity.RBACService, perm string) func(http.H
 				http.Error(w, "missing node id", http.StatusBadRequest)
 				return
 			}
-			ok, err := rbac().HasNodePermission(claims.UserID, nodeID, perm)
+			ok, err := rbac().HasNodePermission(r.Context(), claims.UserID, nodeID, perm)
 			if err != nil {
 				log.Printf("[AUTHZ] permission check %s on node %s for user %s failed: %v", perm, nodeID, claims.UserID, err)
 			}

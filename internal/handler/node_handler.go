@@ -50,7 +50,7 @@ func (h *NodeHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.rbacSvc != nil {
-		isAdmin := checkAdminAccess(h.rbacSvc, userID)
+		isAdmin := checkAdminAccess(r.Context(), h.rbacSvc, userID)
 		allNodes, err := h.service.GetAll()
 		if err == nil && len(allNodes) > 0 {
 			out := make([]*node.Node, 0, len(allNodes))
@@ -61,7 +61,7 @@ func (h *NodeHandler) List(w http.ResponseWriter, r *http.Request) {
 					out = append(out, n)
 					continue
 				}
-				preset, perms, allowed, err := h.rbacSvc.GetEffectiveNodePermissions(userID, n.ID)
+				preset, perms, allowed, err := h.rbacSvc.GetEffectiveNodePermissions(r.Context(), userID, n.ID)
 				if err == nil && allowed && identity.HasPermission(perms, identity.PermNodeRead) {
 					n.RolePreset = preset
 					n.Permissions = perms
@@ -78,7 +78,7 @@ func (h *NodeHandler) List(w http.ResponseWriter, r *http.Request) {
 				out := make([]*node.Node, 0, len(uPerms.NodePermissions))
 				for _, np := range uPerms.NodePermissions {
 					if n, err := h.service.GetByID(np.NodeID); err == nil && n != nil {
-						preset, perms, allowed, _ := h.rbacSvc.GetEffectiveNodePermissions(userID, n.ID)
+						preset, perms, allowed, _ := h.rbacSvc.GetEffectiveNodePermissions(r.Context(), userID, n.ID)
 						if allowed && identity.HasPermission(perms, identity.PermNodeRead) {
 							n.RolePreset = preset
 							n.Permissions = perms
@@ -113,7 +113,7 @@ func (h *NodeHandler) ListWithMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.rbacSvc != nil {
-		isAdmin := checkAdminAccess(h.rbacSvc, userID)
+		isAdmin := checkAdminAccess(r.Context(), h.rbacSvc, userID)
 		allNodes, err := h.service.GetAllWithMetrics()
 		if err == nil && len(allNodes) > 0 {
 			out := make([]*node.NodeWithMetrics, 0, len(allNodes))
@@ -124,7 +124,7 @@ func (h *NodeHandler) ListWithMetrics(w http.ResponseWriter, r *http.Request) {
 					out = append(out, n)
 					continue
 				}
-				preset, perms, allowed, err := h.rbacSvc.GetEffectiveNodePermissions(userID, n.ID)
+				preset, perms, allowed, err := h.rbacSvc.GetEffectiveNodePermissions(r.Context(), userID, n.ID)
 				if err == nil && allowed && identity.HasPermission(perms, identity.PermNodeRead) {
 					n.RolePreset = preset
 					n.Permissions = perms
@@ -174,7 +174,7 @@ func (h *NodeHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !checkNodeAccess(h.rbacSvc, n, userID, identity.PermNodeRead) {
+	if !checkNodeAccess(r.Context(), h.rbacSvc, n, userID, identity.PermNodeRead) {
 		response.RespondError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -182,7 +182,7 @@ func (h *NodeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	rolePreset := identity.NodePresetAdmin
 	perms := []string{identity.PermWildcard}
 	if h.rbacSvc != nil {
-		if rp, p, ok, _ := h.rbacSvc.GetEffectiveNodePermissions(userID, n.ID); ok {
+		if rp, p, ok, _ := h.rbacSvc.GetEffectiveNodePermissions(r.Context(), userID, n.ID); ok {
 			rolePreset = rp
 			perms = p
 		}
@@ -230,7 +230,7 @@ func (h *NodeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		response.RespondError(w, http.StatusNotFound, "node not found")
 		return
 	}
-	if !checkNodeAccess(h.rbacSvc, existing, userID, identity.PermNodeUpdate) {
+	if !checkNodeAccess(r.Context(), h.rbacSvc, existing, userID, identity.PermNodeUpdate) {
 		response.RespondError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -268,7 +268,7 @@ func (h *NodeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !checkNodeAccess(h.rbacSvc, n, userID, identity.PermNodeDelete) {
+	if !checkNodeAccess(r.Context(), h.rbacSvc, n, userID, identity.PermNodeDelete) {
 		response.RespondError(w, http.StatusForbidden, "forbidden")
 		return
 	}

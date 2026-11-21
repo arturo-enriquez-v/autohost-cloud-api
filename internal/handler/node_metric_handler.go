@@ -193,7 +193,7 @@ func (h *NodeMetricHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "node not found", http.StatusNotFound)
 		return
 	}
-	if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermMetricsRead) {
+	if !checkNodeAccess(r.Context(), h.rbacSvc, n, claims.UserID, identity.PermMetricsRead) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -250,7 +250,7 @@ func (h *NodeMetricHandler) StreamLiveMetrics(w http.ResponseWriter, r *http.Req
 		http.Error(w, "node not found", http.StatusNotFound)
 		return
 	}
-	if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermMetricsRead) {
+	if !checkNodeAccess(r.Context(), h.rbacSvc, n, claims.UserID, identity.PermMetricsRead) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}

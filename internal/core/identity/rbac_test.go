@@ -4,6 +4,7 @@
 package identity
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
@@ -35,7 +36,7 @@ func (m *mockRBACRepo) ListUsers() ([]*User, error) {
 	return list, nil
 }
 
-func (m *mockRBACRepo) GetUserByID(id string) (*User, error) {
+func (m *mockRBACRepo) GetUserByID(_ context.Context, id string) (*User, error) {
 	u, ok := m.users[id]
 	if !ok {
 		return nil, nil
@@ -129,7 +130,7 @@ func (m *mockRBACRepo) ListUserProjects(userID string) ([]*ProjectMembership, er
 	return out, nil
 }
 
-func (m *mockRBACRepo) GetProjectMembership(projectID, userID string) (*ProjectMembership, error) {
+func (m *mockRBACRepo) GetProjectMembership(_ context.Context, projectID, userID string) (*ProjectMembership, error) {
 	pm, ok := m.projects[userID+":"+projectID]
 	if !ok {
 		return nil, nil
@@ -175,7 +176,7 @@ func (m *mockRBACRepo) ListProjectMembers(projectID string) ([]*ProjectMemberDet
 	return out, nil
 }
 
-func (m *mockRBACRepo) ListUserNodePermissions(userID string) ([]*NodePermissionGrant, error) {
+func (m *mockRBACRepo) ListUserNodePermissions(_ context.Context, userID string) ([]*NodePermissionGrant, error) {
 	var out []*NodePermissionGrant
 	for _, np := range m.nodePerms {
 		if np.UserID == userID {
@@ -186,7 +187,7 @@ func (m *mockRBACRepo) ListUserNodePermissions(userID string) ([]*NodePermission
 	return out, nil
 }
 
-func (m *mockRBACRepo) GetUserNodePermission(userID, nodeID string) (*NodePermissionGrant, error) {
+func (m *mockRBACRepo) GetUserNodePermission(_ context.Context, userID, nodeID string) (*NodePermissionGrant, error) {
 	np, ok := m.nodePerms[userID+":"+nodeID]
 	if !ok {
 		return nil, nil
@@ -229,7 +230,7 @@ func (m *mockRBACRepo) ReplaceUserNodePermissions(userID string, grants []*NodeP
 	return nil
 }
 
-func (m *mockRBACRepo) GetNodeProjectAndOwner(nodeID string) (projectID *string, ownerID *string, exists bool, err error) {
+func (m *mockRBACRepo) GetNodeProjectAndOwner(_ context.Context, nodeID string) (projectID *string, ownerID *string, exists bool, err error) {
 	owner, ok := m.nodeOwners[nodeID]
 	return m.nodeProjects[nodeID], owner, ok, nil
 }
@@ -292,33 +293,33 @@ func TestRBACUserManagementAndGranularPermissions(t *testing.T) {
 	devID := created.ID
 
 	// 3. Verify preset 'operator' permissions on node1
-	if ok, _ := svc.HasNodePermission(devID, node1, PermContainersAction); !ok {
+	if ok, _ := svc.HasNodePermission(context.Background(), devID, node1, PermContainersAction); !ok {
 		t.Fatalf("expected operator to have %s on node1", PermContainersAction)
 	}
-	if ok, _ := svc.HasNodePermission(devID, node1, PermJobsRun); !ok {
+	if ok, _ := svc.HasNodePermission(context.Background(), devID, node1, PermJobsRun); !ok {
 		t.Fatalf("expected operator to have %s on node1", PermJobsRun)
 	}
-	if ok, _ := svc.HasNodePermission(devID, node1, PermTerminalExec); ok {
+	if ok, _ := svc.HasNodePermission(context.Background(), devID, node1, PermTerminalExec); ok {
 		t.Fatalf("expected operator NOT to have %s on node1 without explicit grant", PermTerminalExec)
 	}
-	if ok, _ := svc.HasNodePermission(devID, node1, PermNodeDelete); ok {
+	if ok, _ := svc.HasNodePermission(context.Background(), devID, node1, PermNodeDelete); ok {
 		t.Fatalf("expected operator NOT to have %s on node1", PermNodeDelete)
 	}
-	if ok, _ := svc.HasNodePermission(devID, node1, PermContainersDeploy); ok {
+	if ok, _ := svc.HasNodePermission(context.Background(), devID, node1, PermContainersDeploy); ok {
 		t.Fatalf("expected operator NOT to have %s on node1", PermContainersDeploy)
 	}
 
 	// 4. Verify custom permissions + automatic read implication on node2
-	if ok, _ := svc.HasNodePermission(devID, node2, PermFilesWrite); !ok {
+	if ok, _ := svc.HasNodePermission(context.Background(), devID, node2, PermFilesWrite); !ok {
 		t.Fatalf("expected dev to have %s on node2", PermFilesWrite)
 	}
-	if ok, _ := svc.HasNodePermission(devID, node2, PermFilesRead); !ok {
+	if ok, _ := svc.HasNodePermission(context.Background(), devID, node2, PermFilesRead); !ok {
 		t.Fatalf("expected %s to imply %s on node2", PermFilesWrite, PermFilesRead)
 	}
-	if ok, _ := svc.HasNodePermission(devID, node2, PermNodeRead); !ok {
+	if ok, _ := svc.HasNodePermission(context.Background(), devID, node2, PermNodeRead); !ok {
 		t.Fatalf("expected any node permission to imply %s on node2", PermNodeRead)
 	}
-	if ok, _ := svc.HasNodePermission(devID, node2, PermFilesDelete); ok {
+	if ok, _ := svc.HasNodePermission(context.Background(), devID, node2, PermFilesDelete); ok {
 		t.Fatalf("expected dev NOT to have %s on node2", PermFilesDelete)
 	}
 
@@ -326,7 +327,7 @@ func TestRBACUserManagementAndGranularPermissions(t *testing.T) {
 	if err := svc.RemoveProjectMember(projA, devID); err != nil {
 		t.Fatalf("unexpected error removing project member: %v", err)
 	}
-	if ok, _ := svc.HasNodePermission(devID, node1, PermNodeRead); ok {
+	if ok, _ := svc.HasNodePermission(context.Background(), devID, node1, PermNodeRead); ok {
 		t.Fatalf("expected member removed from project to lose node access")
 	}
 }

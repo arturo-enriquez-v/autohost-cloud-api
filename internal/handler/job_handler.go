@@ -84,7 +84,7 @@ func (h *JobHandler) Dispatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, req.NodeID, requiredPerm); err != nil || !ok {
+	if ok, err := h.rbacSvc.HasNodePermission(r.Context(), claims.UserID, req.NodeID, requiredPerm); err != nil || !ok {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -155,7 +155,7 @@ func (h *JobHandler) GetJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "job not found", http.StatusNotFound)
 		return
 	}
-	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, j.NodeID, identity.PermJobsRead); err != nil || !ok {
+	if ok, err := h.rbacSvc.HasNodePermission(r.Context(), claims.UserID, j.NodeID, identity.PermJobsRead); err != nil || !ok {
 		http.Error(w, "job not found", http.StatusNotFound)
 		return
 	}
@@ -172,7 +172,7 @@ func (h *JobHandler) ListByNode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, nodeID, identity.PermJobsRead); err != nil || !ok {
+	if ok, err := h.rbacSvc.HasNodePermission(r.Context(), claims.UserID, nodeID, identity.PermJobsRead); err != nil || !ok {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}

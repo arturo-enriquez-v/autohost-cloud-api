@@ -111,7 +111,7 @@ func (h *NodeTerminalHandler) HandleTerminalWS(w http.ResponseWriter, r *http.Re
 		http.Error(w, "node not found", http.StatusNotFound)
 		return
 	}
-	if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermTerminalExec) {
+	if !checkNodeAccess(r.Context(), h.rbacSvc, n, claims.UserID, identity.PermTerminalExec) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}

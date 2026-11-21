@@ -3,7 +3,11 @@
 
 package handler
 
-import "github.com/arturo/autohost-cloud-api/internal/core/identity"
+import (
+	"context"
+
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
+)
 
 // ownerOnlyRBACRepo is a minimal identity.RBACRepository for in-package handler tests: every listed
 // user is an active member and owns the listed nodes. Methods not overridden panic if called.
@@ -12,11 +16,11 @@ type ownerOnlyRBACRepo struct {
 	owners map[string]string // nodeID -> ownerUserID
 }
 
-func (m *ownerOnlyRBACRepo) GetUserByID(id string) (*identity.User, error) {
+func (m *ownerOnlyRBACRepo) GetUserByID(_ context.Context, id string) (*identity.User, error) {
 	return &identity.User{ID: id, Role: identity.RoleMember, IsActive: true}, nil
 }
 
-func (m *ownerOnlyRBACRepo) GetNodeProjectAndOwner(nodeID string) (*string, *string, bool, error) {
+func (m *ownerOnlyRBACRepo) GetNodeProjectAndOwner(_ context.Context, nodeID string) (*string, *string, bool, error) {
 	owner, ok := m.owners[nodeID]
 	if !ok {
 		return nil, nil, false, nil
@@ -24,11 +28,11 @@ func (m *ownerOnlyRBACRepo) GetNodeProjectAndOwner(nodeID string) (*string, *str
 	return nil, &owner, true, nil
 }
 
-func (m *ownerOnlyRBACRepo) GetUserNodePermission(_, _ string) (*identity.NodePermissionGrant, error) {
+func (m *ownerOnlyRBACRepo) GetUserNodePermission(_ context.Context, _, _ string) (*identity.NodePermissionGrant, error) {
 	return nil, nil
 }
 
-func (m *ownerOnlyRBACRepo) GetProjectMembership(_, _ string) (*identity.ProjectMembership, error) {
+func (m *ownerOnlyRBACRepo) GetProjectMembership(_ context.Context, _, _ string) (*identity.ProjectMembership, error) {
 	return nil, nil
 }
 

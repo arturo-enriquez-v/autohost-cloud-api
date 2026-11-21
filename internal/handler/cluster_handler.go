@@ -4,6 +4,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -39,7 +40,7 @@ func (h *ClusterHandler) authorizeCluster(w http.ResponseWriter, r *http.Request
 		http.Error(w, "cluster not found", http.StatusNotFound)
 		return nil, false
 	}
-	if c.UserID != claims.UserID && !checkAdminAccess(h.rbacSvc, claims.UserID) {
+	if c.UserID != claims.UserID && !checkAdminAccess(r.Context(), h.rbacSvc, claims.UserID) {
 		// Same response as a missing cluster so IDs cannot be probed.
 		http.Error(w, "cluster not found", http.StatusNotFound)
 		return nil, false
@@ -63,11 +64,11 @@ func (h *ClusterHandler) authorizeClusterService(w http.ResponseWriter, r *http.
 
 // canEnrollNode checks the caller may hand a node over to Swarm orchestration. Joining a cluster lets the
 // cluster owner schedule arbitrary workloads on the node, so node-level update rights are required.
-func (h *ClusterHandler) canEnrollNode(userID, nodeID string) bool {
+func (h *ClusterHandler) canEnrollNode(ctx context.Context, userID, nodeID string) bool {
 	if h.rbacSvc == nil {
 		return false
 	}
-	ok, err := h.rbacSvc.HasNodePermission(userID, nodeID, identity.PermNodeUpdate)
+	ok, err := h.rbacSvc.HasNodePermission(ctx, userID, nodeID, identity.PermNodeUpdate)
 	return err == nil && ok
 }
 
@@ -134,7 +135,7 @@ func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, nid := range append([]string{req.ManagerNodeID}, req.WorkerNodeIDs...) {
-		if !h.canEnrollNode(claims.UserID, nid) {
+		if !h.canEnrollNode(r.Context(), claims.UserID, nid) {
 			http.Error(w, "forbidden: insufficient permissions on node "+nid, http.StatusForbidden)
 			return
 		}
@@ -205,7 +206,7 @@ func (h *ClusterHandler) AddNode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid role", http.StatusBadRequest)
 		return
 	}
-	if claims := middleware.GetClaims(r.Context()); claims == nil || !h.canEnrollNode(claims.UserID, req.NodeID) {
+	if claims := middleware.GetClaims(r.Context()); claims == nil || !h.canEnrollNode(r.Context(), claims.UserID, req.NodeID) {
 		http.Error(w, "forbidden: insufficient permissions on node", http.StatusForbidden)
 		return
 	}

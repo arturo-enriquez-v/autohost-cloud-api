@@ -50,7 +50,7 @@ func (h *UserHandler) requireAdmin(w http.ResponseWriter, r *http.Request) (stri
 	if !ok {
 		return "", false
 	}
-	if !checkAdminAccess(h.rbacSvc, userID) {
+	if !checkAdminAccess(r.Context(), h.rbacSvc, userID) {
 		response.RespondError(w, http.StatusForbidden, "admin privileges required")
 		return "", false
 	}
@@ -143,7 +143,7 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if callerID != targetID && !checkAdminAccess(h.rbacSvc, callerID) {
+	if callerID != targetID && !checkAdminAccess(r.Context(), h.rbacSvc, callerID) {
 		response.RespondError(w, http.StatusForbidden, "admin privileges required")
 		return
 	}

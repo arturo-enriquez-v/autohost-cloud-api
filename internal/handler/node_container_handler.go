@@ -98,7 +98,7 @@ func (h *NodeContainerHandler) streamContainers(w http.ResponseWriter, r *http.R
 		http.Error(w, "node not found", http.StatusNotFound)
 		return
 	}
-	if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermContainersRead) {
+	if !checkNodeAccess(r.Context(), h.rbacSvc, n, claims.UserID, identity.PermContainersRead) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -252,7 +252,7 @@ func (h *NodeContainerHandler) getContainerMetrics(w http.ResponseWriter, r *htt
 		http.Error(w, "node not found", http.StatusNotFound)
 		return
 	}
-	if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermContainersRead) {
+	if !checkNodeAccess(r.Context(), h.rbacSvc, n, claims.UserID, identity.PermContainersRead) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -331,7 +331,7 @@ func (h *NodeContainerHandler) getContainerSettings(w http.ResponseWriter, r *ht
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
-		if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermContainersRead) {
+		if !checkNodeAccess(r.Context(), h.rbacSvc, n, claims.UserID, identity.PermContainersRead) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -367,7 +367,7 @@ func (h *NodeContainerHandler) updateContainerSettings(w http.ResponseWriter, r 
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
-		if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermContainersSettings) {
+		if !checkNodeAccess(r.Context(), h.rbacSvc, n, claims.UserID, identity.PermContainersSettings) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}

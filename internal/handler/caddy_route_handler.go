@@ -71,7 +71,7 @@ func (h *CaddyRouteHandler) List(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
-		if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermNetworkRead) {
+		if !checkNodeAccess(r.Context(), h.rbacSvc, n, claims.UserID, identity.PermNetworkRead) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -113,7 +113,7 @@ func (h *CaddyRouteHandler) Upsert(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
-		if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermNetworkManage) {
+		if !checkNodeAccess(r.Context(), h.rbacSvc, n, claims.UserID, identity.PermNetworkManage) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -192,7 +192,7 @@ func (h *CaddyRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "node not found", http.StatusNotFound)
 			return
 		}
-		if !checkNodeAccess(h.rbacSvc, n, claims.UserID, identity.PermNetworkManage) {
+		if !checkNodeAccess(r.Context(), h.rbacSvc, n, claims.UserID, identity.PermNetworkManage) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
