@@ -47,7 +47,7 @@ func (h *JobHandler) Routes() chi.Router {
 	r.Use(middleware.Auth)
 	r.Post("/", h.Dispatch)
 	r.Get("/{id}", h.GetJob)
-	r.Get("/node/{nodeID}", h.ListByNode)
+	r.With(h.nodePerm(identity.PermJobsRead)).Get("/node/{nodeID}", h.ListByNode)
 	return r
 }
 
@@ -184,4 +184,9 @@ func (h *JobHandler) ListByNode(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(jobs)
+}
+
+// nodePerm returns the route-level node authorization middleware (see requireNodePerm).
+func (h *JobHandler) nodePerm(perm string) func(http.Handler) http.Handler {
+	return requireNodePerm(func() *identity.RBACService { return h.rbacSvc }, perm)
 }

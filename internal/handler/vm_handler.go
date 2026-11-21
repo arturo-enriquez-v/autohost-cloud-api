@@ -33,10 +33,19 @@ func (h *VMHandler) NodeVMRoutes() http.Handler {
 	r := chi.NewRouter()
 	r.Group(func(protected chi.Router) {
 		protected.Use(middleware.Auth)
-		protected.Post("/{nodeId}", h.createVM)
-		protected.Get("/{nodeId}", h.listVMs)
-		protected.Post("/", h.createVM)
-		protected.Get("/", h.listVMs)
+		protected.With(h.nodePerm(identity.PermVMsManage)).Post("/{nodeId}", h.createVM)
+		protected.With(h.nodePerm(identity.PermVMsRead)).Get("/{nodeId}", h.listVMs)
+	})
+	return r
+}
+
+// NodeScopedVMRoutes is mounted under /nodes/{nodeId}/vms, where the node ID comes from the parent route.
+func (h *VMHandler) NodeScopedVMRoutes() http.Handler {
+	r := chi.NewRouter()
+	r.Group(func(protected chi.Router) {
+		protected.Use(middleware.Auth)
+		protected.With(h.nodePerm(identity.PermVMsManage)).Post("/", h.createVM)
+		protected.With(h.nodePerm(identity.PermVMsRead)).Get("/", h.listVMs)
 	})
 	return r
 }
@@ -223,4 +232,9 @@ func (h *VMHandler) deleteVM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// nodePerm returns the route-level node authorization middleware (see requireNodePerm).
+func (h *VMHandler) nodePerm(perm string) func(http.Handler) http.Handler {
+	return requireNodePerm(func() *identity.RBACService { return h.rbacSvc }, perm)
 }

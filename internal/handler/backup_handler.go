@@ -175,15 +175,15 @@ func (h *BackupHandler) Routes(nodeAuthMiddleware func(http.Handler) http.Handle
 		userRouter.Use(middleware.Auth)
 
 		// Configs
-		userRouter.Get("/config/{nodeId}/{containerName}", h.GetConfig)
-		userRouter.Put("/config/{nodeId}/{containerName}", h.UpsertConfig)
+		userRouter.With(h.nodePerm(identity.PermBackupsRead)).Get("/config/{nodeId}/{containerName}", h.GetConfig)
+		userRouter.With(h.nodePerm(identity.PermBackupsManage)).Put("/config/{nodeId}/{containerName}", h.UpsertConfig)
 
 		// Records
-		userRouter.Get("/records/{nodeId}/{containerName}", h.ListRecords)
+		userRouter.With(h.nodePerm(identity.PermBackupsRead)).Get("/records/{nodeId}/{containerName}", h.ListRecords)
 		userRouter.Delete("/records/{recordId}", h.DeleteRecord)
 
 		// Run / Restore / Download Actions
-		userRouter.Post("/run/{nodeId}/{containerName}", h.RunManualBackup)
+		userRouter.With(h.nodePerm(identity.PermBackupsCreate)).Post("/run/{nodeId}/{containerName}", h.RunManualBackup)
 		userRouter.Post("/restore/{recordId}", h.RestoreBackup)
 		userRouter.Get("/download/{recordId}", h.DownloadBackup)
 		userRouter.Get("/storage-usage", h.GetStorageUsage)
@@ -1171,4 +1171,9 @@ func resolveAPIURL(r *http.Request) string {
 
 func strPtr(s string) *string {
 	return &s
+}
+
+// nodePerm returns the route-level node authorization middleware (see requireNodePerm).
+func (h *BackupHandler) nodePerm(perm string) func(http.Handler) http.Handler {
+	return requireNodePerm(func() *identity.RBACService { return h.rbacSvc }, perm)
 }

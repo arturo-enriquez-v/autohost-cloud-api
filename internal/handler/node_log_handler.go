@@ -43,7 +43,7 @@ func (h *NodeLogHandler) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Group(func(protected chi.Router) {
 		protected.Use(middleware.Auth)
-		protected.Get("/{nodeId}/stream", h.streamLogs)
+		protected.With(h.nodePerm(identity.PermLogsRead)).Get("/{nodeId}/stream", h.streamLogs)
 	})
 	return r
 }
@@ -231,4 +231,9 @@ func writeSSELogEntry(w http.ResponseWriter, e *pb.LogEntryPayload) error {
 	}
 	_, err = fmt.Fprintf(w, "data: %s\n\n", data)
 	return err
+}
+
+// nodePerm returns the route-level node authorization middleware (see requireNodePerm).
+func (h *NodeLogHandler) nodePerm(perm string) func(http.Handler) http.Handler {
+	return requireNodePerm(func() *identity.RBACService { return h.rbacSvc }, perm)
 }

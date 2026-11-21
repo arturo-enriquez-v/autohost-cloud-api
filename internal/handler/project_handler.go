@@ -39,8 +39,8 @@ func (h *ProjectHandler) Routes() chi.Router {
 	r.Put("/{id}", h.Update)
 	r.Delete("/{id}", h.Delete)
 	// Node assignment
-	r.Put("/{id}/nodes/{nodeId}", h.AssignNode)
-	r.Delete("/{id}/nodes/{nodeId}", h.RemoveNode)
+	r.With(h.nodePerm(identity.PermNodeUpdate)).Put("/{id}/nodes/{nodeId}", h.AssignNode)
+	r.With(h.nodePerm(identity.PermNodeUpdate)).Delete("/{id}/nodes/{nodeId}", h.RemoveNode)
 	// Project members & permissions
 	r.Get("/{id}/members", h.ListMembers)
 	r.Post("/{id}/members", h.AssignMember)
@@ -438,4 +438,11 @@ func (h *ProjectHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// nodePerm returns the route-level node authorization middleware (see requireNodePerm).
+// Assigning a node to (or removing it from) a project changes who inherits access to it, so the caller
+// must control the node itself, not only the project.
+func (h *ProjectHandler) nodePerm(perm string) func(http.Handler) http.Handler {
+	return requireNodePerm(func() *identity.RBACService { return h.rbacSvc }, perm)
 }

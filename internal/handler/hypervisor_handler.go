@@ -35,7 +35,7 @@ func (h *HypervisorHandler) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Group(func(protected chi.Router) {
 		protected.Use(middleware.Auth)
-		protected.Get("/{nodeId}", h.get)
+		protected.With(h.nodePerm(identity.PermVMsRead)).Get("/{nodeId}", h.get)
 	})
 	return r
 }
@@ -79,4 +79,9 @@ func (h *HypervisorHandler) get(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// nodePerm returns the route-level node authorization middleware (see requireNodePerm).
+func (h *HypervisorHandler) nodePerm(perm string) func(http.Handler) http.Handler {
+	return requireNodePerm(func() *identity.RBACService { return h.rbacSvc }, perm)
 }

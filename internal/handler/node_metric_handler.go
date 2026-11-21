@@ -69,8 +69,8 @@ func (h *NodeMetricHandler) Routes(nodeMetricMiddleware func(http.Handler) http.
 	})
 
 	// User-authenticated endpoints
-	r.With(middleware.Auth).Get("/{nodeId}/history", h.GetHistory)
-	r.With(middleware.Auth).Get("/{nodeId}/live", h.StreamLiveMetrics)
+	r.With(middleware.Auth, h.nodePerm(identity.PermMetricsRead)).Get("/{nodeId}/history", h.GetHistory)
+	r.With(middleware.Auth, h.nodePerm(identity.PermMetricsRead)).Get("/{nodeId}/live", h.StreamLiveMetrics)
 
 	return r
 }
@@ -361,4 +361,9 @@ func (h *NodeMetricHandler) StreamLiveMetrics(w http.ResponseWriter, r *http.Req
 			}
 		}
 	}
+}
+
+// nodePerm returns the route-level node authorization middleware (see requireNodePerm).
+func (h *NodeMetricHandler) nodePerm(perm string) func(http.Handler) http.Handler {
+	return requireNodePerm(func() *identity.RBACService { return h.rbacSvc }, perm)
 }

@@ -42,7 +42,7 @@ func (h *NodeCommandHandler) Routes(nodeAuthMiddleware func(http.Handler) http.H
 	})
 
 	// User-facing endpoints (dashboard calls these) – authenticated via JWT
-	r.With(middleware.Auth).Get("/node/{nodeID}", h.ListByNodeID)
+	r.With(middleware.Auth, h.nodePerm(identity.PermJobsRead)).Get("/node/{nodeID}", h.ListByNodeID)
 
 	return r
 }
@@ -153,4 +153,9 @@ func (h *NodeCommandHandler) ListByNodeID(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(cmds)
+}
+
+// nodePerm returns the route-level node authorization middleware (see requireNodePerm).
+func (h *NodeCommandHandler) nodePerm(perm string) func(http.Handler) http.Handler {
+	return requireNodePerm(func() *identity.RBACService { return h.rbacSvc }, perm)
 }

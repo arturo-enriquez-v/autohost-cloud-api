@@ -57,7 +57,7 @@ func (h *MarketplaceHandler) Routes() chi.Router {
 	r.Use(middleware.Auth)
 	r.Get("/apps", h.ListApps)
 	r.Post("/apps/deploy", h.DeployApp)
-	r.Get("/apps/node/{nodeID}", h.ListNodeApps)
+	r.With(h.nodePerm(identity.PermContainersRead)).Get("/apps/node/{nodeID}", h.ListNodeApps)
 	return r
 }
 
@@ -206,4 +206,9 @@ func (h *MarketplaceHandler) ListNodeApps(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(apps)
+}
+
+// nodePerm returns the route-level node authorization middleware (see requireNodePerm).
+func (h *MarketplaceHandler) nodePerm(perm string) func(http.Handler) http.Handler {
+	return requireNodePerm(func() *identity.RBACService { return h.rbacSvc }, perm)
 }

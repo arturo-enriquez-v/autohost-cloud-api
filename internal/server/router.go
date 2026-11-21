@@ -198,7 +198,7 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/hypervisors", p.HypervisorHandler.Routes())
 		r.Mount("/vms", p.VMHandler.VMRoutes())
 		r.Mount("/node-vms", p.VMHandler.NodeVMRoutes())
-		r.Mount("/nodes/{nodeId}/vms", p.VMHandler.NodeVMRoutes())
+		r.Mount("/nodes/{nodeId}/vms", p.VMHandler.NodeScopedVMRoutes())
 		// Agent → POST /v1/agent/network-stats
 		r.Mount("/agent/network-stats", p.NodeNetworkHandler.Routes(nodeAuthMiddleware))
 		// Frontend → GET /v1/node-network/{nodeId}

@@ -55,10 +55,10 @@ func (h *NodeContainerHandler) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Group(func(protected chi.Router) {
 		protected.Use(middleware.Auth)
-		protected.Get("/{nodeId}/stream", h.streamContainers)
-		protected.Get("/{nodeId}/metrics", h.getContainerMetrics)
-		protected.Get("/{nodeId}/settings", h.getContainerSettings)
-		protected.Put("/{nodeId}/settings", h.updateContainerSettings)
+		protected.With(h.nodePerm(identity.PermContainersRead)).Get("/{nodeId}/stream", h.streamContainers)
+		protected.With(h.nodePerm(identity.PermContainersRead)).Get("/{nodeId}/metrics", h.getContainerMetrics)
+		protected.With(h.nodePerm(identity.PermContainersRead)).Get("/{nodeId}/settings", h.getContainerSettings)
+		protected.With(h.nodePerm(identity.PermContainersSettings)).Put("/{nodeId}/settings", h.updateContainerSettings)
 	})
 	return r
 }
@@ -393,4 +393,9 @@ func (h *NodeContainerHandler) updateContainerSettings(w http.ResponseWriter, r 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(saved)
+}
+
+// nodePerm returns the route-level node authorization middleware (see requireNodePerm).
+func (h *NodeContainerHandler) nodePerm(perm string) func(http.Handler) http.Handler {
+	return requireNodePerm(func() *identity.RBACService { return h.rbacSvc }, perm)
 }

@@ -57,8 +57,8 @@ func (h *NodeTerminalHandler) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Group(func(protected chi.Router) {
 		protected.Use(middleware.Auth)
-		protected.Get("/{nodeId}", h.HandleTerminalWS)
-		protected.Get("/{nodeId}/ws", h.HandleTerminalWS)
+		protected.With(h.nodePerm(identity.PermTerminalExec)).Get("/{nodeId}", h.HandleTerminalWS)
+		protected.With(h.nodePerm(identity.PermTerminalExec)).Get("/{nodeId}/ws", h.HandleTerminalWS)
 	})
 	return r
 }
@@ -67,8 +67,8 @@ func (h *NodeTerminalHandler) NodeScopedRoutes() http.Handler {
 	r := chi.NewRouter()
 	r.Group(func(protected chi.Router) {
 		protected.Use(middleware.Auth)
-		protected.Get("/", h.HandleTerminalWS)
-		protected.Get("/ws", h.HandleTerminalWS)
+		protected.With(h.nodePerm(identity.PermTerminalExec)).Get("/", h.HandleTerminalWS)
+		protected.With(h.nodePerm(identity.PermTerminalExec)).Get("/ws", h.HandleTerminalWS)
 	})
 	return r
 }
@@ -401,4 +401,9 @@ func (h *NodeTerminalHandler) HandleTerminalWS(w http.ResponseWriter, r *http.Re
 		Type:    "error",
 		Message: "node is offline or not connected via gRPC",
 	})
+}
+
+// nodePerm returns the route-level node authorization middleware (see requireNodePerm).
+func (h *NodeTerminalHandler) nodePerm(perm string) func(http.Handler) http.Handler {
+	return requireNodePerm(func() *identity.RBACService { return h.rbacSvc }, perm)
 }

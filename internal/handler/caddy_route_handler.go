@@ -49,9 +49,9 @@ func NewCaddyRouteHandler(
 func (h *CaddyRouteHandler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Use(middleware.Auth)
-	r.Get("/{nodeId}", h.List)
-	r.Put("/{nodeId}", h.Upsert)
-	r.Delete("/{nodeId}/{domain}", h.Delete)
+	r.With(h.nodePerm(identity.PermNetworkRead)).Get("/{nodeId}", h.List)
+	r.With(h.nodePerm(identity.PermNetworkManage)).Put("/{nodeId}", h.Upsert)
+	r.With(h.nodePerm(identity.PermNetworkManage)).Delete("/{nodeId}/{domain}", h.Delete)
 	return r
 }
 
@@ -218,4 +218,9 @@ func (h *CaddyRouteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// nodePerm returns the route-level node authorization middleware (see requireNodePerm).
+func (h *CaddyRouteHandler) nodePerm(perm string) func(http.Handler) http.Handler {
+	return requireNodePerm(func() *identity.RBACService { return h.rbacSvc }, perm)
 }

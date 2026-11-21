@@ -88,14 +88,14 @@ func (h *NodeFileHandler) Routes() http.Handler {
 	// User-authenticated endpoints
 	r.Group(func(protected chi.Router) {
 		protected.Use(middleware.Auth)
-		protected.Get("/{nodeId}", h.ListFiles)
-		protected.Post("/{nodeId}/mkdir", h.MakeDirectory)
-		protected.Post("/{nodeId}/rename", h.RenameFile)
-		protected.Delete("/{nodeId}", h.DeleteFile)
-		protected.Post("/{nodeId}/upload", h.UploadFile)
-		protected.Get("/{nodeId}/download", h.DownloadFile)
-		protected.Get("/{nodeId}/stream", h.StreamFile)
-		protected.Post("/{nodeId}/transfer", h.TransferBetweenNodes)
+		protected.With(h.nodePerm(identity.PermFilesRead)).Get("/{nodeId}", h.ListFiles)
+		protected.With(h.nodePerm(identity.PermFilesWrite)).Post("/{nodeId}/mkdir", h.MakeDirectory)
+		protected.With(h.nodePerm(identity.PermFilesWrite)).Post("/{nodeId}/rename", h.RenameFile)
+		protected.With(h.nodePerm(identity.PermFilesDelete)).Delete("/{nodeId}", h.DeleteFile)
+		protected.With(h.nodePerm(identity.PermFilesWrite)).Post("/{nodeId}/upload", h.UploadFile)
+		protected.With(h.nodePerm(identity.PermFilesRead)).Get("/{nodeId}/download", h.DownloadFile)
+		protected.With(h.nodePerm(identity.PermFilesRead)).Get("/{nodeId}/stream", h.StreamFile)
+		protected.With(h.nodePerm(identity.PermFilesRead)).Post("/{nodeId}/transfer", h.TransferBetweenNodes)
 	})
 
 	return r
@@ -105,14 +105,14 @@ func (h *NodeFileHandler) NodeScopedRoutes() http.Handler {
 	r := chi.NewRouter()
 	r.Group(func(protected chi.Router) {
 		protected.Use(middleware.Auth)
-		protected.Get("/", h.ListFiles)
-		protected.Post("/mkdir", h.MakeDirectory)
-		protected.Post("/rename", h.RenameFile)
-		protected.Delete("/", h.DeleteFile)
-		protected.Post("/upload", h.UploadFile)
-		protected.Get("/download", h.DownloadFile)
-		protected.Get("/stream", h.StreamFile)
-		protected.Post("/transfer", h.TransferBetweenNodes)
+		protected.With(h.nodePerm(identity.PermFilesRead)).Get("/", h.ListFiles)
+		protected.With(h.nodePerm(identity.PermFilesWrite)).Post("/mkdir", h.MakeDirectory)
+		protected.With(h.nodePerm(identity.PermFilesWrite)).Post("/rename", h.RenameFile)
+		protected.With(h.nodePerm(identity.PermFilesDelete)).Delete("/", h.DeleteFile)
+		protected.With(h.nodePerm(identity.PermFilesWrite)).Post("/upload", h.UploadFile)
+		protected.With(h.nodePerm(identity.PermFilesRead)).Get("/download", h.DownloadFile)
+		protected.With(h.nodePerm(identity.PermFilesRead)).Get("/stream", h.StreamFile)
+		protected.With(h.nodePerm(identity.PermFilesRead)).Post("/transfer", h.TransferBetweenNodes)
 	})
 	return r
 }
@@ -1397,4 +1397,9 @@ func (h *NodeFileHandler) TransferSharedFile(ctx context.Context, baseURL string
 		return sizeBytes, fmt.Errorf("push to target node failed: %w", err)
 	}
 	return sizeBytes, nil
+}
+
+// nodePerm returns the route-level node authorization middleware (see requireNodePerm).
+func (h *NodeFileHandler) nodePerm(perm string) func(http.Handler) http.Handler {
+	return requireNodePerm(func() *identity.RBACService { return h.rbacSvc }, perm)
 }

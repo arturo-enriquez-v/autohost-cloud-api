@@ -30,8 +30,8 @@ func (h *NodeAlertHandler) SetRBACService(rbac *identity.RBACService) {
 
 func (h *NodeAlertHandler) Routes() chi.Router {
 	r := chi.NewRouter()
-	r.With(middleware.Auth).Get("/{nodeId}", h.GetByNode)
-	r.With(middleware.Auth).Put("/{nodeId}", h.UpsertByNode)
+	r.With(middleware.Auth, h.nodePerm(identity.PermAlertsRead)).Get("/{nodeId}", h.GetByNode)
+	r.With(middleware.Auth, h.nodePerm(identity.PermAlertsManage)).Put("/{nodeId}", h.UpsertByNode)
 	return r
 }
 
@@ -119,4 +119,9 @@ func (h *NodeAlertHandler) UpsertByNode(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(result)
+}
+
+// nodePerm returns the route-level node authorization middleware (see requireNodePerm).
+func (h *NodeAlertHandler) nodePerm(perm string) func(http.Handler) http.Handler {
+	return requireNodePerm(func() *identity.RBACService { return h.rbacSvc }, perm)
 }
