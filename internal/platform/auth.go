@@ -66,6 +66,17 @@ func ParseAccessToken(tok string) (*JWTClaims, error) {
 	return nil, jwt.ErrSignatureInvalid
 }
 
+// RefreshTokenTTL returns how long refresh tokens stay valid (REFRESH_TOKEN_TTL, default 30 days to match
+// the frontend refresh cookie).
+func RefreshTokenTTL() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("REFRESH_TOKEN_TTL")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 30 * 24 * time.Hour
+}
+
 // MakeRefreshPair genera un token de refresco y su hash
 func MakeRefreshPair() (plain string, hash string) {
 	plain = uuid.NewString()

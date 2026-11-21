@@ -137,10 +137,12 @@ func NewRouter(p RouterParams) *chi.Mux {
 		}
 	}
 
-	r.Use(middleware.Logger)
+	// TrustedRealIP runs first so logs and rate limits see the real client IP; it only honors
+	// X-Forwarded-For / X-Real-IP from TRUSTED_PROXIES (default: loopback and private ranges).
+	r.Use(handlerMiddleware.TrustedRealIP)
+	r.Use(handlerMiddleware.RequestLogger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
 	r.Use(corsMiddleware)
 	r.Use(securityHeaders)
 	r.Use(limitRequestBody)

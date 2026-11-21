@@ -173,7 +173,7 @@ func (h *PublicShareHandler) OwnerShareRoutes() chi.Router {
 func (h *PublicShareHandler) PublicPortalRoutes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/{shareId}/info", h.GetPublicShareInfo)
-	r.Post("/{shareId}/unlock", h.UnlockPublicShare)
+	r.With(middleware.RateLimitByIP(shareUnlockIPLim)).Post("/{shareId}/unlock", h.UnlockPublicShare)
 	r.Get("/{shareId}/files", h.PublicListFiles)
 	r.Get("/{shareId}/download", h.PublicDownloadFile)
 	r.Get("/{shareId}/stream", h.PublicStreamFile)
@@ -593,6 +593,11 @@ func (h *PublicShareHandler) GetPublicShareInfo(w http.ResponseWriter, r *http.R
 // POST /v1/public-shares/{shareId}/unlock
 func (h *PublicShareHandler) UnlockPublicShare(w http.ResponseWriter, r *http.Request) {
 	shareID := chi.URLParam(r, "shareId")
+	// Per-share budget: share passwords are short, so cap guesses against one share regardless of IP.
+	if ok, retry := shareUnlockShareLim.Allow("share:" + shareID); !ok {
+		middleware.WriteRateLimited(w, retry)
+		return
+	}
 
 	var req struct {
 		Password string `json:"password"`

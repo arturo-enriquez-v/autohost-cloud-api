@@ -8,8 +8,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
+	"github.com/arturo/autohost-cloud-api/internal/platform"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -67,10 +69,28 @@ func (r *AuthRepository) StoreRefreshToken(userID, tokenHash, userAgent, ip stri
 	if ip != "" {
 		ipVal = ip
 	}
+	expiresAt := time.Now().UTC().Add(platform.RefreshTokenTTL())
 	_, err := r.db.Exec(`
-		INSERT INTO refresh_tokens (user_id, token_hash, user_agent, ip)
-		VALUES ($1, $2, $3, $4)`, userID, tokenHash, userAgent, ipVal)
+		INSERT INTO refresh_tokens (user_id, token_hash, user_agent, ip, expires_at)
+		VALUES ($1, $2, $3, $4, $5)`, userID, tokenHash, userAgent, ipVal, expiresAt)
 	return err
+}
+
+// ConsumeRefreshToken atomically revokes an active, unexpired refresh token and returns its user ID.
+// Because the check and the revocation happen in a single UPDATE, a token can only be used once even
+// under concurrent refresh requests.
+func (r *AuthRepository) ConsumeRefreshToken(tokenHash string) (string, error) {
+	var userID string
+	err := r.db.QueryRowContext(context.Background(), `
+		UPDATE refresh_tokens
+		SET revoked_at = now()
+		WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()
+		RETURNING user_id
+	`, tokenHash).Scan(&userID)
+	if err != nil {
+		return "", err
+	}
+	return userID, nil
 }
 
 // RevokeRefreshToken revoca un token de refresco
@@ -187,7 +207,7 @@ func (r *AuthRepository) FindRefreshToken(tokenHash string) (string, error) {
 	var userID string
 	err := r.db.QueryRowContext(context.Background(), `
 		SELECT user_id FROM refresh_tokens
-		WHERE token_hash = $1 AND revoked_at IS NULL
+		WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()
 	`, tokenHash).Scan(&userID)
 
 	if err == sql.ErrNoRows {

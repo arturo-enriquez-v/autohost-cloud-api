@@ -73,6 +73,10 @@ func (m *mockAuthRepo) FindRefreshToken(tokenHash string) (string, error) {
 	return "", nil
 }
 
+func (m *mockAuthRepo) ConsumeRefreshToken(tokenHash string) (string, error) {
+	return "", errors.New("not found")
+}
+
 func (m *mockAuthRepo) CountUsers() (int, error) {
 	return len(m.users), nil
 }

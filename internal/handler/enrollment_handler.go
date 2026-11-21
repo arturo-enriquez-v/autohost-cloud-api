@@ -47,7 +47,7 @@ func (h *EnrollmentHandler) Routes() chi.Router {
 		protected.Post("/generate", h.CreateEnrollToken)
 	})
 
-	r.Post("/enroll", h.EnrollNode)
+	r.With(middleware.RateLimitByIP(enrollIPLimiter)).Post("/enroll", h.EnrollNode)
 
 	return r
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/arturo/autohost-cloud-api/internal/platform"
@@ -58,6 +59,7 @@ type AuthRepository interface {
 	StoreRefreshToken(userID, tokenHash, userAgent, ip string) error
 	RevokeRefreshToken(userID, tokenHash string) error
 	FindRefreshToken(tokenHash string) (userID string, err error)
+	ConsumeRefreshToken(tokenHash string) (userID string, err error)
 	CountUsers() (int, error)
 	FindFirstUser() (*User, error)
 }
@@ -66,10 +68,27 @@ type AuthRepository interface {
 type AuthService struct {
 	repo               AuthRepository
 	onFirstUserCreated func(userID string)
+
+	// refreshMu serializes refresh rotations so concurrent requests presenting the same token
+	// (parallel navigations, several tabs) resolve deterministically through refreshGrace.
+	refreshMu sync.Mutex
+	// refreshGrace maps a just-consumed refresh token hash to the pair issued for it. A request that
+	// re-presents the same token within refreshGracePeriod gets that pair instead of failing and logging
+	// the user out. Per-process only.
+	refreshGrace map[string]refreshGraceEntry
+	now          func() time.Time
+}
+
+// refreshGracePeriod is how long a consumed refresh token may be re-presented to receive the same rotated pair.
+const refreshGracePeriod = 30 * time.Second
+
+type refreshGraceEntry struct {
+	pair      TokenPair
+	expiresAt time.Time
 }
 
 func NewAuthService(repo AuthRepository) *AuthService {
-	return &AuthService{repo: repo}
+	return &AuthService{repo: repo, refreshGrace: make(map[string]refreshGraceEntry), now: time.Now}
 }
 
 // SetOnFirstUserCreated registers a callback invoked when the initial admin account is created.
@@ -213,7 +232,21 @@ func (s *AuthService) LoginAndIssue(email, password, ua, ip string) (TokenPair, 
 func (s *AuthService) RefreshTokens(oldPlain, ua, ip string) (TokenPair, error) {
 	oldHash := platform.HashRefreshToken(oldPlain)
 
-	userID, err := s.repo.FindRefreshToken(oldHash)
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+
+	now := s.now()
+	for h, e := range s.refreshGrace {
+		if now.After(e.expiresAt) {
+			delete(s.refreshGrace, h)
+		}
+	}
+	if e, ok := s.refreshGrace[oldHash]; ok {
+		return e.pair, nil
+	}
+
+	// Atomically consume the old token: an expired, revoked or already-used token is rejected.
+	userID, err := s.repo.ConsumeRefreshToken(oldHash)
 	if err != nil {
 		return TokenPair{}, ErrInvalidRefreshToken
 	}
@@ -226,9 +259,12 @@ func (s *AuthService) RefreshTokens(oldPlain, ua, ip string) (TokenPair, error) 
 		return TokenPair{}, ErrInvalidRefreshToken
 	}
 
-	_ = s.repo.RevokeRefreshToken(userID, oldHash)
-
-	return s.issueTokenPair(user, ua, ip)
+	pair, err := s.issueTokenPair(user, ua, ip)
+	if err != nil {
+		return TokenPair{}, err
+	}
+	s.refreshGrace[oldHash] = refreshGraceEntry{pair: pair, expiresAt: now.Add(refreshGracePeriod)}
+	return pair, nil
 }
 
 // RevokeToken revoca un refresh token si existe.

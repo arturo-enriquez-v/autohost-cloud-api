@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
@@ -36,11 +37,11 @@ func (h *AuthHandler) SetRBACService(rbac *identity.RBACService) {
 func (h *AuthHandler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/setup-status", h.GetSetupStatus)
-	r.Post("/register", h.Register)
-	r.Post("/login", h.Login)
-	r.Post("/refresh", h.Refresh)
+	r.With(middleware.RateLimitByIP(authIPLimiter)).Post("/register", h.Register)
+	r.With(middleware.RateLimitByIP(authIPLimiter)).Post("/login", h.Login)
+	r.With(middleware.RateLimitByIP(refreshIPLimiter)).Post("/refresh", h.Refresh)
 	r.Post("/logout", h.Logout)
-	r.Post("/oauth/google", h.OAuthGoogle)
+	r.With(middleware.RateLimitByIP(authIPLimiter)).Post("/oauth/google", h.OAuthGoogle)
 	r.Group(func(pr chi.Router) {
 		pr.Use(middleware.Auth)
 		pr.Get("/me", h.Me)
@@ -102,6 +103,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var in creds
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	// Per-account budget: stops password guessing on one account even when the attacker rotates IPs.
+	if ok, retry := loginAccountLimiter.Allow("email:" + strings.ToLower(strings.TrimSpace(in.Email))); !ok {
+		middleware.WriteRateLimited(w, retry)
 		return
 	}
 
@@ -292,10 +298,9 @@ func (h *AuthHandler) OAuthGoogle(w http.ResponseWriter, r *http.Request) {
 }
 
 // clientIP returns the remote IP address of the request.
-// chi's middleware.RealIP (registered globally in the router) has already
-// rewritten r.RemoteAddr to the value of X-Real-IP / X-Forwarded-For coming
-// from the trusted reverse-proxy, so we only read r.RemoteAddr here to avoid
-// letting arbitrary clients spoof their IP via raw headers.
+// middleware.TrustedRealIP (registered globally in the router) has already
+// rewritten r.RemoteAddr from X-Forwarded-For / X-Real-IP, but only when the
+// direct peer is listed in TRUSTED_PROXIES, so clients cannot spoof their IP.
 func clientIP(r *http.Request) string {
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
