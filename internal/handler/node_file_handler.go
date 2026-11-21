@@ -1142,6 +1142,12 @@ func (h *NodeFileHandler) AgentPushTransfer(w http.ResponseWriter, r *http.Reque
 	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
+// MasterBaseURL returns the base HTTP URL agents use to reach this server, without request context
+// (implements apps.SharedFileOps).
+func (h *NodeFileHandler) MasterBaseURL() string {
+	return h.resolveMasterBaseURL(nil)
+}
+
 // ResolveMasterBaseURL returns the base HTTP URL that connected node agents can use to reach this server.
 func (h *NodeFileHandler) ResolveMasterBaseURL(r *http.Request) string {
 	return h.resolveMasterBaseURL(r)
