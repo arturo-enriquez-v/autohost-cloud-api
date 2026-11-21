@@ -4,7 +4,6 @@
 package handler
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -33,28 +32,5 @@ func TestSafeSharedPathPreventsPathTraversal(t *testing.T) {
 	}
 	if rel2 != "/etc/passwd" || abs2 != filepath.Join(baseDir, "etc", "passwd") {
 		t.Fatalf("traversal was not sandboxed inside baseDir: abs=%s rel=%s", abs2, rel2)
-	}
-}
-
-func TestCopyLocalFile(t *testing.T) {
-	dir := t.TempDir()
-	src := filepath.Join(dir, "source.txt")
-	dst := filepath.Join(dir, "dest.txt")
-
-	payload := []byte("autohost node-to-node transfer payload")
-	if err := os.WriteFile(src, payload, 0644); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-
-	if err := copyLocalFile(src, dst); err != nil {
-		t.Fatalf("copyLocalFile failed: %v", err)
-	}
-
-	got, err := os.ReadFile(dst)
-	if err != nil {
-		t.Fatalf("read dest: %v", err)
-	}
-	if string(got) != string(payload) {
-		t.Fatalf("expected %q, got %q", string(payload), string(got))
 	}
 }

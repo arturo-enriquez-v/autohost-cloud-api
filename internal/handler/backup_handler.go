@@ -59,8 +59,8 @@ func NewBackupHandler(
 		nodes = nodeSvc
 	}
 	var files apps.SharedFileOps
-	if nodeFileHandler != nil {
-		files = nodeFileHandler
+	if nodeFileHandler != nil && nodeFileHandler.SharedFiles() != nil {
+		files = nodeFileHandler.SharedFiles()
 	}
 	bh.files = apps.NewBackupFileManager(backupSvc, nodes, files)
 	if backupSvc != nil {

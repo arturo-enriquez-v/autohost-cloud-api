@@ -13,6 +13,7 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/core/network"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
+	"github.com/arturo/autohost-cloud-api/internal/filetransfer"
 	grpcserver "github.com/arturo/autohost-cloud-api/internal/grpc"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
@@ -132,6 +133,7 @@ var HandlerModule = fx.Provide(
 var InfraModule = fx.Provide(
 	platform.NewPKIManager,
 	grpcserver.NewNodeAgentServer,
+	filetransfer.NewService,
 	provideOptionalRedisClient,
 	platform.NewGeminiClient,
 	headscale.NewClient,
