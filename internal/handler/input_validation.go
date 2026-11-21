@@ -10,6 +10,8 @@ import (
 	"path"
 	"regexp"
 	"strings"
+
+	"github.com/arturo/autohost-cloud-api/internal/core/network"
 )
 
 var (
@@ -19,8 +21,6 @@ var (
 	safePgIdentifierRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.@-]{0,62}$`)
 	// safeVolumeNameRe matches Docker named volumes.
 	safeVolumeNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$`)
-	// safeFunnelPathRe matches URL path prefixes exposed through Tailscale Funnel.
-	safeFunnelPathRe = regexp.MustCompile(`^/[A-Za-z0-9._~/-]{0,200}$`)
 )
 
 func validateContainerName(name string) error {
@@ -52,16 +52,12 @@ func validateBackupVolume(v string) error {
 	return fmt.Errorf("invalid volume %q", v)
 }
 
-// normalizeFunnelPathPrefix returns a clean "/"-prefixed path or an error if it contains anything
-// other than URL-safe path characters.
-func normalizeFunnelPathPrefix(raw string) (string, error) {
-	p := "/" + strings.TrimPrefix(strings.TrimSpace(raw), "/")
-	p = path.Clean(p)
-	if !safeFunnelPathRe.MatchString(p) {
-		return "", fmt.Errorf("invalid path_prefix %q", raw)
-	}
-	return p, nil
-}
+// normalizeFunnelPathPrefix and shellQuote live in core/network (the Funnel gateway builds the root
+// shell script); these aliases keep the handler-level validation and its tests in one place.
+var (
+	normalizeFunnelPathPrefix = network.NormalizeFunnelPathPrefix
+	shellQuote                = network.ShellQuote
+)
 
 // normalizeVPNAddress accepts an IP address or CIDR prefix (as reported by Tailscale/Headscale)
 // and returns it in canonical form. Empty input is allowed and means "no VPN address".
@@ -89,9 +85,4 @@ func hostIPOnly(raw string) string {
 		return ip.String()
 	}
 	return ""
-}
-
-// shellQuote wraps s in single quotes for safe use as one POSIX shell word.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
