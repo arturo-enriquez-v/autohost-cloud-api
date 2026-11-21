@@ -4,45 +4,24 @@
 package handler
 
 import (
-	"bufio"
 	"context"
-	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
-	"fmt"
-	"io"
-	"log"
-	"net"
+	"errors"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
-	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
-	"runtime"
-	"strconv"
 	"strings"
-	"sync"
-	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
-	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 	"github.com/arturo/autohost-cloud-api/internal/core/network"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
-	"github.com/arturo/autohost-cloud-api/internal/dispatcher"
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 	"github.com/arturo/autohost-cloud-api/internal/platform"
-	"github.com/go-chi/chi/v5"
 )
 
-const (
-	defaultTunnelName     = "autohost-gateway"
-	internalProxyBindAddr = "127.0.0.1:18080"
-)
-
-// Domain types live in core/network; aliases keep this handler's code unchanged.
+// Domain types live in core/network; aliases keep this handler's code readable.
 type (
 	CloudflareTunnelRoute = network.CloudflareTunnelRoute
 	CloudflareTunnelState = network.CloudflareTunnelState
@@ -67,40 +46,70 @@ type CloudflareTunnelStatusResponse struct {
 	RecentLogs     []string                 `json:"recent_logs,omitempty"`
 }
 
+// CloudflareTunnelHandler exposes the Cloudflare Tunnel API. It authenticates and authorizes callers;
+// network.CloudflareTunnel owns state, cloudflared processes, DNS and the internal proxy.
 type CloudflareTunnelHandler struct {
-	nodeSvc      *node.NodeService
-	caddySvc     *apps.CaddyRouteService
-	jobService   *jobs.JobService
-	dispatcher   dispatcher.ParamDispatcher
-	baseDir      string
-	cfHomeDir    string
-	statePath    string
-	configPath   string
-	mu           sync.RWMutex
-	state        *CloudflareTunnelState
-	loginCmd     *exec.Cmd
-	loginURL     string
-	loginErr     string
-	loginRunning bool
-	tunnelCmd    *exec.Cmd
-	tunnelLogs   []string
-	proxyServer  *http.Server
-	rbacSvc      *identity.RBACService
-	store        network.GatewayStateStore
+	nodeSvc *node.NodeService
+	rbacSvc *identity.RBACService
+	tunnel  *network.CloudflareTunnel
 }
 
 func (h *CloudflareTunnelHandler) SetRBACService(rbac *identity.RBACService) {
 	h.rbacSvc = rbac
 }
 
-// cfHostnameRe matches a DNS hostname (labels of letters, digits and hyphens).
-var cfHostnameRe = regexp.MustCompile(`^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+func NewCloudflareTunnelHandler(
+	nodeSvc *node.NodeService,
+	caddySvc *apps.CaddyRouteService,
+	store network.GatewayStateStore,
+) *CloudflareTunnelHandler {
+	baseDir := filepath.Join(platform.StorageDir(), "cloudflared")
+	var mirror network.CloudflareRouteMirror
+	if caddySvc != nil && nodeSvc != nil {
+		mirror = &masterCaddyMirror{nodeSvc: nodeSvc, caddySvc: caddySvc}
+	}
+	tunnel := network.NewCloudflareTunnel(network.CloudflareTunnelConfig{
+		Store:           store,
+		BaseDir:         baseDir,
+		LegacyStatePath: filepath.Join(baseDir, "state.json"),
+		Mirror:          mirror,
+	})
+	tunnel.Start()
+	return &CloudflareTunnelHandler{nodeSvc: nodeSvc, tunnel: tunnel}
+}
 
-// cfSubdomainRe matches the left-hand part of a hostname ("@" means the base domain itself).
-var cfSubdomainRe = regexp.MustCompile(`^(?:@|[a-z0-9](?:[a-z0-9.-]{0,200}[a-z0-9])?)$`)
+// masterCaddyMirror keeps the master node's Caddy routes in sync with tunnel routes.
+type masterCaddyMirror struct {
+	nodeSvc  *node.NodeService
+	caddySvc *apps.CaddyRouteService
+}
 
-// cfLabelSanitizer replaces characters that are not valid in a DNS label.
-var cfLabelSanitizer = regexp.MustCompile(`[^a-z0-9-]+`)
+func (m *masterCaddyMirror) Upsert(domain, upstream, userID string) {
+	if master, err := m.nodeSvc.FindLocalNode(); err == nil && master != nil {
+		_, _ = m.caddySvc.Upsert(&apps.CaddyRoute{
+			NodeID: master.ID, UserID: userID, Domain: domain, Upstream: upstream, TLSMode: "http_only",
+		})
+	}
+}
+
+func (m *masterCaddyMirror) Delete(domain string) {
+	if master, err := m.nodeSvc.FindLocalNode(); err == nil && master != nil {
+		_ = m.caddySvc.Delete(master.ID, domain)
+	}
+}
+
+func (h *CloudflareTunnelHandler) Routes() chi.Router {
+	r := chi.NewRouter()
+	r.Use(middleware.Auth)
+	r.Get("/status", h.GetStatus)
+	r.Post("/login", h.StartLogin)
+	r.Post("/quick-tunnel", h.StartQuickTunnel)
+	r.Post("/config", h.UpdateConfig)
+	r.Post("/disconnect", h.Disconnect)
+	r.Post("/routes", h.UpsertRoute)
+	r.Delete("/routes/{domain}", h.DeleteRoute)
+	return r
+}
 
 // requireCFAdmin enforces that platform-wide tunnel settings are only changed by global admins.
 func (h *CloudflareTunnelHandler) requireCFAdmin(ctx context.Context, w http.ResponseWriter, userID string) bool {
@@ -123,385 +132,22 @@ func (h *CloudflareTunnelHandler) canManageCFRoute(ctx context.Context, userID s
 	return err == nil && ok
 }
 
-func NewCloudflareTunnelHandler(
-	nodeSvc *node.NodeService,
-	caddySvc *apps.CaddyRouteService,
-	jobService *jobs.JobService,
-	disp dispatcher.ParamDispatcher,
-	store network.GatewayStateStore,
-) *CloudflareTunnelHandler {
-	baseDir := filepath.Join(platform.StorageDir(), "cloudflared")
-	cfHomeDir := filepath.Join(baseDir, ".cloudflared")
-	_ = os.MkdirAll(cfHomeDir, 0700)
-
-	h := &CloudflareTunnelHandler{
-		nodeSvc:    nodeSvc,
-		caddySvc:   caddySvc,
-		jobService: jobService,
-		dispatcher: disp,
-		store:      store,
-		baseDir:    baseDir,
-		cfHomeDir:  cfHomeDir,
-		statePath:  filepath.Join(baseDir, "state.json"),
-		configPath: filepath.Join(baseDir, "config.yml"),
-		state: &CloudflareTunnelState{
-			TunnelName: defaultTunnelName,
-			Mode:       "managed",
-			Routes:     []*CloudflareTunnelRoute{},
-		},
-	}
-
-	h.loadState()
-	h.startInternalReverseProxy()
-
-	// Auto-resume tunnel on startup if already authenticated or configured
-	go func() {
-		time.Sleep(2 * time.Second)
-		if h.isCertPresent() {
-			h.mu.RLock()
-			baseDomain := h.state.BaseDomain
-			h.mu.RUnlock()
-			if baseDomain == "" {
-				if detected := h.detectZoneFromCert(); detected != "" {
-					h.mu.Lock()
-					h.state.BaseDomain = detected
-					_ = h.saveStateLocked()
-					h.mu.Unlock()
-				}
-			}
-			if err := h.ensureTunnelAndRun(); err != nil {
-				log.Printf("[WARN] cloudflared auto-resume failed: %v", err)
-			}
-		}
-	}()
-
-	return h
-}
-
-func (h *CloudflareTunnelHandler) Routes() chi.Router {
-	r := chi.NewRouter()
-	r.Use(middleware.Auth)
-	r.Get("/status", h.GetStatus)
-	r.Post("/login", h.StartLogin)
-	r.Post("/quick-tunnel", h.StartQuickTunnel)
-	r.Post("/config", h.UpdateConfig)
-	r.Post("/disconnect", h.Disconnect)
-	r.Post("/routes", h.UpsertRoute)
-	r.Delete("/routes/{domain}", h.DeleteRoute)
-	return r
-}
-
-// startInternalReverseProxy runs a lightweight dynamic reverse proxy on 127.0.0.1:18080
-// so incoming traffic from cloudflared is dynamically routed by Host header (or default route
-// for Quick Tunnels) to the target node's Tailscale IP and container port.
-func (h *CloudflareTunnelHandler) startInternalReverseProxy() {
-	rp := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			targetUpstream := h.resolveUpstreamForHost(req.Host)
-			if targetUpstream == "" {
-				req.URL.Scheme = "http"
-				req.URL.Host = "127.0.0.1:9" // triggers ErrorHandler cleanly
-				return
-			}
-			if !strings.HasPrefix(targetUpstream, "http://") && !strings.HasPrefix(targetUpstream, "https://") {
-				targetUpstream = "http://" + targetUpstream
-			}
-			u, err := url.Parse(targetUpstream)
-			if err != nil {
-				return
-			}
-			req.URL.Scheme = u.Scheme
-			req.URL.Host = u.Host
-			if req.Header.Get("X-Forwarded-Host") == "" {
-				req.Header.Set("X-Forwarded-Host", req.Host)
-			}
-			if req.Header.Get("X-Forwarded-Proto") == "" {
-				req.Header.Set("X-Forwarded-Proto", "https")
-			}
-		},
-		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-			MaxIdleConns:          100,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-			ResponseHeaderTimeout: 0, // support long streaming / WebSockets / video playback
-		},
-		FlushInterval: -1, // flush immediately for SSE, WebSockets, and video streams
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(http.StatusBadGateway)
-			fmt.Fprintf(w, `<!DOCTYPE html><html><head><title>AutoHost Gateway — 502 Bad Gateway</title>
-<style>body{background:#090d16;color:#e2e8f0;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
-.card{background:#111827;border:1px solid #1e293b;border-radius:12px;padding:32px;max-width:480px;text-align:center}
-h1{font-size:20px;margin:0 0 12px;color:#38bdf8}p{color:#94a3b8;font-size:14px;line-height:1.5}code{background:#1e293b;padding:2px 6px;border-radius:4px;color:#f8fafc}</style></head>
-<body><div class="card"><h1>AutoHost Cloud Gateway</h1><p>No se pudo conectar con el contenedor destino para <code>%s</code>.</p><p style="font-size:12px;color:#64748b">%v</p></div></body></html>`, r.Host, err)
-		},
-	}
-
-	h.proxyServer = &http.Server{
-		Addr:    internalProxyBindAddr,
-		Handler: rp,
-	}
-
-	go func() {
-		log.Printf("[CLOUDFLARE-GATEWAY] Dynamic multi-node reverse proxy listening on http://%s", internalProxyBindAddr)
-		if err := h.proxyServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("[WARN] internal reverse proxy server exited: %v", err)
-		}
-	}()
-}
-
-func (h *CloudflareTunnelHandler) resolveUpstreamForHost(host string) string {
-	cleanHost := strings.ToLower(strings.TrimSpace(host))
-	if idx := strings.IndexByte(cleanHost, ':'); idx != -1 {
-		cleanHost = cleanHost[:idx]
-	}
-
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	for _, rt := range h.state.Routes {
-		if strings.EqualFold(rt.Domain, cleanHost) {
-			return rt.Upstream
-		}
-	}
-	// If accessed via *.trycloudflare.com Quick Tunnel and there is at least one route, route to the most recently updated route
-	if strings.HasSuffix(cleanHost, ".trycloudflare.com") && len(h.state.Routes) > 0 {
-		return h.state.Routes[len(h.state.Routes)-1].Upstream
-	}
-	return ""
-}
-
-// loadState reads the tunnel configuration and routes from Postgres. On the first start after the
-// migration it imports the legacy state.json and renames it. Tunnel credentials stay on disk.
-func (h *CloudflareTunnelHandler) loadState() {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	if h.store == nil {
-		log.Printf("[WARN] cloudflared: no state store configured; tunnel routes will not persist")
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	st, err := h.store.LoadCloudflareTunnelState(ctx)
-	if err != nil {
-		log.Printf("[ERROR] cloudflared: load state from database: %v", err)
-		return
-	}
-	if st.TunnelID == "" && st.BaseDomain == "" && len(st.Routes) == 0 {
-		if imported := h.importLegacyStateLocked(ctx); imported != nil {
-			st = imported
-		}
-	}
-	if st.TunnelName == "" {
-		st.TunnelName = defaultTunnelName
-	}
-	if st.Mode == "" {
-		st.Mode = "managed"
-	}
-	if st.Routes == nil {
-		st.Routes = []*CloudflareTunnelRoute{}
-	}
-	h.state = st
-}
-
-func (h *CloudflareTunnelHandler) importLegacyStateLocked(ctx context.Context) *CloudflareTunnelState {
-	data, err := os.ReadFile(h.statePath)
-	if err != nil {
-		return nil
-	}
-	var legacy CloudflareTunnelState
-	if err := json.Unmarshal(data, &legacy); err != nil {
-		log.Printf("[WARN] cloudflared: cannot parse legacy %s: %v", h.statePath, err)
-		return nil
-	}
-	if err := h.store.SaveCloudflareTunnelState(ctx, &legacy); err != nil {
-		log.Printf("[ERROR] cloudflared: import legacy state into database: %v", err)
-		return nil
-	}
-	reloaded, err := h.store.LoadCloudflareTunnelState(ctx)
-	if err != nil {
-		reloaded = &legacy
-	}
-	if err := os.Rename(h.statePath, h.statePath+".migrated"); err != nil {
-		log.Printf("[WARN] cloudflared: imported legacy state but could not rename %s: %v", h.statePath, err)
-	}
-	log.Printf("[INFO] cloudflared: imported tunnel state with %d route(s) from legacy %s", len(reloaded.Routes), h.statePath)
-	return reloaded
-}
-
-// saveStateLocked persists the in-memory state. Callers must hold h.mu.
-func (h *CloudflareTunnelHandler) saveStateLocked() error {
-	if h.store == nil {
-		return fmt.Errorf("no state store configured")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := h.store.SaveCloudflareTunnelState(ctx, h.state); err != nil {
-		log.Printf("[ERROR] cloudflared: persist state: %v", err)
-		return err
-	}
-	return nil
-}
-
-func (h *CloudflareTunnelHandler) appendLog(line string) {
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.tunnelLogs = append(h.tunnelLogs, line)
-	if len(h.tunnelLogs) > 40 {
-		h.tunnelLogs = h.tunnelLogs[len(h.tunnelLogs)-40:]
+func writeTunnelError(w http.ResponseWriter, err error, persistMsg string) {
+	switch {
+	case errors.Is(err, network.ErrCFRouteNotFound):
+		http.Error(w, "route not found", http.StatusNotFound)
+	case errors.Is(err, network.ErrCFDomainTaken):
+		http.Error(w, "forbidden: "+err.Error(), http.StatusForbidden)
+	case errors.Is(err, network.ErrCFInvalidDomain):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, network.ErrCFPersist):
+		http.Error(w, persistMsg, http.StatusInternalServerError)
+	default:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (h *CloudflareTunnelHandler) certPath() string {
-	return filepath.Join(h.cfHomeDir, "cert.pem")
-}
-
-func (h *CloudflareTunnelHandler) isCertPresent() bool {
-	info, err := os.Stat(h.certPath())
-	return err == nil && info.Size() > 0
-}
-
-// ensureBinary locates cloudflared or downloads the official static binary if missing.
-func (h *CloudflareTunnelHandler) ensureBinary() (string, error) {
-	if p, err := exec.LookPath("cloudflared"); err == nil && p != "" {
-		return p, nil
-	}
-	for _, candidate := range []string{
-		"/usr/local/bin/cloudflared",
-		"/usr/bin/cloudflared",
-		filepath.Join(h.baseDir, "bin", "cloudflared"),
-	} {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
-		}
-	}
-
-	// Auto-download official cloudflared binary to /var/lib/autohost/cloudflared/bin/cloudflared
-	arch := "amd64"
-	switch runtime.GOARCH {
-	case "arm64":
-		arch = "arm64"
-	case "arm":
-		arch = "arm"
-	}
-	dlURL := fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-%s", arch)
-	binDir := filepath.Join(h.baseDir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		return "", err
-	}
-	destPath := filepath.Join(binDir, "cloudflared")
-	tmpPath := destPath + ".tmp"
-
-	log.Printf("[CLOUDFLARE-GATEWAY] Downloading cloudflared binary from %s ...", dlURL)
-	client := &http.Client{Timeout: 90 * time.Second}
-	resp, err := client.Get(dlURL)
-	if err != nil {
-		return "", fmt.Errorf("download cloudflared: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("download cloudflared returned HTTP %d", resp.StatusCode)
-	}
-
-	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-	if err != nil {
-		return "", err
-	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		f.Close()
-		return "", err
-	}
-	f.Close()
-	if err := os.Rename(tmpPath, destPath); err != nil {
-		return "", err
-	}
-	log.Printf("[CLOUDFLARE-GATEWAY] Installed cloudflared at %s", destPath)
-	return destPath, nil
-}
-
-func (h *CloudflareTunnelHandler) commandEnv() []string {
-	env := os.Environ()
-	filtered := make([]string, 0, len(env)+2)
-	for _, kv := range env {
-		if !strings.HasPrefix(kv, "HOME=") && !strings.HasPrefix(kv, "TUNNEL_ORIGIN_CERT=") {
-			filtered = append(filtered, kv)
-		}
-	}
-	filtered = append(filtered,
-		"HOME="+h.baseDir,
-		"TUNNEL_ORIGIN_CERT="+h.certPath(),
-	)
-	return filtered
-}
-
-// detectZoneFromCert decodes the ARGO TUNNEL TOKEN PEM block inside cert.pem
-// and queries Cloudflare's Zone API to auto-discover the authorized domain name.
-func (h *CloudflareTunnelHandler) detectZoneFromCert() string {
-	raw, err := os.ReadFile(h.certPath())
-	if err != nil {
-		return ""
-	}
-	rest := raw
-	for {
-		var block *pem.Block
-		block, rest = pem.Decode(rest)
-		if block == nil {
-			break
-		}
-		if strings.Contains(block.Type, "ARGO TUNNEL TOKEN") || len(block.Bytes) > 0 {
-			var tokenPayload struct {
-				ZoneID    string `json:"zoneID"`
-				AccountID string `json:"accountID"`
-				APIToken  string `json:"apiToken"`
-			}
-			// block.Bytes in pem.Decode is already base64-decoded
-			if err := json.Unmarshal(block.Bytes, &tokenPayload); err != nil {
-				// Fallback if double-encoded
-				if decoded, err2 := base64.StdEncoding.DecodeString(string(block.Bytes)); err2 == nil {
-					_ = json.Unmarshal(decoded, &tokenPayload)
-				}
-			}
-			if tokenPayload.ZoneID != "" && tokenPayload.APIToken != "" {
-				req, err := http.NewRequest("GET", "https://api.cloudflare.com/client/v4/zones/"+tokenPayload.ZoneID, nil)
-				if err != nil {
-					continue
-				}
-				req.Header.Set("Authorization", "Bearer "+tokenPayload.APIToken)
-				client := &http.Client{Timeout: 8 * time.Second}
-				resp, err := client.Do(req)
-				if err != nil {
-					continue
-				}
-				defer resp.Body.Close()
-				var zoneResp struct {
-					Success bool `json:"success"`
-					Result  struct {
-						Name string `json:"name"`
-					} `json:"result"`
-				}
-				if err := json.NewDecoder(resp.Body).Decode(&zoneResp); err == nil && zoneResp.Result.Name != "" {
-					log.Printf("[CLOUDFLARE-GATEWAY] Auto-detected Cloudflare zone domain: %s", zoneResp.Result.Name)
-					return strings.ToLower(strings.TrimSpace(zoneResp.Result.Name))
-				}
-			}
-		}
-	}
-	return ""
-}
-
-// GetStatus returns the current state of the Master Cloudflare Tunnel and all multi-node routes.
+// GetStatus returns the current state of the master Cloudflare Tunnel and its routes.
 // GET /v1/cloudflare-tunnel/status
 func (h *CloudflareTunnelHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetClaims(r.Context())
@@ -510,40 +156,19 @@ func (h *CloudflareTunnelHandler) GetStatus(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	_, binErr := exec.LookPath("cloudflared")
-	if binErr != nil {
-		_, binErr = os.Stat(filepath.Join(h.baseDir, "bin", "cloudflared"))
+	st := h.tunnel.Status()
+	resp := CloudflareTunnelStatusResponse{
+		Installed: st.Installed, Authenticated: st.Authenticated, Running: st.Running,
+		LoginInProcess: st.LoginInProcess, LoginURL: st.LoginURL, LoginError: st.LoginError,
+		Mode: st.State.Mode, TunnelID: st.State.TunnelID, TunnelName: st.State.TunnelName,
+		BaseDomain: st.State.BaseDomain, QuickTunnelURL: st.State.QuickTunnelURL,
+		Routes: st.State.Routes, RecentLogs: st.RecentLogs,
 	}
-
-	var masterID, masterHost string
 	if h.nodeSvc != nil {
 		if localNode, err := h.nodeSvc.FindLocalNode(); err == nil && localNode != nil {
-			masterID = localNode.ID
-			masterHost = localNode.Hostname
+			resp.MasterNodeID, resp.MasterHostname = localNode.ID, localNode.Hostname
 		}
 	}
-
-	h.mu.RLock()
-	running := h.tunnelCmd != nil && h.tunnelCmd.Process != nil
-	resp := CloudflareTunnelStatusResponse{
-		Installed:      binErr == nil,
-		Authenticated:  h.isCertPresent(),
-		Running:        running,
-		LoginInProcess: h.loginRunning,
-		LoginURL:       h.loginURL,
-		LoginError:     h.loginErr,
-		Mode:           h.state.Mode,
-		TunnelID:       h.state.TunnelID,
-		TunnelName:     h.state.TunnelName,
-		BaseDomain:     h.state.BaseDomain,
-		QuickTunnelURL: h.state.QuickTunnelURL,
-		MasterNodeID:   masterID,
-		MasterHostname: masterHost,
-		Routes:         h.state.Routes,
-		RecentLogs:     append([]string{}, h.tunnelLogs...),
-	}
-	h.mu.RUnlock()
-
 	if resp.Routes == nil {
 		resp.Routes = []*CloudflareTunnelRoute{}
 	}
@@ -566,14 +191,10 @@ func (h *CloudflareTunnelHandler) GetStatus(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
-var cfAuthURLRegex = regexp.MustCompile(`https://dash\.cloudflare\.com/[^\s"']+`)
-var tryCloudflareURLRegex = regexp.MustCompile(`https://[a-zA-Z0-9-]+\.trycloudflare\.com`)
-var uuidRegex = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
-
-// StartLogin initiates `cloudflared tunnel login` and returns the 1-Click browser authorization URL.
+// StartLogin initiates `cloudflared tunnel login` and returns the browser authorization URL.
 // POST /v1/cloudflare-tunnel/login
 func (h *CloudflareTunnelHandler) StartLogin(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetClaims(r.Context())
@@ -584,298 +205,16 @@ func (h *CloudflareTunnelHandler) StartLogin(w http.ResponseWriter, r *http.Requ
 	if !h.requireCFAdmin(r.Context(), w, claims.UserID) {
 		return
 	}
-
-	binPath, err := h.ensureBinary()
+	loginURL, err := h.tunnel.StartLogin()
 	if err != nil {
-		http.Error(w, fmt.Sprintf("could not prepare cloudflared: %v", err), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	h.mu.Lock()
-	if h.loginCmd != nil && h.loginCmd.Process != nil {
-		_ = h.loginCmd.Process.Kill()
-	}
-	// Remove stale cert.pem if re-authenticating so cloudflared prompts for a fresh login
-	_ = os.Remove(h.certPath())
-	h.loginURL = ""
-	h.loginErr = ""
-	h.loginRunning = true
-	h.mu.Unlock()
-
-	cmd := exec.Command(binPath, "tunnel", "login")
-	cmd.Env = h.commandEnv()
-
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		http.Error(w, "failed to create stdout pipe", http.StatusInternalServerError)
-		return
-	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		http.Error(w, "failed to create stderr pipe", http.StatusInternalServerError)
-		return
-	}
-
-	if err := cmd.Start(); err != nil {
-		h.mu.Lock()
-		h.loginRunning = false
-		h.loginErr = err.Error()
-		h.mu.Unlock()
-		http.Error(w, fmt.Sprintf("failed to start cloudflared login: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	h.mu.Lock()
-	h.loginCmd = cmd
-	h.mu.Unlock()
-
-	urlFoundCh := make(chan string, 1)
-
-	scanOutput := func(rc io.ReadCloser) {
-		scanner := bufio.NewScanner(rc)
-		for scanner.Scan() {
-			line := scanner.Text()
-			h.appendLog("[login] " + line)
-			if match := cfAuthURLRegex.FindString(line); match != "" {
-				h.mu.Lock()
-				if h.loginURL == "" {
-					h.loginURL = match
-					select {
-					case urlFoundCh <- match:
-					default:
-					}
-				}
-				h.mu.Unlock()
-			}
-		}
-	}
-
-	go scanOutput(stdoutPipe)
-	go scanOutput(stderrPipe)
-
-	// Wait in background for user to complete OAuth in browser and cert.pem to be written
-	go func() {
-		waitErr := cmd.Wait()
-		h.mu.Lock()
-		h.loginRunning = false
-		h.loginCmd = nil
-		h.mu.Unlock()
-
-		if h.isCertPresent() {
-			h.appendLog("[login] Cloudflare cert.pem received successfully!")
-			if detectedDomain := h.detectZoneFromCert(); detectedDomain != "" {
-				h.mu.Lock()
-				h.state.BaseDomain = detectedDomain
-				h.state.Mode = "managed"
-				_ = h.saveStateLocked()
-				h.mu.Unlock()
-			}
-			if err := h.ensureTunnelAndRun(); err != nil {
-				h.mu.Lock()
-				h.loginErr = err.Error()
-				h.mu.Unlock()
-				h.appendLog("[error] " + err.Error())
-			}
-		} else if waitErr != nil {
-			h.mu.Lock()
-			h.loginErr = fmt.Sprintf("login exited before authorization completed: %v", waitErr)
-			h.mu.Unlock()
-		}
-	}()
-
-	// Wait up to 6 seconds to capture the URL immediately for the response
-	var capturedURL string
-	select {
-	case capturedURL = <-urlFoundCh:
-	case <-time.After(6 * time.Second):
-		h.mu.RLock()
-		capturedURL = h.loginURL
-		h.mu.RUnlock()
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"status":    "waiting_auth",
-		"login_url": capturedURL,
-	})
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "waiting_auth", "login_url": loginURL})
 }
 
-// ensureTunnelAndRun creates or reuses the `autohost-gateway` Cloudflare tunnel,
-// generates config.yml for all routes, and starts `cloudflared tunnel run`.
-func (h *CloudflareTunnelHandler) ensureTunnelAndRun() error {
-	binPath, err := h.ensureBinary()
-	if err != nil {
-		return err
-	}
-
-	h.mu.RLock()
-	tunnelID := h.state.TunnelID
-	tunnelName := h.state.TunnelName
-	if tunnelName == "" {
-		tunnelName = defaultTunnelName
-	}
-	h.mu.RUnlock()
-
-	// Verify if credentials file exists for current tunnelID
-	if tunnelID != "" {
-		credPath := filepath.Join(h.cfHomeDir, tunnelID+".json")
-		if _, err := os.Stat(credPath); err != nil {
-			tunnelID = ""
-		}
-	}
-
-	// If no local tunnel credentials exist, create a new tunnel (with a timestamp suffix if name collides)
-	if tunnelID == "" {
-		createName := tunnelName
-		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-		defer cancel()
-
-		cmd := exec.CommandContext(ctx, binPath, "tunnel", "create", createName)
-		cmd.Env = h.commandEnv()
-		out, err := cmd.CombinedOutput()
-		outStr := string(out)
-		h.appendLog("[tunnel-create] " + outStr)
-
-		if err != nil && strings.Contains(strings.ToLower(outStr), "already exists") {
-			// Delete stale tunnel with no local credentials or create with unique host suffix
-			createName = fmt.Sprintf("%s-%d", tunnelName, time.Now().Unix()%10000)
-			cmd2 := exec.CommandContext(ctx, binPath, "tunnel", "create", createName)
-			cmd2.Env = h.commandEnv()
-			out2, err2 := cmd2.CombinedOutput()
-			outStr = string(out2)
-			h.appendLog("[tunnel-create] " + outStr)
-			err = err2
-		}
-
-		if err != nil {
-			return fmt.Errorf("create tunnel failed: %v (%s)", err, strings.TrimSpace(outStr))
-		}
-
-		// Extract UUID from output or look for <uuid>.json in .cloudflared
-		if match := uuidRegex.FindString(outStr); match != "" {
-			tunnelID = match
-		} else {
-			entries, _ := os.ReadDir(h.cfHomeDir)
-			for _, e := range entries {
-				if strings.HasSuffix(e.Name(), ".json") {
-					tunnelID = strings.TrimSuffix(e.Name(), ".json")
-					break
-				}
-			}
-		}
-
-		if tunnelID == "" {
-			return fmt.Errorf("could not determine created tunnel UUID")
-		}
-
-		h.mu.Lock()
-		h.state.TunnelID = tunnelID
-		h.state.TunnelName = createName
-		h.state.Mode = "managed"
-		_ = h.saveStateLocked()
-		h.mu.Unlock()
-	}
-
-	if err := h.writeConfigYAML(); err != nil {
-		return err
-	}
-
-	return h.restartManagedTunnelProcess()
-}
-
-func (h *CloudflareTunnelHandler) writeConfigYAML() error {
-	h.mu.RLock()
-	tunnelID := h.state.TunnelID
-	routes := append([]*CloudflareTunnelRoute{}, h.state.Routes...)
-	h.mu.RUnlock()
-
-	if tunnelID == "" {
-		return nil
-	}
-
-	credFile := filepath.Join(h.cfHomeDir, tunnelID+".json")
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("tunnel: %s\n", tunnelID))
-	sb.WriteString(fmt.Sprintf("credentials-file: %s\n", credFile))
-	sb.WriteString("ingress:\n")
-
-	for _, rt := range routes {
-		if rt.Domain == "" || rt.Upstream == "" {
-			continue
-		}
-		serviceURL := rt.Upstream
-		if !strings.HasPrefix(serviceURL, "http://") && !strings.HasPrefix(serviceURL, "https://") {
-			serviceURL = "http://" + serviceURL
-		}
-		sb.WriteString(fmt.Sprintf("  - hostname: %s\n", rt.Domain))
-		sb.WriteString(fmt.Sprintf("    service: %s\n", serviceURL))
-		sb.WriteString("    originRequest:\n")
-		sb.WriteString("      noTLSVerify: true\n")
-	}
-
-	// Fallback catch-all forwards to our internal dynamic reverse proxy on 127.0.0.1:18080
-	sb.WriteString(fmt.Sprintf("  - service: http://%s\n", internalProxyBindAddr))
-
-	return os.WriteFile(h.configPath, []byte(sb.String()), 0600)
-}
-
-func (h *CloudflareTunnelHandler) restartManagedTunnelProcess() error {
-	binPath, err := h.ensureBinary()
-	if err != nil {
-		return err
-	}
-
-	h.mu.Lock()
-	if h.tunnelCmd != nil && h.tunnelCmd.Process != nil {
-		_ = h.tunnelCmd.Process.Kill()
-		h.tunnelCmd = nil
-	}
-	tunnelID := h.state.TunnelID
-	h.mu.Unlock()
-
-	if tunnelID == "" {
-		return fmt.Errorf("missing tunnel ID")
-	}
-
-	cmd := exec.Command(binPath, "tunnel", "--config", h.configPath, "run", tunnelID)
-	cmd.Env = h.commandEnv()
-
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start cloudflared tunnel run: %w", err)
-	}
-
-	h.mu.Lock()
-	h.tunnelCmd = cmd
-	h.mu.Unlock()
-
-	scanLogs := func(rc io.ReadCloser) {
-		if rc == nil {
-			return
-		}
-		s := bufio.NewScanner(rc)
-		for s.Scan() {
-			h.appendLog(s.Text())
-		}
-	}
-	go scanLogs(stdout)
-	go scanLogs(stderr)
-
-	go func(c *exec.Cmd) {
-		_ = c.Wait()
-		h.mu.Lock()
-		if h.tunnelCmd == c {
-			h.tunnelCmd = nil
-		}
-		h.mu.Unlock()
-	}(cmd)
-
-	return nil
-}
-
-// StartQuickTunnel starts a zero-account `*.trycloudflare.com` tunnel pointing to the internal reverse proxy.
+// StartQuickTunnel starts a zero-account *.trycloudflare.com tunnel.
 // POST /v1/cloudflare-tunnel/quick-tunnel
 func (h *CloudflareTunnelHandler) StartQuickTunnel(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetClaims(r.Context())
@@ -886,92 +225,13 @@ func (h *CloudflareTunnelHandler) StartQuickTunnel(w http.ResponseWriter, r *htt
 	if !h.requireCFAdmin(r.Context(), w, claims.UserID) {
 		return
 	}
-
-	binPath, err := h.ensureBinary()
+	quickURL, err := h.tunnel.StartQuickTunnel()
 	if err != nil {
-		http.Error(w, fmt.Sprintf("could not prepare cloudflared: %v", err), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	h.mu.Lock()
-	if h.tunnelCmd != nil && h.tunnelCmd.Process != nil {
-		_ = h.tunnelCmd.Process.Kill()
-		h.tunnelCmd = nil
-	}
-	h.state.Mode = "quick"
-	h.state.QuickTunnelURL = ""
-	_ = h.saveStateLocked()
-	h.mu.Unlock()
-
-	cmd := exec.Command(binPath, "tunnel", "--url", "http://"+internalProxyBindAddr)
-	cmd.Env = h.commandEnv()
-
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
-
-	if err := cmd.Start(); err != nil {
-		http.Error(w, fmt.Sprintf("failed to start quick tunnel: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	h.mu.Lock()
-	h.tunnelCmd = cmd
-	h.mu.Unlock()
-
-	foundCh := make(chan string, 1)
-	scanQuick := func(rc io.ReadCloser) {
-		if rc == nil {
-			return
-		}
-		s := bufio.NewScanner(rc)
-		for s.Scan() {
-			line := s.Text()
-			h.appendLog("[quick] " + line)
-			if match := tryCloudflareURLRegex.FindString(line); match != "" {
-				h.mu.Lock()
-				if h.state.QuickTunnelURL == "" {
-					h.state.QuickTunnelURL = match
-					_ = h.saveStateLocked()
-					select {
-					case foundCh <- match:
-					default:
-					}
-				}
-				h.mu.Unlock()
-			}
-		}
-	}
-	go scanQuick(stdout)
-	go scanQuick(stderr)
-
-	go func(c *exec.Cmd) {
-		_ = c.Wait()
-		h.mu.Lock()
-		if h.tunnelCmd == c {
-			h.tunnelCmd = nil
-		}
-		h.mu.Unlock()
-	}(cmd)
-
-	var quickURL string
-	select {
-	case quickURL = <-foundCh:
-	case <-time.After(8 * time.Second):
-		h.mu.RLock()
-		quickURL = h.state.QuickTunnelURL
-		h.mu.RUnlock()
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"status":           "running",
-		"mode":             "quick",
-		"quick_tunnel_url": quickURL,
-	})
-}
-
-type updateTunnelConfigRequest struct {
-	BaseDomain string `json:"base_domain"`
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "running", "mode": "quick", "quick_tunnel_url": quickURL})
 }
 
 // UpdateConfig updates the base domain (e.g. "tudominio.com").
@@ -985,44 +245,23 @@ func (h *CloudflareTunnelHandler) UpdateConfig(w http.ResponseWriter, r *http.Re
 	if !h.requireCFAdmin(r.Context(), w, claims.UserID) {
 		return
 	}
-
-	var req updateTunnelConfigRequest
+	var req struct {
+		BaseDomain string `json:"base_domain"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-
-	cleanDomain := strings.ToLower(strings.TrimSpace(req.BaseDomain))
-	cleanDomain = strings.TrimPrefix(cleanDomain, "https://")
-	cleanDomain = strings.TrimPrefix(cleanDomain, "http://")
-	cleanDomain = strings.TrimSuffix(cleanDomain, "/")
-	if cleanDomain != "" && !cfHostnameRe.MatchString(cleanDomain) {
-		http.Error(w, "invalid base_domain", http.StatusBadRequest)
+	clean, err := h.tunnel.SetBaseDomain(req.BaseDomain)
+	if err != nil {
+		writeTunnelError(w, err, "could not save tunnel configuration")
 		return
 	}
-
-	h.mu.Lock()
-	previousDomain := h.state.BaseDomain
-	h.state.BaseDomain = cleanDomain
-	if err := h.saveStateLocked(); err != nil {
-		h.state.BaseDomain = previousDomain
-		h.mu.Unlock()
-		http.Error(w, "could not save tunnel configuration", http.StatusInternalServerError)
-		return
-	}
-	h.mu.Unlock()
-
-	if h.isCertPresent() {
-		_ = h.ensureTunnelAndRun()
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"base_domain": cleanDomain,
-	})
+	_ = json.NewEncoder(w).Encode(map[string]any{"base_domain": clean})
 }
 
-// Disconnect stops the running tunnel and optionally clears authentication credentials.
+// Disconnect stops the running tunnel and clears the Cloudflare account credentials.
 // POST /v1/cloudflare-tunnel/disconnect
 func (h *CloudflareTunnelHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetClaims(r.Context())
@@ -1033,25 +272,9 @@ func (h *CloudflareTunnelHandler) Disconnect(w http.ResponseWriter, r *http.Requ
 	if !h.requireCFAdmin(r.Context(), w, claims.UserID) {
 		return
 	}
-
-	h.mu.Lock()
-	if h.loginCmd != nil && h.loginCmd.Process != nil {
-		_ = h.loginCmd.Process.Kill()
-		h.loginCmd = nil
-	}
-	if h.tunnelCmd != nil && h.tunnelCmd.Process != nil {
-		_ = h.tunnelCmd.Process.Kill()
-		h.tunnelCmd = nil
-	}
-	h.loginRunning = false
-	h.loginURL = ""
-	h.state.QuickTunnelURL = ""
-	_ = os.Remove(h.certPath())
-	_ = h.saveStateLocked()
-	h.mu.Unlock()
-
+	_ = h.tunnel.Disconnect()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"status": "disconnected"})
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "disconnected"})
 }
 
 type upsertCloudflareRouteRequest struct {
@@ -1065,11 +288,8 @@ type upsertCloudflareRouteRequest struct {
 	ContainerImage string `json:"container_image"`
 }
 
-// UpsertRoute creates or updates a multi-node reverse proxy route:
-// 1. Resolves the target node's Tailscale IP (`IPVPN`, or local IP if Master)
-// 2. Configures `<domain> -> http://<node-tailscale-ip>:<port>`
-// 3. Registers the CNAME DNS record in Cloudflare via `cloudflared tunnel route dns`
-// 4. Updates `config.yml` and reloads `cloudflared` + internal proxy
+// UpsertRoute maps a hostname to a container on a node (via its Tailscale IP, or loopback for the master),
+// registers the DNS record and reloads cloudflared.
 // POST /v1/cloudflare-tunnel/routes
 func (h *CloudflareTunnelHandler) UpsertRoute(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetClaims(r.Context())
@@ -1077,13 +297,11 @@ func (h *CloudflareTunnelHandler) UpsertRoute(w http.ResponseWriter, r *http.Req
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-
 	var req upsertCloudflareRouteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-
 	if req.TargetNodeID == "" || req.Port <= 0 || req.Port > 65535 {
 		http.Error(w, "target_node_id and valid port (1-65535) are required", http.StatusBadRequest)
 		return
@@ -1099,7 +317,7 @@ func (h *CloudflareTunnelHandler) UpsertRoute(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Determine target IP: prefer Tailscale VPN IP (100.x.x.x), fallback to loopback for local Master node or IPLocal
+	// Prefer the Tailscale VPN IP, fall back to loopback for the master node or its local IP.
 	targetIP := ""
 	if targetNode.IPVPN != nil && strings.TrimSpace(*targetNode.IPVPN) != "" {
 		targetIP = hostIPOnly(*targetNode.IPVPN)
@@ -1113,151 +331,38 @@ func (h *CloudflareTunnelHandler) UpsertRoute(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Build full domain from subdomain + base_domain (or direct domain)
-	sub := strings.ToLower(strings.TrimSpace(req.Subdomain))
-	base := strings.ToLower(strings.TrimSpace(req.BaseDomain))
-	if base == "" {
-		h.mu.RLock()
-		base = h.state.BaseDomain
-		h.mu.RUnlock()
-	}
-	fullDomain := strings.ToLower(strings.TrimSpace(req.Domain))
-	if fullDomain == "" && base != "" {
-		if sub == "" || sub == "@" {
-			fullDomain = base
-		} else {
-			fullDomain = fmt.Sprintf("%s.%s", sub, base)
-		}
-	}
-	if fullDomain == "" {
-		// Fallback for Quick Tunnel mode without custom domain
-		if sub != "" && sub != "@" {
-			fullDomain = sub + ".local"
-		} else {
-			label := strings.Trim(cfLabelSanitizer.ReplaceAllString(strings.ToLower(targetNode.Hostname), "-"), "-")
-			if label == "" {
-				label = "node"
-			}
-			fullDomain = fmt.Sprintf("%s-%d.local", label, req.Port)
-		}
-	}
-
-	// The domain ends up in cloudflared's YAML config and in `cloudflared tunnel route dns --overwrite-dns`.
-	if sub != "" && !cfSubdomainRe.MatchString(sub) {
-		http.Error(w, "invalid subdomain", http.StatusBadRequest)
-		return
-	}
-	if base != "" && !cfHostnameRe.MatchString(base) {
-		http.Error(w, "invalid base_domain", http.StatusBadRequest)
-		return
-	}
-	if !cfHostnameRe.MatchString(fullDomain) {
-		http.Error(w, "invalid domain", http.StatusBadRequest)
+	fullDomain, sub, base, err := h.tunnel.ResolveRouteDomain(req.Subdomain, req.BaseDomain, req.Domain, targetNode.Hostname, req.Port)
+	if err != nil {
+		writeTunnelError(w, err, "")
 		return
 	}
 	// Only admins may change the platform-wide base domain through a route request.
-	h.mu.RLock()
-	currentBase := h.state.BaseDomain
-	h.mu.RUnlock()
-	if base != "" && currentBase != "" && base != currentBase && !checkAdminAccess(r.Context(), h.rbacSvc, claims.UserID) {
+	if current := h.tunnel.BaseDomain(); base != "" && current != "" && base != current && !checkAdminAccess(r.Context(), h.rbacSvc, claims.UserID) {
 		http.Error(w, "forbidden: only admins can change the tunnel base domain", http.StatusForbidden)
 		return
 	}
-
-	upstream := net.JoinHostPort(targetIP, strconv.Itoa(req.Port))
-	now := time.Now().UTC()
-
-	route := &CloudflareTunnelRoute{
-		Domain:         fullDomain,
-		Subdomain:      sub,
-		BaseDomain:     base,
-		TargetNodeID:   targetNode.ID,
-		TargetNodeName: targetNode.Hostname,
-		TargetIP:       targetIP,
-		Port:           req.Port,
-		Upstream:       upstream,
-		ContainerID:    strings.TrimSpace(req.ContainerID),
-		ContainerName:  strings.TrimSpace(req.ContainerName),
-		ContainerImage: strings.TrimSpace(req.ContainerImage),
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	}
-
-	// Save base_domain if provided and update route in state
-	h.mu.Lock()
-	if base != "" {
-		h.state.BaseDomain = base
-	}
-	replaced := false
-	for i, existing := range h.state.Routes {
-		if strings.EqualFold(existing.Domain, fullDomain) {
-			if !h.canManageCFRoute(r.Context(), claims.UserID, existing) {
-				h.mu.Unlock()
-				http.Error(w, "forbidden: domain is already routed to a node you cannot manage", http.StatusForbidden)
-				return
-			}
-			route.CreatedAt = existing.CreatedAt
-			h.state.Routes[i] = route
-			replaced = true
-			break
+	// Replacing a route that already serves this domain requires managing that route's node too.
+	allowReplace := false
+	if existing, ok := h.tunnel.Route(fullDomain); ok {
+		if !h.canManageCFRoute(r.Context(), claims.UserID, existing) {
+			http.Error(w, "forbidden: domain is already routed to a node you cannot manage", http.StatusForbidden)
+			return
 		}
+		allowReplace = true
 	}
-	if !replaced {
-		h.state.Routes = append(h.state.Routes, route)
-	}
-	tunnelID := h.state.TunnelID
-	if err := h.saveStateLocked(); err != nil {
-		h.mu.Unlock()
-		h.loadState() // drop the unsaved in-memory change
-		http.Error(w, "could not save tunnel route", http.StatusInternalServerError)
+
+	route, err := h.tunnel.UpsertRoute(network.CloudflareRouteInput{
+		Domain: fullDomain, Subdomain: sub, BaseDomain: base, TargetNodeID: targetNode.ID,
+		TargetNodeName: targetNode.Hostname, TargetIP: targetIP, Port: req.Port,
+		ContainerID: req.ContainerID, ContainerName: req.ContainerName, ContainerImage: req.ContainerImage,
+		UserID: claims.UserID,
+	}, allowReplace)
+	if err != nil {
+		writeTunnelError(w, err, "could not save tunnel route")
 		return
 	}
-	h.mu.Unlock()
-
-	// Also sync to CaddyRoute table on Master node so existing Caddy views stay consistent
-	if h.caddySvc != nil && h.nodeSvc != nil {
-		if masterNode, err := h.nodeSvc.FindLocalNode(); err == nil && masterNode != nil {
-			_, _ = h.caddySvc.Upsert(&apps.CaddyRoute{
-				NodeID:   masterNode.ID,
-				UserID:   claims.UserID,
-				Domain:   fullDomain,
-				Upstream: upstream,
-				TLSMode:  "http_only",
-			})
-		}
-	}
-
-	// If authenticated with Cloudflare, automatically create DNS CNAME and reload tunnel
-	if h.isCertPresent() {
-		if tunnelID == "" {
-			_ = h.ensureTunnelAndRun()
-			h.mu.RLock()
-			tunnelID = h.state.TunnelID
-			h.mu.RUnlock()
-		}
-		if tunnelID != "" && !strings.HasSuffix(fullDomain, ".local") {
-			if binPath, err := h.ensureBinary(); err == nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-				defer cancel()
-				cmd := exec.CommandContext(ctx, binPath, "tunnel", "route", "dns", "--overwrite-dns", tunnelID, fullDomain)
-				cmd.Env = h.commandEnv()
-				out, dnsErr := cmd.CombinedOutput()
-				outStr := strings.TrimSpace(string(out))
-				h.appendLog("[dns] " + outStr)
-
-				h.mu.Lock()
-				route.DNSConfigured = dnsErr == nil
-				route.DNSMessage = outStr
-				_ = h.saveStateLocked()
-				h.mu.Unlock()
-			}
-		}
-		_ = h.writeConfigYAML()
-		_ = h.restartManagedTunnelProcess()
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(route)
+	_ = json.NewEncoder(w).Encode(route)
 }
 
 // DeleteRoute removes a domain route from the tunnel configuration.
@@ -1268,53 +373,23 @@ func (h *CloudflareTunnelHandler) DeleteRoute(w http.ResponseWriter, r *http.Req
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-
 	domain := strings.ToLower(strings.TrimSpace(chi.URLParam(r, "domain")))
 	if domain == "" {
 		http.Error(w, "domain is required", http.StatusBadRequest)
 		return
 	}
-
-	h.mu.Lock()
-	filtered := make([]*CloudflareTunnelRoute, 0, len(h.state.Routes))
-	found := false
-	for _, rt := range h.state.Routes {
-		if strings.EqualFold(rt.Domain, domain) {
-			if !h.canManageCFRoute(r.Context(), claims.UserID, rt) {
-				h.mu.Unlock()
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			found = true
-			continue
-		}
-		filtered = append(filtered, rt)
-	}
-	if !found {
-		h.mu.Unlock()
+	rt, ok := h.tunnel.Route(domain)
+	if !ok {
 		http.Error(w, "route not found", http.StatusNotFound)
 		return
 	}
-	previousRoutes := h.state.Routes
-	h.state.Routes = filtered
-	if err := h.saveStateLocked(); err != nil {
-		h.state.Routes = previousRoutes
-		h.mu.Unlock()
-		http.Error(w, "could not delete tunnel route", http.StatusInternalServerError)
+	if !h.canManageCFRoute(r.Context(), claims.UserID, rt) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	h.mu.Unlock()
-
-	if h.caddySvc != nil && h.nodeSvc != nil {
-		if masterNode, err := h.nodeSvc.FindLocalNode(); err == nil && masterNode != nil {
-			_ = h.caddySvc.Delete(masterNode.ID, domain)
-		}
+	if err := h.tunnel.DeleteRoute(rt.Domain); err != nil {
+		writeTunnelError(w, err, "could not delete tunnel route")
+		return
 	}
-
-	if h.isCertPresent() {
-		_ = h.writeConfigYAML()
-		_ = h.restartManagedTunnelProcess()
-	}
-
 	w.WriteHeader(http.StatusNoContent)
 }
