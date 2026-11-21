@@ -99,7 +99,6 @@ var HandlerModule = fx.Provide(
 	handler.NewNodeMetricHandler,
 	handler.NewEnrollmentHandler,
 	handler.NewHeartbeatsHandler,
-	handler.NewWSHandler,
 	handler.NewNodeCommandHandler,
 	handler.NewNodeLogHandler,
 	handler.NewNodeContainerHandler,
@@ -139,11 +138,11 @@ var InfraModule = fx.Provide(
 	fx.Annotate(
 		func(s *grpcserver.NodeAgentServer) dispatcher.ParamDispatcher { return s },
 	),
-	// Non-variadic wrapper: wire grpc + ws into MultiDispatcher.
-	// Exposed as dispatcher.NodeDispatcher (JobHandler) and scheduler.Dispatcher (Scheduler).
+	// Agents connect exclusively over gRPC (the legacy WebSocket transport was removed; agents stopped
+	// using it in v0.2.0). Exposed as dispatcher.NodeDispatcher (JobHandler) and scheduler.Dispatcher.
 	fx.Annotate(
-		func(grpc *grpcserver.NodeAgentServer, ws *handler.WSHandler) *dispatcher.MultiDispatcher {
-			return dispatcher.NewMultiDispatcher(grpc, ws)
+		func(grpc *grpcserver.NodeAgentServer) *dispatcher.MultiDispatcher {
+			return dispatcher.NewMultiDispatcher(grpc)
 		},
 		fx.As(new(dispatcher.NodeDispatcher)),
 		fx.As(new(scheduler.Dispatcher)),

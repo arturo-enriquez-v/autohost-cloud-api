@@ -24,6 +24,14 @@ import (
 	"github.com/arturo/autohost-cloud-api/internal/handler/middleware"
 )
 
+// upgrader is used for browser WebSocket connections (node terminal). CheckOrigin blocks cross-site
+// WebSocket hijacking; requests without an Origin header (non-browser clients) are allowed.
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin:     middleware.CheckWebSocketOrigin,
+}
+
 // NodeTerminalHandler bridges browser WebSocket sessions (xterm.js) to an
 // interactive PTY shell on a connected node agent over mTLS gRPC.
 type NodeTerminalHandler struct {

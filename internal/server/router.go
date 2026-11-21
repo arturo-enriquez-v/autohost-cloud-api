@@ -30,7 +30,6 @@ type RouterParams struct {
 	HeartbeatsHandler     *handler.HeartbeatsHandler
 	NodeCommandHandler    *handler.NodeCommandHandler
 	JobsHandler           *handler.JobHandler
-	WSHandler             *handler.WSHandler
 	NodeLogHandler        *handler.NodeLogHandler
 	NodeContainerHandler  *handler.NodeContainerHandler
 	NodeAlertHandler      *handler.NodeAlertHandler
@@ -165,7 +164,6 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/heartbeats", p.HeartbeatsHandler.Routes(nodeAuthMiddleware))
 		r.Mount("/node-commands", p.NodeCommandHandler.Routes(nodeAuthMiddleware))
 		r.Mount("/jobs", p.JobsHandler.Routes())
-		r.Mount("/ws", p.WSHandler.Routes(nodeAuthMiddleware))
 		r.Mount("/node-logs", p.NodeLogHandler.Routes())
 		r.Mount("/node-containers", p.NodeContainerHandler.Routes())
 		r.Mount("/node-terminal", p.NodeTerminalHandler.Routes())

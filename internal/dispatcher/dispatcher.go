@@ -20,8 +20,8 @@ type ParamDispatcher interface {
 }
 
 // MultiDispatcher tries each dispatcher in order and returns nil on the first
-// success. This lets the server dispatch jobs over gRPC or WebSocket
-// transparently: whichever transport the node is currently connected on wins.
+// success. Today agents only use gRPC, so it wraps a single dispatcher; it is kept as the
+// injection point for dispatcher.NodeDispatcher / scheduler.Dispatcher.
 type MultiDispatcher struct {
 	dispatchers []NodeDispatcher
 }
