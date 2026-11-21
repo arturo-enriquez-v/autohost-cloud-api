@@ -32,10 +32,14 @@ func (r *streamRegistry) register(nodeID string, ns *nodeStream) {
 	r.streams[nodeID] = ns
 }
 
-func (r *streamRegistry) unregister(nodeID string) {
+// unregister removes nodeID's stream only if it is still ns. When a node reconnects, the new stream is
+// registered before the old one finishes; the old stream's cleanup must not drop the new registration.
+func (r *streamRegistry) unregister(nodeID string, ns *nodeStream) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.streams, nodeID)
+	if cur, ok := r.streams[nodeID]; ok && cur == ns {
+		delete(r.streams, nodeID)
+	}
 }
 
 func (r *streamRegistry) get(nodeID string) (*nodeStream, bool) {

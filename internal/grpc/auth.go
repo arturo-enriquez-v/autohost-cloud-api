@@ -8,6 +8,8 @@ import (
 	"crypto/tls"
 	"log"
 	"strings"
+	"sync"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -76,8 +78,14 @@ func (s *NodeAgentServer) nodeIDFromCtx(ctx context.Context) (string, error) {
 		return tok.NodeID, nil
 	}
 
-	// If no bearer token was sent, allow pure mTLS authentication when certNodeID is verified.
+	// If no bearer token was sent, allow pure mTLS authentication when certNodeID is verified,
+	// but only while the node is still enrolled: client certificates live for a year and cannot be
+	// revoked at the TLS layer, so deleting the node or revoking its token must cut access here.
 	if certNodeID != "" {
+		if !s.nodeEnrollmentActive(certNodeID) {
+			log.Printf("[gRPC] auth: rejecting certificate for node %s: node deleted or tokens revoked", certNodeID)
+			return "", status.Error(codes.Unauthenticated, "node enrollment revoked")
+		}
 		return certNodeID, nil
 	}
 
@@ -87,4 +95,42 @@ func (s *NodeAgentServer) nodeIDFromCtx(ctx context.Context) (string, error) {
 	}
 	log.Printf("[gRPC] auth: missing authorization header")
 	return "", status.Error(codes.Unauthenticated, "missing authorization header")
+}
+
+// enrollmentCacheTTL bounds how long a positive/negative enrollment check is reused for unary calls.
+const enrollmentCacheTTL = 30 * time.Second
+
+type enrollmentCacheEntry struct {
+	active    bool
+	expiresAt time.Time
+}
+
+// enrollmentCache memoizes HasActiveToken lookups so high-frequency unary RPCs (metrics) do not hit the DB
+// on every call. Entries are short-lived so revocations take effect within enrollmentCacheTTL.
+var enrollmentCache sync.Map // nodeID -> enrollmentCacheEntry
+
+// nodeEnrollmentActive reports whether nodeID still has a non-revoked token (cached briefly).
+// Lookup errors fail closed.
+func (s *NodeAgentServer) nodeEnrollmentActive(nodeID string) bool {
+	if v, ok := enrollmentCache.Load(nodeID); ok {
+		if e := v.(enrollmentCacheEntry); time.Now().Before(e.expiresAt) {
+			return e.active
+		}
+	}
+	active := s.checkEnrollmentUncached(nodeID)
+	enrollmentCache.Store(nodeID, enrollmentCacheEntry{active: active, expiresAt: time.Now().Add(enrollmentCacheTTL)})
+	return active
+}
+
+// checkEnrollmentUncached queries the token store directly (no cache). Errors fail closed.
+func (s *NodeAgentServer) checkEnrollmentUncached(nodeID string) bool {
+	if s.tokenSvc == nil {
+		return false
+	}
+	ok, err := s.tokenSvc.HasActiveToken(nodeID)
+	if err != nil {
+		log.Printf("[gRPC] auth: enrollment check for node %s failed: %v", nodeID, err)
+		return false
+	}
+	return ok
 }

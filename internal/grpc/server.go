@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
@@ -183,7 +185,7 @@ func (s *NodeAgentServer) Connect(
 		_ = s.redis.Set(context.Background(), fmt.Sprintf("nodes:%s:online", nodeID), "1", 2*time.Minute).Err()
 	}
 	defer func() {
-		s.registry.unregister(nodeID)
+		s.registry.unregister(nodeID, ns)
 		close(ns.send)
 		if s.terminalBroker != nil {
 			s.terminalBroker.closeAllForNode(nodeID)
@@ -277,6 +279,11 @@ func (s *NodeAgentServer) Connect(
 		sendErr <- nil
 	}()
 
+	// Re-validate the node's enrollment periodically so a long-lived stream is cut shortly after the node
+	// is deleted or its tokens are revoked (the TLS client certificate itself stays valid for a year).
+	const enrollmentRecheckInterval = time.Minute
+	nextEnrollmentCheck := time.Now().Add(enrollmentRecheckInterval)
+
 	for {
 		select {
 		case err := <-sendErr:
@@ -287,6 +294,16 @@ func (s *NodeAgentServer) Connect(
 		in, recvErr := stream.Recv()
 		if recvErr != nil {
 			break
+		}
+
+		if time.Now().After(nextEnrollmentCheck) {
+			nextEnrollmentCheck = time.Now().Add(enrollmentRecheckInterval)
+			active := s.checkEnrollmentUncached(nodeID)
+			enrollmentCache.Store(nodeID, enrollmentCacheEntry{active: active, expiresAt: time.Now().Add(enrollmentCacheTTL)})
+			if !active {
+				log.Printf("[gRPC] closing stream for node %s: node deleted or tokens revoked", nodeID)
+				return status.Error(codes.Unauthenticated, "node enrollment revoked")
+			}
 		}
 
 		switch p := in.Payload.(type) {

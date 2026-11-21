@@ -50,6 +50,19 @@ func (r *NodeTokenRepo) UpdateLastSeen(tokenID string, lastSeenAt time.Time) err
 	return nil
 }
 
+// HasActiveToken reports whether the node still has at least one non-revoked token.
+// Deleted nodes have no tokens (ON DELETE CASCADE), so this also covers node deletion.
+func (r *NodeTokenRepo) HasActiveToken(nodeID string) (bool, error) {
+	var ok bool
+	err := r.DB.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1 FROM node_tokens
+			WHERE node_id = $1 AND revoked_at IS NULL
+		)
+	`, nodeID).Scan(&ok)
+	return ok, err
+}
+
 func (r *NodeTokenRepo) RevokeByNodeID(nodeID string) error {
 	_, err := r.DB.Exec(`
 		UPDATE node_tokens

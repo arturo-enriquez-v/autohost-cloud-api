@@ -27,6 +27,7 @@ type NodeTokenRepository interface {
 	FindNodeTokenByHash(tokenHash string) (*NodeToken, error)
 	UpdateLastSeen(tokenID string, lastSeenAt time.Time) error
 	RevokeByNodeID(nodeID string) error
+	HasActiveToken(nodeID string) (bool, error)
 }
 
 type NodeTokenService struct {
@@ -49,6 +50,14 @@ func (s *NodeTokenService) FindNodeTokenByHash(tokenHash string) (*NodeToken, er
 		return nil, ErrInvalidNodeTokenData
 	}
 	return s.repo.FindNodeTokenByHash(tokenHash)
+}
+
+// HasActiveToken reports whether nodeID is still enrolled with a non-revoked token.
+func (s *NodeTokenService) HasActiveToken(nodeID string) (bool, error) {
+	if nodeID == "" {
+		return false, ErrInvalidNodeTokenData
+	}
+	return s.repo.HasActiveToken(nodeID)
 }
 
 func (s *NodeTokenService) RevokeByNodeID(nodeID string) error {

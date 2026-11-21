@@ -67,6 +67,11 @@ func (m *mockNodeTokenRepo) UpdateLastSeen(tokenID string, lastSeenAt time.Time)
 	return nil
 }
 
+func (m *mockNodeTokenRepo) HasActiveToken(nodeID string) (bool, error) {
+	_, ok := m.tokens[nodeID]
+	return ok, nil
+}
+
 func (m *mockNodeTokenRepo) RevokeByNodeID(nodeID string) error {
 	return nil
 }

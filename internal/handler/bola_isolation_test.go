@@ -106,6 +106,7 @@ func (m *MockNodeTokenRepo) FindNodeTokenByHash(tokenHash string) (*node.NodeTok
 }
 func (m *MockNodeTokenRepo) UpdateLastSeen(tokenID string, lastSeenAt time.Time) error { return nil }
 func (m *MockNodeTokenRepo) RevokeByNodeID(nodeID string) error                        { return nil }
+func (m *MockNodeTokenRepo) HasActiveToken(nodeID string) (bool, error)                { return true, nil }
 
 // MockCaddyRouteRepo implements apps.CaddyRouteRepository
 type MockCaddyRouteRepo struct{}
