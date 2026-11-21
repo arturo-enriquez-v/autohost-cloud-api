@@ -28,7 +28,7 @@ Una vez finalizado, abre `http://<IP-DE-TU-SERVIDOR>:3000` para completar el asi
 - Docker & Docker Compose
 - [Air](https://github.com/air-verse/air) (solo para desarrollo con live reload): `go install github.com/air-verse/air@latest`
 
-> **Nota:** tras instalar Air, asegúrate de que `~/go/bin` esté en tu `PATH`, o simplemente usa `make run-air` que ya resuelve la ruta automáticamente.
+> **Nota:** tras instalar Air, asegúrate de que `~/go/bin` esté en tu `PATH`, o simplemente usa `make dev`, que ya resuelve la ruta automáticamente.
 
 ## Arranque rápido
 
@@ -195,15 +195,18 @@ La API REST estará en `http://localhost:8080` y el servidor gRPC en `localhost:
 ## Comandos Make
 
 ```bash
-make run              # Ejecutar la aplicación
-make run-air          # Levantar docker compose + live reload con Air
-make build            # Compilar binario en bin/
+make help             # Lista todos los comandos
+make dev              # docker compose + live reload con Air (REST + gRPC)
+make build            # Compilar bin/autohost-cloud-api
 make test             # Ejecutar tests
 make docker           # Construir imagen Docker
 make migrate-up       # Aplicar migraciones pendientes
 make migrate-down     # Revertir última migración
 make migrate-version  # Ver versión de migración actual
 ```
+
+Los entornos de prueba (servidores Incus, nodo real en la LAN) viven en `autohost-agent`; desde aquí
+también funcionan `make lab-*` y `make node-*` (ver `make -C ../autohost-agent help`).
 
 ---
 
