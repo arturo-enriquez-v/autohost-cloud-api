@@ -91,6 +91,10 @@ func (h *ScheduledTaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if status, msg := h.authorizeScheduledCommand(claims.UserID, req.NodeID, req.CommandName); status != http.StatusOK {
+		http.Error(w, msg, status)
+		return
+	}
 
 	enabled := true
 	if req.Enabled != nil {
@@ -129,6 +133,22 @@ type updateTaskRequest struct {
 	Enabled         bool              `json:"enabled"`
 }
 
+// authorizeScheduledCommand applies the same allow-list as POST /v1/jobs (scheduled tasks never carry
+// params) and checks the caller holds the permission the command requires on the node.
+func (h *ScheduledTaskHandler) authorizeScheduledCommand(userID, nodeID, commandName string) (int, string) {
+	perm, err := jobs.ResolveUserJobPermission(commandName, "")
+	if err != nil {
+		return http.StatusBadRequest, err.Error()
+	}
+	if h.rbac == nil {
+		return http.StatusForbidden, "forbidden"
+	}
+	if ok, err := h.rbac.HasNodePermission(userID, nodeID, perm); err != nil || !ok {
+		return http.StatusForbidden, "forbidden"
+	}
+	return http.StatusOK, ""
+}
+
 // Update modifies an existing scheduled task.
 // PUT /v1/scheduled-tasks/{id}
 func (h *ScheduledTaskHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -157,6 +177,11 @@ func (h *ScheduledTaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var req updateTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.CommandID == "" || req.CommandName == "" || req.ScheduleType == "" {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if status, msg := h.authorizeScheduledCommand(claims.UserID, existing.NodeID, req.CommandName); status != http.StatusOK {
+		http.Error(w, msg, status)
 		return
 	}
 

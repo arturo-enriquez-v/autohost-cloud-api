@@ -74,28 +74,19 @@ func (h *JobHandler) Dispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.rbacSvc != nil {
-		requiredPerm := identity.PermJobsRun
-		if strings.HasPrefix(req.CommandName, "container.") {
-			parts := strings.Split(req.CommandName, ".")
-			if len(parts) >= 2 && (parts[1] == "start" || parts[1] == "stop" || parts[1] == "restart" || parts[1] == "remove") {
-				requiredPerm = identity.PermContainersAction
-			} else {
-				requiredPerm = identity.PermContainersDeploy
-			}
-		} else if strings.HasPrefix(req.CommandName, "marketplace.") {
-			requiredPerm = identity.PermContainersDeploy
-		} else if strings.HasPrefix(req.CommandName, "vm.") {
-			if strings.HasPrefix(req.CommandName, "vm.create") || strings.HasPrefix(req.CommandName, "vm.destroy") {
-				requiredPerm = identity.PermVMsManage
-			} else {
-				requiredPerm = identity.PermVMsAction
-			}
-		}
-		if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, req.NodeID, requiredPerm); err != nil || !ok {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
+	// Only allow-listed commands can be dispatched directly, each with its own required permission.
+	requiredPerm, policyErr := jobs.ResolveUserJobPermission(req.CommandName, req.Params)
+	if policyErr != nil {
+		http.Error(w, policyErr.Error(), http.StatusBadRequest)
+		return
+	}
+	if h.rbacSvc == nil {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if ok, err := h.rbacSvc.HasNodePermission(claims.UserID, req.NodeID, requiredPerm); err != nil || !ok {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
 	}
 
 	// Validate whether container action is locked

@@ -62,6 +62,15 @@ func (s *Scheduler) runDue() {
 }
 
 func (s *Scheduler) dispatch(task *jobs.ScheduledTask) {
+	// Tasks created before the command allow-list existed may reference commands that are no longer
+	// dispatchable without validated parameters. Skip them instead of running them.
+	if _, err := jobs.ResolveUserJobPermission(task.CommandName, ""); err != nil {
+		log.Printf("[scheduler] skipping task %s: command %q not allowed: %v", task.ID, task.CommandName, err)
+		if err := s.taskSvc.MarkRan(task.ID, nil); err != nil {
+			log.Printf("[scheduler] error advancing skipped task %s: %v", task.ID, err)
+		}
+		return
+	}
 	j, err := s.jobSvc.Dispatch(task.NodeID, task.CommandName, jobs.CommandTypeCustom)
 	if err != nil {
 		log.Printf("[scheduler] error creating job for task %s: %v", task.ID, err)
