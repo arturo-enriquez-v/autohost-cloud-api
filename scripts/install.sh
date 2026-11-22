@@ -463,6 +463,9 @@ services:
       AUTOHOST_STORAGE_DIR: /var/lib/autohost
       AUTOHOST_LOCAL_AGENT_DIR: /etc/autohost
       LOCAL_AGENT_GRPC_ADDRESS: ${LOCAL_AGENT_GRPC_ADDRESS:-127.0.0.1:9090}
+      # URL nodes and guest VMs use to reach the API; empty = the local node's VPN/LAN IP on API_PORT
+      API_PUBLIC_URL: ${API_PUBLIC_URL:-}
+      API_PORT: ${API_PORT:-8080}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     volumes:
       - ${AUTOHOST_STORAGE_DIR:-/var/lib/autohost}:/var/lib/autohost
