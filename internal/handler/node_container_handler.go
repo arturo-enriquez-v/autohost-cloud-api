@@ -29,6 +29,10 @@ type NodeContainerHandler struct {
 	settingSvc         *node.ContainerSettingService
 	redis              *redis.Client
 	rbacSvc            *identity.RBACService
+
+	// snapshots and snapshotTimeout override how listContainers reaches the agent (tests only).
+	snapshots       containerSnapshotSource
+	snapshotTimeout time.Duration
 }
 
 func (h *NodeContainerHandler) SetRBACService(rbac *identity.RBACService) {
@@ -55,6 +59,7 @@ func (h *NodeContainerHandler) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Group(func(protected chi.Router) {
 		protected.Use(middleware.Auth)
+		protected.With(h.nodePerm(identity.PermContainersRead)).Get("/{nodeId}", h.listContainers)
 		protected.With(h.nodePerm(identity.PermContainersRead)).Get("/{nodeId}/stream", h.streamContainers)
 		protected.With(h.nodePerm(identity.PermContainersRead)).Get("/{nodeId}/metrics", h.getContainerMetrics)
 		protected.With(h.nodePerm(identity.PermContainersRead)).Get("/{nodeId}/settings", h.getContainerSettings)
@@ -211,23 +216,7 @@ func (h *NodeContainerHandler) streamContainers(w http.ResponseWriter, r *http.R
 				if !ok {
 					return
 				}
-				list := sseContainerList{
-					Error:      snapshot.GetError(),
-					Containers: make([]sseContainerInfo, 0, len(snapshot.GetContainers())),
-				}
-				for _, c := range snapshot.GetContainers() {
-					list.Containers = append(list.Containers, sseContainerInfo{
-						ID:      c.GetId(),
-						Name:    c.GetName(),
-						Image:   c.GetImage(),
-						State:   c.GetState(),
-						Status:  c.GetStatus(),
-						CPU:     c.GetCpu(),
-						Mem:     c.GetMem(),
-						MemPerc: c.GetMemPerc(),
-					})
-				}
-				data, _ := json.Marshal(list)
+				data, _ := json.Marshal(containerListFromPayload(snapshot))
 				if _, err := fmt.Fprintf(w, "event: containers\ndata: %s\n\n", data); err != nil {
 					log.Printf("[SSE] container stream write error for node %s: %v", nodeID, err)
 					return

@@ -78,7 +78,7 @@ tags:
       with a default role) and/or explicit per-node grants. Only admins create projects; a project can be
       managed (members, nodes) by its owner or any admin.
   - name: Containers
-    description: Docker containers on a node, streamed live from the agent.
+    description: Docker containers on a node, listed once or streamed live from the agent.
   - name: Logs
     description: System logs (journald) of a node, streamed live from the agent.
   - name: Files
@@ -1865,6 +1865,55 @@ paths:
           $ref: "#/components/responses/ProjectNotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+
+  /v1/node-containers/{nodeId}:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      tags: [Containers]
+      operationId: listContainers
+      summary: List the node's containers
+      description: |
+        Requires `containers:read`. Asks the agent for a fresh snapshot and waits up to 10 seconds. If the
+        node is offline, does not answer in time or the request fails, returns the last snapshot seen in the
+        past 10 minutes with `cached: true`. For live updates use the stream.
+      responses:
+        "200":
+          description: The node's containers.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The node is not connected and there is no recent snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: node is not connected
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+        "503":
+          description: This server cannot reach agents (no Redis and no gRPC server in this process).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: container listing is not available on this server
+        "504":
+          description: The agent did not answer in time and there is no recent snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: node did not report its containers in time
 
   /v1/node-containers/{nodeId}/stream:
     parameters:
@@ -7408,6 +7457,16 @@ components:
         error:
           type: string
           description: Set when the agent could not list containers (e.g. Docker is not running).
+
+    ContainerListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ContainerList"
+        - type: object
+          required: [cached]
+          properties:
+            cached:
+              type: boolean
+              description: True when the agent did not answer and this is the last snapshot seen (up to 10 minutes old).
 
     ContainerMetricHistoryPoint:
       type: object
