@@ -128,6 +128,17 @@ tags:
     description: |
       Network snapshot of a node: interface counters, listening ports, VPN peers, active connections and
       recent HTTP requests. The agent reports it with its node token; users read the latest one.
+  - name: External logs
+    description: |
+      Events that your own applications or scripts send to AutoHost with an ingestion token, and that you
+      browse in the dashboard. Logs and tokens belong to the user who created the token. These endpoints
+      answer errors as `{"error": "..."}`, but with a `text/plain` content type.
+  - name: Log diagnostics
+    description: |
+      One-off collection of a node's logs (systemd units or containers) that the agent sanitizes and
+      analyzes. The API enriches the report with AI when it is configured. A diagnostic goes from `pending`
+      (waiting for the agent) to `preview` (report ready), and then to `approved` or `rejected`.
+      `pending` and `rejected` diagnostics are deleted after 2 days, and `approved` ones after 30.
   - name: Alerts
     description: |
       Threshold alerts per node (CPU, RAM, disk, offline), sent to Telegram, and the history of fired
@@ -4538,6 +4549,508 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /v1/external-logs/ingest:
+    post:
+      tags: [External logs]
+      operationId: ingestExternalLog
+      summary: Send a log entry
+      description: |
+        Stores one entry for the token's owner. `POST /v1/external-logs/ingest/ingest` does the same (an
+        unintended alias). The body is limited to 2 MB.
+      security:
+        - externalLogToken: []
+        - externalLogApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExternalLogInput"
+      responses:
+        "201":
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, log]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  log:
+                    $ref: "#/components/schemas/ExternalLog"
+        "400":
+          description: Malformed JSON, `title` missing, or the entry could not be stored.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ['{"error":"log title is required"}']
+        "401":
+          description: Missing, unknown or revoked token.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ['{"error":"token has been revoked"}']
+
+  /v1/external-logs/ingest/ingest:
+    post:
+      tags: [External logs]
+      operationId: ingestExternalLogAlias
+      summary: Send a log entry (alias)
+      deprecated: true
+      description: Same as `POST /v1/external-logs/ingest`. Do not use it; it will be removed.
+      security:
+        - externalLogToken: []
+        - externalLogApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExternalLogInput"
+      responses:
+        "201":
+          description: Stored. Same body as `POST /v1/external-logs/ingest`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, log]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  log:
+                    $ref: "#/components/schemas/ExternalLog"
+        "400":
+          description: Malformed JSON, `title` missing, or the entry could not be stored.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: Missing, unknown or revoked token.
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /v1/external-logs:
+    get:
+      tags: [External logs]
+      operationId: listExternalLogs
+      summary: List your external logs
+      description: Newest first. Invalid filter or paging values are ignored.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Values above 200 are capped.
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: node_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: level
+          in: query
+          schema:
+            $ref: "#/components/schemas/ExternalLogLevel"
+        - name: tag
+          in: query
+          description: Entries that have this tag.
+          schema:
+            type: string
+        - name: search
+          in: query
+          description: Text to look for in the entries.
+          schema:
+            type: string
+        - name: from
+          in: query
+          description: First day to include (UTC).
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          description: Last day to include (UTC, inclusive).
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: A page of entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [logs, total]
+                properties:
+                  logs:
+                    type: [array, "null"]
+                    items:
+                      $ref: "#/components/schemas/ExternalLog"
+                  total:
+                    type: integer
+                    description: Entries matching the filters, across all pages.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ExternalLogInternalError"
+    delete:
+      tags: [External logs]
+      operationId: clearExternalLogs
+      summary: Delete all your external logs
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessTrue"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ExternalLogInternalError"
+
+  /v1/external-logs/{id}:
+    delete:
+      tags: [External logs]
+      operationId: deleteExternalLog
+      summary: Delete an external log entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessTrue"
+        "400":
+          description: The entry does not exist or is not yours (also returned for other errors).
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ['{"error":"log entry not found"}']
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/external-log-tokens:
+    get:
+      tags: [External logs]
+      operationId: listExternalLogTokens
+      summary: List your ingestion tokens
+      description: Includes revoked tokens. The secret is never returned again, only its prefix.
+      responses:
+        "200":
+          description: The tokens and the URL to send logs to.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tokens, ingest_url]
+                properties:
+                  tokens:
+                    type: [array, "null"]
+                    items:
+                      $ref: "#/components/schemas/ExternalLogToken"
+                  ingest_url:
+                    $ref: "#/components/schemas/ExternalLogIngestURL"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ExternalLogInternalError"
+    post:
+      tags: [External logs]
+      operationId: createExternalLogToken
+      summary: Create an ingestion token
+      description: The full token is only returned in this response; store it now.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  examples: [billing-service]
+                node_id:
+                  type: string
+                  format: uuid
+                  description: Default node for entries sent with this token (an entry's own `node_id` wins).
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [raw_token, token, ingest_url]
+                properties:
+                  raw_token:
+                    type: string
+                    description: The secret token.
+                    examples: [ahl_sec_3f9a...]
+                  token:
+                    $ref: "#/components/schemas/ExternalLogToken"
+                  ingest_url:
+                    $ref: "#/components/schemas/ExternalLogIngestURL"
+        "400":
+          description: Malformed JSON, `name` missing, or the token could not be stored.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ['{"error":"token name is required"}']
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/external-log-tokens/{id}:
+    delete:
+      tags: [External logs]
+      operationId: revokeExternalLogToken
+      summary: Revoke an ingestion token
+      description: The token stops working at once; it stays listed with `revoked_at` set. Its logs are kept.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessTrue"
+        "400":
+          description: The token does not exist, is not yours or is already revoked (also returned for other errors).
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ['{"error":"token not found or already revoked"}']
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/log-diagnostics/collect:
+    post:
+      tags: [Log diagnostics]
+      operationId: collectLogDiagnostic
+      summary: Collect a node's logs for a diagnostic
+      description: |
+        Requires `logs:manage` on the node, and the agent must be connected over gRPC. Creates a `pending`
+        diagnostic and asks the agent to collect the logs. Poll `GET /v1/log-diagnostics/{id}` until its
+        status is `preview`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [node_id]
+              description: Give at least one source or set `include_containers`.
+              properties:
+                node_id:
+                  type: string
+                  format: uuid
+                sources:
+                  type: array
+                  maxItems: 5
+                  description: A systemd unit (read with journalctl), or `docker:<container>` for a container.
+                  items:
+                    type: string
+                  examples: [[nginx.service, "docker:postgres"]]
+                lines_per_source:
+                  type: integer
+                  minimum: 1
+                  default: 200
+                  description: The agent caps it at 500.
+                include_containers:
+                  type: boolean
+                  default: false
+                  description: Also collect every running container, up to 5 sources in total.
+      responses:
+        "202":
+          description: Collection requested.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, diagnostic, message]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  diagnostic:
+                    $ref: "#/components/schemas/LogDiagnostic"
+                  message:
+                    type: string
+        "400":
+          description: Malformed JSON, `node_id` missing, no sources, or more than 5 sources.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: maximum 5 sources per collection request
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          $ref: "#/components/responses/NodeNotFoundJSON"
+        "500":
+          description: The command could not be sent to the agent. The diagnostic stays `pending`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The node's agent is not connected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/log-diagnostics:
+    get:
+      tags: [Log diagnostics]
+      operationId: listLogDiagnostics
+      summary: List your diagnostics
+      description: Only diagnostics you requested. Invalid paging values are ignored.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Values above 100 are capped.
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: node_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/LogDiagnosticStatus"
+        - name: system_health
+          in: query
+          schema:
+            $ref: "#/components/schemas/LogDiagnosticHealth"
+      responses:
+        "200":
+          description: A page of diagnostics, with their full reports.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [diagnostics, total]
+                properties:
+                  diagnostics:
+                    type: [array, "null"]
+                    items:
+                      $ref: "#/components/schemas/LogDiagnostic"
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/log-diagnostics/{id}:
+    parameters:
+      - $ref: "#/components/parameters/LogDiagnosticIDPath"
+    get:
+      tags: [Log diagnostics]
+      operationId: getLogDiagnostic
+      summary: Get a diagnostic
+      responses:
+        "200":
+          description: The diagnostic.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [diagnostic]
+                properties:
+                  diagnostic:
+                    $ref: "#/components/schemas/LogDiagnostic"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: The diagnostic does not exist or is not yours (also returned for other errors).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: diagnostic not found
+    delete:
+      tags: [Log diagnostics]
+      operationId: deleteLogDiagnostic
+      summary: Delete a diagnostic
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessTrue"
+        "400":
+          $ref: "#/components/responses/LogDiagnosticBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/log-diagnostics/{id}/approve:
+    parameters:
+      - $ref: "#/components/parameters/LogDiagnosticIDPath"
+    post:
+      tags: [Log diagnostics]
+      operationId: approveLogDiagnostic
+      summary: Approve a diagnostic
+      description: Only a diagnostic in `preview` can be approved. It is then kept for 30 days.
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessTrue"
+        "400":
+          $ref: "#/components/responses/LogDiagnosticBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/log-diagnostics/{id}/reject:
+    parameters:
+      - $ref: "#/components/parameters/LogDiagnosticIDPath"
+    post:
+      tags: [Log diagnostics]
+      operationId: rejectLogDiagnostic
+      summary: Reject a diagnostic
+      description: Only a diagnostic in `preview` can be rejected. It is then deleted after 2 days.
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessTrue"
+        "400":
+          $ref: "#/components/responses/LogDiagnosticBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /v1/node-alerts/{nodeId}:
     parameters:
       - $ref: "#/components/parameters/NodeIDPathNodeId"
@@ -5063,8 +5576,27 @@ components:
       scheme: bearer
       description: |
         Node token (`autohost-node_...`) issued to an agent at enrollment. Only accepted on agent routes.
+    externalLogToken:
+      type: http
+      scheme: bearer
+      description: |
+        Ingestion token (`ahl_sec_...`) from `POST /v1/external-log-tokens`. Also accepted as a bare
+        `Authorization` value (without `Bearer`). Only accepted by the ingest endpoint.
+    externalLogApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Same ingestion token, for clients that prefer an API key header.
 
   parameters:
+    LogDiagnosticIDPath:
+      name: id
+      in: path
+      required: true
+      description: Diagnostic ID.
+      schema:
+        type: string
+        format: uuid
     MonitorIDPath:
       name: id
       in: path
@@ -5433,6 +5965,29 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/VPNKey"
+    SuccessTrue:
+      description: Done.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SuccessTrue"
+    ExternalLogInternalError:
+      description: Unexpected server error.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ['{"error":"could not fetch external logs"}']
+    LogDiagnosticBadRequest:
+      description: |
+        The diagnostic does not exist, is not yours or is not in the right status (also returned for other
+        errors).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: no preview diagnostic found to approve
   schemas:
     Error:
       type: object
@@ -7154,6 +7709,174 @@ components:
           type: [array, "null"]
           items:
             $ref: "#/components/schemas/HTTPRequestLog"
+
+    SuccessTrue:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+          const: true
+
+    ExternalLogLevel:
+      type: string
+      enum: [debug, info, warning, error, critical]
+
+    ExternalLogIngestURL:
+      type: string
+      format: uri
+      description: |
+        URL to send logs to: on the master node's VPN or local IP when it is known, otherwise from
+        `NEXT_PUBLIC_API_URL` or the request host.
+      examples: ["http://100.64.0.1:8080/v1/external-logs/ingest"]
+
+    ExternalLogInput:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          examples: [Payment failed]
+        level:
+          type: string
+          description: |
+            One of `debug`, `info`, `warning`, `error`, `critical` (case-insensitive; `alerta` means
+            `warning`). Missing or unknown values become `info`.
+          default: info
+        message:
+          type: string
+        tags:
+          description: A list of tags, or one string with comma-separated tags.
+          oneOf:
+            - type: array
+              items:
+                type: string
+            - type: string
+          examples: [[billing, stripe], "billing,stripe"]
+        node_id:
+          type: string
+          format: uuid
+          description: Node the entry is about. Defaults to the token's node.
+        metadata:
+          description: Any JSON value, stored as is.
+
+    ExternalLog:
+      type: object
+      required: [id, user_id, title, level, tags, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        token_id:
+          type: string
+          format: uuid
+          description: Token the entry was sent with.
+        title:
+          type: string
+        level:
+          $ref: "#/components/schemas/ExternalLogLevel"
+        message:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        metadata:
+          description: The `metadata` sent with the entry.
+        created_at:
+          type: string
+          format: date-time
+
+    ExternalLogToken:
+      type: object
+      required: [id, user_id, name, token_prefix, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        token_prefix:
+          type: string
+          description: First characters of the token, to recognize it.
+          examples: [ahl_sec_3f9a...]
+        node_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+          description: Last time the token was used.
+        revoked_at:
+          type: string
+          format: date-time
+
+    LogDiagnosticStatus:
+      type: string
+      enum: [pending, preview, approved, rejected]
+
+    LogDiagnosticHealth:
+      type: string
+      enum: [HEALTHY, DEGRADED, CRITICAL]
+
+    LogDiagnostic:
+      type: object
+      required: [id, user_id, node_id, request_id, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        request_id:
+          type: string
+          format: uuid
+          description: ID of the collection request sent to the agent.
+        status:
+          $ref: "#/components/schemas/LogDiagnosticStatus"
+        diagnostic_json:
+          type: [object, "null"]
+          description: |
+            The report, from `preview` on: the agent's own analysis, or the AI one when it is configured.
+            Both have `summary`, `system_health`, `issues`, `security_insights` and `detected_patterns`, but
+            the AI report is not validated.
+        sources:
+          type: [array, "null"]
+          description: The collected logs, sanitized by the agent, one entry per source.
+          items:
+            type: object
+            properties:
+              source:
+                type: string
+              raw_logs:
+                type: string
+                description: "The log lines, or `ERROR: ...` if the source could not be read."
+              line_count:
+                type: integer
+        system_health:
+          $ref: "#/components/schemas/LogDiagnosticHealth"
+        created_at:
+          type: string
+          format: date-time
+        approved_at:
+          type: string
+          format: date-time
 
     NodeAlertConfigRequest:
       type: object

@@ -24,9 +24,6 @@ var pendingDocPrefixes = []string{
 	"/v1/marketplace",
 	"/v1/webhooks",
 	"/v1/telegram-bots",
-	"/v1/external-logs",
-	"/v1/external-log-tokens",
-	"/v1/log-diagnostics",
 	"/v1/notifications",
 }
 
