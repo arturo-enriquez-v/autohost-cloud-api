@@ -19,10 +19,7 @@ import (
 // pendingDocPrefixes lists route prefixes whose module is not documented in api/openapi.yaml yet. Routes
 // under them are allowed to be missing from the spec. Remove a prefix once its module is documented; the
 // test flags prefixes that are already fully covered so this list only shrinks.
-var pendingDocPrefixes = []string{
-	"/v1/plans",
-	"/v1/marketplace",
-}
+var pendingDocPrefixes = []string{}
 
 var pathParam = regexp.MustCompile(`\{[^}]*\}`)
 

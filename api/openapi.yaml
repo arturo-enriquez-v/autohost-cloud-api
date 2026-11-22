@@ -24,9 +24,10 @@ info:
     the API answers `429` with a `Retry-After` header in seconds.
 
     ## Coverage
-    This spec is being written module by module. `internal/server/openapi_coverage_test.go` fails when a
-    route exists in the router but not here (unless its module is still listed as pending), or when the
-    spec documents a route that no longer exists.
+    Every REST route is documented here. `internal/server/openapi_coverage_test.go` fails when a route
+    exists in the router but not here, or when the spec documents a route that no longer exists. WebSocket
+    and SSE routes are listed, though not every message they carry; the agent's gRPC API (`proto/`) is
+    not covered.
   license:
     name: AGPL-3.0-only
     identifier: AGPL-3.0-only
@@ -149,6 +150,12 @@ tags:
     description: |
       Unread counters and recent items for the dashboard's notification bell: alert events and external
       logs created after the user last acknowledged them.
+  - name: Marketplace
+    description: |
+      Catalog of ready-made apps (Docker Compose templates) and their installation on nodes. Installing an app
+      creates an `install_app` job; the app's status follows that job's result.
+  - name: Usage
+    description: Resource usage counters of the current user.
   - name: Alerts
     description: |
       Threshold alerts per node (CPU, RAM, disk, offline), sent to Telegram, and the history of fired
@@ -5337,6 +5344,161 @@ paths:
         "500":
           $ref: "#/components/responses/NotificationInternalError"
 
+  /v1/marketplace/apps:
+    get:
+      tags: [Marketplace]
+      operationId: listMarketplaceApps
+      summary: List the app catalog
+      responses:
+        "200":
+          description: The catalog.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MarketplaceCatalogEntry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/marketplace/apps/deploy:
+    post:
+      tags: [Marketplace]
+      operationId: deployMarketplaceApp
+      summary: Install an app on a node
+      description: |
+        Requires `containers:deploy` on the node. Uses the catalog template for `app_name`, or `compose` if
+        given (then `app_name` does not need to be in the catalog). Creates an `install_app` job with the
+        compose file and settings; if the node is not connected, it receives the job when it reconnects. The
+        app is `installing` until the job finishes, then `running` or `failed`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [node_id, app_name]
+              properties:
+                node_id:
+                  type: string
+                  format: uuid
+                app_name:
+                  type: string
+                  examples: [nextcloud]
+                compose:
+                  type: string
+                  description: A Docker Compose file to use instead of the catalog template.
+                env_vars:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Values for the app's variables, by `key` (see `env_vars` in the catalog).
+                  examples: [{"service-name": nextcloud, port: "8080"}]
+                devices:
+                  type: array
+                  items:
+                    type: string
+                  description: Host devices to pass to the containers.
+                  examples: [[/dev/dri]]
+                cap_add:
+                  type: array
+                  items:
+                    type: string
+                  description: Linux capabilities to add to the containers.
+                puid:
+                  type: string
+                  description: User ID the containers run as, for images that support it.
+                pgid:
+                  type: string
+                  description: Group ID the containers run as, for images that support it.
+      responses:
+        "201":
+          description: Installation started.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [marketplace_app_id, job_id, app_name, status]
+                properties:
+                  marketplace_app_id:
+                    type: string
+                    format: uuid
+                  job_id:
+                    type: string
+                    format: uuid
+                  app_name:
+                    type: string
+                  status:
+                    type: string
+                    const: installing
+        "400":
+          description: Malformed JSON, `node_id` or `app_name` missing, or an app not in the catalog (without `compose`).
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ['app "foo" not found in catalog']
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/marketplace/apps/node/{nodeID}:
+    get:
+      tags: [Marketplace]
+      operationId: listNodeMarketplaceApps
+      summary: List the apps installed on a node
+      description: Requires `containers:read` on the node. Includes failed and in-progress installations.
+      parameters:
+        - name: nodeID
+          in: path
+          required: true
+          description: Node ID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The node's apps.
+          content:
+            application/json:
+              schema:
+                type: [array, "null"]
+                items:
+                  $ref: "#/components/schemas/MarketplaceApp"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/plans:
+    get:
+      tags: [Usage]
+      operationId: getUsage
+      summary: Get your resource usage
+      description: Same as `GET /v1/plans/usage`.
+      responses:
+        "200":
+          $ref: "#/components/responses/Usage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/plans/usage:
+    get:
+      tags: [Usage]
+      operationId: getPlanUsage
+      summary: Get your resource usage (alias)
+      description: Same as `GET /v1/plans`.
+      responses:
+        "200":
+          $ref: "#/components/responses/Usage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /v1/node-alerts/{nodeId}:
     parameters:
       - $ref: "#/components/parameters/NodeIDPathNodeId"
@@ -6295,6 +6457,14 @@ components:
           schema:
             type: string
             examples: ['{"error":"failed to get notifications summary"}']
+    Usage:
+      description: |
+        Your usage. A counter that cannot be read is reported as 0, so this endpoint does not fail on database
+        errors.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Usage"
   schemas:
     Error:
       type: object
@@ -8287,6 +8457,91 @@ components:
               created_at:
                 type: string
                 format: date-time
+
+    MarketplaceCatalogEntry:
+      type: object
+      required: [name, display_name, description, category, env_vars]
+      properties:
+        name:
+          type: string
+          description: The `app_name` to install it with.
+          examples: [nextcloud]
+        display_name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+          examples: [storage]
+        icon:
+          type: string
+        env_vars:
+          type: array
+          items:
+            type: object
+            required: [key, label, required, secret]
+            properties:
+              key:
+                type: string
+                examples: [postgres-password]
+              label:
+                type: string
+              description:
+                type: string
+              required:
+                type: boolean
+              secret:
+                type: boolean
+                description: Show the field as a password input.
+              default:
+                type: string
+
+    MarketplaceApp:
+      type: object
+      required: [id, node_id, app_name, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        app_name:
+          type: string
+        job_id:
+          type: string
+          format: uuid
+          description: The installation job.
+        status:
+          type: string
+          enum: [installing, running, failed]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Usage:
+      type: object
+      required: [nodes_count, projects_count, custom_commands_count, backup_storage_bytes, ai_diagnostics_this_month]
+      properties:
+        nodes_count:
+          type: integer
+          description: Nodes you own.
+        projects_count:
+          type: integer
+          description: Projects you created.
+        custom_commands_count:
+          type: integer
+          description: Node commands registered under your user.
+        backup_storage_bytes:
+          type: integer
+          format: int64
+          description: Size of your completed backups.
+        ai_diagnostics_this_month:
+          type: integer
+          description: Log diagnostics you requested this calendar month (UTC).
 
     NodeAlertConfigRequest:
       type: object
