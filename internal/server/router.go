@@ -21,6 +21,8 @@ type RouterParams struct {
 	fx.In
 
 	AuthHandler             *handler.AuthHandler
+	APITokenHandler         *handler.APITokenHandler  `optional:"true"`
+	APITokenService         *identity.APITokenService `optional:"true"`
 	UserHandler             *handler.UserHandler `optional:"true"`
 	RBACService             *identity.RBACService
 	NodeService             *node.NodeService `optional:"true"`
@@ -157,8 +159,16 @@ func NewRouter(p RouterParams) *chi.Mux {
 
 	nodeAuthMiddleware := handlerMiddleware.NodeAuth(p.NodeTokenService)
 
+	// Personal API tokens (Authorization: Bearer ahp_...) are accepted by Auth on every user route.
+	if p.APITokenService != nil {
+		handlerMiddleware.SetAPITokenAuthenticator(handlerMiddleware.NewAPITokenAuthenticator(p.APITokenService))
+	}
+
 	r.Route("/v1", func(r chi.Router) {
 		r.Mount("/auth", p.AuthHandler.Routes())
+		if p.APITokenHandler != nil {
+			r.Mount("/api-tokens", p.APITokenHandler.Routes())
+		}
 		if p.UserHandler != nil {
 			r.Mount("/users", p.UserHandler.Routes())
 		}

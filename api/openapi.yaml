@@ -10,6 +10,10 @@ info:
     - **Users** send a JWT access token as `Authorization: Bearer <token>`. Browser sessions may send it
       in the `access_token` cookie instead, and WebSocket/SSE connections as the `token` (or
       `access_token`) query parameter.
+    - **Scripts and MCP clients** can use a personal API token (`ahp_...`, from `POST /v1/api-tokens`) as
+      `Authorization: Bearer <token>` on the same routes. It acts as its owner; a `read` token can only make
+      `GET`/`HEAD` requests (no WebSocket upgrades) and only gets `*:read` node permissions. API tokens are
+      only accepted in the `Authorization` header and cannot manage API tokens.
     - **Node agents** send their node token as `Authorization: Bearer <node_token>` on agent-only routes.
 
     Access tokens are short-lived; renew them with `POST /v1/auth/refresh`. Refresh tokens are rotated:
@@ -41,6 +45,10 @@ tags:
     description: Liveness probe.
   - name: Auth
     description: Registration, login, token refresh and the current user's profile.
+  - name: API tokens
+    description: |
+      Personal API tokens: long-lived, revocable credentials for scripts and MCP clients. Managing them
+      requires a session login; an API token cannot list, create or revoke tokens.
   - name: Nodes
     description: |
       Machines running the AutoHost agent. Listings only include nodes the caller can read: admins see every
@@ -471,6 +479,101 @@ paths:
               schema:
                 type: string
                 examples: [could not update profile]
+
+  /v1/api-tokens:
+    get:
+      tags: [API tokens]
+      operationId: listApiTokens
+      summary: List the caller's API tokens
+      description: Includes revoked and expired tokens. The raw token is never returned after creation.
+      responses:
+        "200":
+          description: The caller's tokens, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [api_tokens]
+                properties:
+                  api_tokens:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/APIToken"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/SessionRequired"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+    post:
+      tags: [API tokens]
+      operationId: createApiToken
+      summary: Create an API token
+      description: |
+        Creates a token that acts as the caller. `read` tokens can only make read requests; `write` tokens
+        have all of the caller's permissions, including `terminal:exec` where the caller holds it. The raw
+        token is returned once, in this response. A user can have at most 20 active tokens.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAPITokenRequest"
+      responses:
+        "201":
+          description: Created. Store `token` now; it cannot be retrieved again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedAPIToken"
+        "400":
+          $ref: "#/components/responses/BadRequestJSON"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/SessionRequired"
+        "409":
+          description: The caller already has 20 active tokens.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: a user can have at most 20 active api tokens
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/api-tokens/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: API token ID.
+        schema:
+          type: string
+          format: uuid
+    delete:
+      tags: [API tokens]
+      operationId: revokeApiToken
+      summary: Revoke an API token
+      description: The token stops working immediately. Only the token's owner can revoke it.
+      responses:
+        "204":
+          description: Revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/SessionRequired"
+        "404":
+          description: No active token with this ID belongs to the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: api token not found
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
 
   /v1/nodes:
     get:
@@ -6003,7 +6106,9 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: User access token from login, register, refresh or Google sign-in.
+      description: |
+        User access token from login, register, refresh or Google sign-in, or a personal API token
+        (`ahp_...`) from `POST /v1/api-tokens`.
     cookieAuth:
       type: apiKey
       in: cookie
@@ -6349,6 +6454,13 @@ components:
           schema:
             type: string
             examples: [bad json]
+    SessionRequired:
+      description: The request used a personal API token; this operation requires a session login.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ["this action requires a session login, not an api token"]
     Unauthorized:
       description: Missing, invalid or expired access token.
       content:
@@ -6517,6 +6629,65 @@ components:
       properties:
         refresh_token:
           type: string
+
+    APIToken:
+      type: object
+      required: [id, name, token_prefix, scope, expires_at, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        token_prefix:
+          type: string
+          description: First characters of the token, to recognize it.
+          examples: [ahp_3f9a1c2e]
+        scope:
+          type: string
+          enum: [read, write]
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+          description: Updated at most once a minute.
+        revoked_at:
+          type: string
+          format: date-time
+
+    CreateAPITokenRequest:
+      type: object
+      required: [name, scope]
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          examples: [Claude MCP]
+        scope:
+          type: string
+          enum: [read, write]
+          description: "`read`: GET/HEAD requests only, `*:read` node permissions. `write`: all of the owner's permissions."
+        expires_in_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+          default: 90
+
+    CreatedAPIToken:
+      type: object
+      required: [token, api_token]
+      properties:
+        token:
+          type: string
+          description: "The raw token, shown only once. Send it as `Authorization: Bearer <token>`."
+          examples: [ahp_3f9a1c2e...]
+        api_token:
+          $ref: "#/components/schemas/APIToken"
 
     TokenPair:
       type: object

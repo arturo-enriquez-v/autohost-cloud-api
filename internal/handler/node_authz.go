@@ -6,6 +6,7 @@ package handler
 import (
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -41,6 +42,11 @@ func requireNodePerm(rbac func() *identity.RBACService, perm string) func(http.H
 			nodeID := nodeIDParam(r)
 			if nodeID == "" {
 				http.Error(w, "missing node id", http.StatusBadRequest)
+				return
+			}
+			// A read-only API token never gets more than read permissions, whatever its owner holds.
+			if claims.ReadOnly() && !strings.HasSuffix(perm, ":read") {
+				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
 			ok, err := rbac().HasNodePermission(r.Context(), claims.UserID, nodeID, perm)

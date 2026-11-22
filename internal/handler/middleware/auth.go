@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -28,7 +29,36 @@ type Claims struct {
 	Name   string `json:"name,omitempty"`
 	Role   string `json:"role,omitempty"`
 	jwt.RegisteredClaims
+
+	// Set only when the request authenticated with a personal API token instead of a session JWT.
+	APITokenID    string `json:"-"`
+	APITokenScope string `json:"-"`
 }
+
+// ViaAPIToken reports whether the request authenticated with a personal API token.
+func (c *Claims) ViaAPIToken() bool { return c != nil && c.APITokenID != "" }
+
+// ReadOnly reports whether the credential may only perform read operations.
+func (c *Claims) ReadOnly() bool { return c.ViaAPIToken() && c.APITokenScope != "write" }
+
+// APITokenAuthenticator resolves a personal API token (Authorization: Bearer ahp_...) to claims.
+type APITokenAuthenticator func(ctx context.Context, raw string) (*Claims, error)
+
+var apiTokenAuth atomic.Pointer[APITokenAuthenticator]
+
+// SetAPITokenAuthenticator enables personal API tokens in Auth. Without it they are rejected as invalid.
+func SetAPITokenAuthenticator(fn APITokenAuthenticator) {
+	if fn == nil {
+		apiTokenAuth.Store(nil)
+		return
+	}
+	apiTokenAuth.Store(&fn)
+}
+
+// ErrAPITokenRejected is returned by an APITokenAuthenticator for an unknown, expired or revoked token.
+var ErrAPITokenRejected = errors.New("invalid api token")
+
+const apiTokenPrefix = "ahp_"
 
 func Auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +71,7 @@ func Auth(next http.Handler) http.Handler {
 		// Priority 2: access_token cookie (browser sessions via Next.js)
 		// Priority 3: ?token= or ?access_token= query parameter (WebSocket / SSE connections)
 		var raw string
+		fromHeader := false
 		if authz := r.Header.Get("Authorization"); authz != "" {
 			parts := strings.SplitN(authz, " ", 2)
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
@@ -48,6 +79,7 @@ func Auth(next http.Handler) http.Handler {
 				return
 			}
 			raw = parts[1]
+			fromHeader = true
 		} else if c, err := r.Cookie("access_token"); err == nil && c.Value != "" {
 			raw = c.Value
 		} else if q := r.URL.Query().Get("token"); q != "" {
@@ -56,6 +88,16 @@ func Auth(next http.Handler) http.Handler {
 			raw = q
 		} else {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		if strings.HasPrefix(raw, apiTokenPrefix) {
+			// API tokens are only accepted in the Authorization header: query strings end up in logs.
+			if !fromHeader {
+				http.Error(w, "api tokens must be sent in the Authorization header", http.StatusUnauthorized)
+				return
+			}
+			authAPIToken(w, r, next, raw)
 			return
 		}
 
@@ -96,6 +138,52 @@ func Auth(next http.Handler) http.Handler {
 
 		ctx := context.WithValue(r.Context(), claimsKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func authAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler, raw string) {
+	fn := apiTokenAuth.Load()
+	if fn == nil {
+		http.Error(w, "invalid token", http.StatusUnauthorized)
+		return
+	}
+	claims, err := (*fn)(r.Context(), raw)
+	if err != nil {
+		if !errors.Is(err, ErrAPITokenRejected) {
+			log.Printf("[ERROR] api token authentication: %v", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		http.Error(w, "invalid token", http.StatusUnauthorized)
+		return
+	}
+	if claims.ReadOnly() && !isReadOnlyRequest(r) {
+		http.Error(w, "read-only api token", http.StatusForbidden)
+		return
+	}
+	next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), claimsKey, claims)))
+}
+
+// isReadOnlyRequest reports whether a read-only token may make the request: safe methods only, and no
+// WebSocket upgrades (the terminal is a GET that becomes an interactive shell).
+func isReadOnlyRequest(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+	default:
+		return false
+	}
+	return r.Header.Get("Upgrade") == "" && !strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade")
+}
+
+// RequireSession rejects requests authenticated with a personal API token. It goes after Auth on routes
+// a token must not reach, such as managing API tokens themselves.
+func RequireSession(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if GetClaims(r.Context()).ViaAPIToken() {
+			http.Error(w, "this action requires a session login, not an api token", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

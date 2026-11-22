@@ -5,6 +5,9 @@ package handler
 
 import (
 	"context"
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 )
@@ -43,4 +46,11 @@ func newOwnerRBAC(ownerID string, nodeIDs ...string) *identity.RBACService {
 		owners[n] = ownerID
 	}
 	return identity.NewRBACService(&ownerOnlyRBACRepo{owners: owners})
+}
+
+// withNodeID sets the {nodeId} route parameter as chi would.
+func withNodeID(req *http.Request, nodeID string) *http.Request {
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("nodeId", nodeID)
+	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 }
