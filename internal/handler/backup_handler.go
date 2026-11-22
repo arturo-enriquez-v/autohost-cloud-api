@@ -26,12 +26,11 @@ import (
 
 type BackupHandler struct {
 	backupSvc       *apps.BackupService
-	jobSvc          *jobs.JobService
-	dispatcher      dispatcher.ParamDispatcher
 	nodeSvc         *node.NodeService
 	rbacSvc         *identity.RBACService
 	nodeFileHandler *NodeFileHandler
 	files           *apps.BackupFileManager
+	runner          *apps.BackupRunner
 }
 
 func (h *BackupHandler) SetRBACService(rbac *identity.RBACService) {
@@ -47,8 +46,6 @@ func NewBackupHandler(
 ) *BackupHandler {
 	bh := &BackupHandler{
 		backupSvc:       backupSvc,
-		jobSvc:          jobSvc,
-		dispatcher:      disp,
 		nodeSvc:         nodeSvc,
 		nodeFileHandler: nodeFileHandler,
 	}
@@ -63,6 +60,11 @@ func NewBackupHandler(
 		files = nodeFileHandler.SharedFiles()
 	}
 	bh.files = apps.NewBackupFileManager(backupSvc, nodes, files)
+	var jobDispatcher apps.BackupJobDispatcher
+	if disp != nil {
+		jobDispatcher = disp
+	}
+	bh.runner = apps.NewBackupRunner(backupSvc, jobSvc, jobDispatcher)
 	if backupSvc != nil {
 		backupSvc.SetOnJobCompleted(bh.files.ReplicateAfterJob)
 	}
@@ -359,107 +361,12 @@ func (h *BackupHandler) RunManualBackup(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	cfg, err := h.backupSvc.GetConfigByContainer(nodeID, containerName)
-	if err != nil || cfg == nil {
-		volsRaw, _ := json.Marshal([]string{})
-		cfg, err = h.backupSvc.UpsertConfig(&apps.BackupConfig{
-			UserID:             claims.UserID,
-			NodeID:             nodeID,
-			ContainerName:      containerName,
-			Volumes:            volsRaw,
-			CronExpression:     "0 3 * * *",
-			RetentionCount:     7,
-			PauseContainer:     true,
-			BackupMethod:       "volume",
-			StorageDestination: "local_and_parent",
-			PgUser:             "postgres",
-			Enabled:            true,
-		})
-		if err != nil {
-			log.Printf("[ERROR] auto-initialize backup config failed: %v", err)
-			writeJSONError(w, "could not initialize backup config", http.StatusInternalServerError)
-			return
-		}
-	}
-
-	storageDest := cfg.StorageDestination
-	if storageDest == "" || storageDest == "s3" {
-		storageDest = "local"
-	}
-
-	var vols []string
-	_ = json.Unmarshal(cfg.Volumes, &vols)
-
-	backupMethod := cfg.BackupMethod
-	if backupMethod != "pg_dump" && backupMethod != "image" {
-		backupMethod = "volume"
-	}
-
-	rec, err := h.backupSvc.CreateRecord(&apps.BackupRecord{
-		BackupConfigID:     cfg.ID,
-		NodeID:             nodeID,
-		UserID:             claims.UserID,
-		ContainerName:      containerName,
-		StorageDestination: storageDest,
-		ReplicaNodeID:      cfg.ReplicaNodeID,
-		BackupMethod:       backupMethod,
-		TriggerType:        "manual",
-		Status:             "running",
-	})
+	rec, err := h.runner.RunManual(claims.UserID, nodeID, containerName, h.agentAPIURL(r))
 	if err != nil {
-		log.Printf("[ERROR] create backup record failed: %v", err)
-		writeJSONError(w, "could not initiate backup record", http.StatusInternalServerError)
+		log.Printf("[ERROR] run backup of %s on node %s: %v", containerName, nodeID, err)
+		writeJSONError(w, "could not start backup", http.StatusInternalServerError)
 		return
 	}
-
-	apiURL := resolveAPIURL(r)
-	if h.nodeFileHandler != nil {
-		apiURL = h.nodeFileHandler.ResolveMasterBaseURL(r)
-	}
-
-	var commandName string
-	paramsMap := map[string]any{
-		"node_id":             nodeID,
-		"container_name":      containerName,
-		"backup_record_id":    rec.ID,
-		"storage_destination": storageDest,
-		"retention_count":     cfg.RetentionCount,
-		"api_url":             apiURL,
-	}
-	if cfg.ReplicaNodeID != nil && *cfg.ReplicaNodeID != "" {
-		paramsMap["replica_node_id"] = *cfg.ReplicaNodeID
-	}
-
-	switch backupMethod {
-	case "pg_dump":
-		commandName = "docker.pg.backup"
-		pgUser := cfg.PgUser
-		if pgUser == "" {
-			pgUser = "postgres"
-		}
-		paramsMap["pg_user"] = pgUser
-	case "image":
-		commandName = "docker.image.backup"
-	default:
-		commandName = "docker.volume.backup"
-		paramsMap["volumes"] = vols
-		paramsMap["pause_container"] = cfg.PauseContainer
-	}
-
-	paramsBytes, _ := json.Marshal(paramsMap)
-
-	j, err := h.jobSvc.DispatchWithParams(nodeID, commandName, jobs.CommandTypeDefault, string(paramsBytes))
-	if err != nil {
-		_ = h.backupSvc.UpdateRecordStatus(rec.ID, "failed", "", "", "", 0, strPtr(err.Error()))
-		log.Printf("[ERROR] dispatch backup job failed: %v", err)
-		writeJSONError(w, "failed to dispatch backup job", http.StatusInternalServerError)
-		return
-	}
-
-	_ = h.backupSvc.UpdateRecordJobID(rec.ID, j.ID)
-	rec.JobID = &j.ID
-
-	_ = h.dispatcher.DispatchJobWithParams(nodeID, j.ID, commandName, jobs.CommandTypeDefault, string(paramsBytes))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(rec)
@@ -484,90 +391,31 @@ func (h *BackupHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := h.backupSvc.GetConfigByID(rec.BackupConfigID)
-	if err != nil || cfg == nil {
+	restoreRec, jobID, err := h.runner.Restore(claims.UserID, rec, h.agentAPIURL(r))
+	if errors.Is(err, apps.ErrBackupConfigMissing) {
 		http.Error(w, "backup configuration missing", http.StatusBadRequest)
 		return
 	}
-
-	apiURL := resolveAPIURL(r)
-	if h.nodeFileHandler != nil {
-		apiURL = h.nodeFileHandler.ResolveMasterBaseURL(r)
-	}
-
-	restoreMethod := rec.BackupMethod
-	if restoreMethod == "" {
-		restoreMethod = "volume"
-	}
-
-	paramsMap := map[string]any{
-		"container_name": rec.ContainerName,
-	}
-
-	if rec.LocalPath != nil && *rec.LocalPath != "" {
-		paramsMap["local_path"] = *rec.LocalPath
-	}
-	if (rec.ParentPath != nil && *rec.ParentPath != "") || (rec.ReplicaNodeID != nil && rec.ReplicaPath != nil && *rec.ReplicaPath != "") {
-		paramsMap["parent_download_url"] = fmt.Sprintf("%s/v1/backups/node-download/%s/%s", apiURL, rec.NodeID, rec.ID)
-	}
-
-	var restoreCommandName string
-	switch restoreMethod {
-	case "pg_dump":
-		restoreCommandName = "docker.pg.restore"
-		pgUser := cfg.PgUser
-		if pgUser == "" {
-			pgUser = "postgres"
-		}
-		paramsMap["pg_user"] = pgUser
-	case "image":
-		restoreCommandName = "docker.image.restore"
-	default:
-		restoreCommandName = "docker.volume.restore"
-		var vols []string
-		_ = json.Unmarshal(cfg.Volumes, &vols)
-		paramsMap["volumes"] = vols
-	}
-
-	paramsBytes, _ := json.Marshal(paramsMap)
-
-	restoreRec, err := h.backupSvc.CreateRecord(&apps.BackupRecord{
-		BackupConfigID:     cfg.ID,
-		NodeID:             rec.NodeID,
-		UserID:             claims.UserID,
-		ContainerName:      rec.ContainerName,
-		StorageDestination: rec.StorageDestination,
-		LocalPath:          rec.LocalPath,
-		ParentPath:         rec.ParentPath,
-		S3Key:              rec.S3Key,
-		FileSizeBytes:      rec.FileSizeBytes,
-		BackupMethod:       restoreMethod,
-		TriggerType:        "restore",
-		Status:             "running",
-	})
 	if err != nil {
-		log.Printf("[ERROR] create restore record failed: %v", err)
-		writeJSONError(w, "could not initiate restore record", http.StatusInternalServerError)
+		log.Printf("[ERROR] restore backup %s: %v", rec.ID, err)
+		writeJSONError(w, "could not start restore", http.StatusInternalServerError)
 		return
 	}
-
-	j, err := h.jobSvc.DispatchWithParams(rec.NodeID, restoreCommandName, jobs.CommandTypeDefault, string(paramsBytes))
-	if err != nil {
-		_ = h.backupSvc.UpdateRecordStatus(restoreRec.ID, "failed", "", "", "", 0, strPtr(err.Error()))
-		writeJSONError(w, "failed to dispatch restore job", http.StatusInternalServerError)
-		return
-	}
-
-	_ = h.backupSvc.UpdateRecordJobID(restoreRec.ID, j.ID)
-
-	_ = h.dispatcher.DispatchJobWithParams(rec.NodeID, j.ID, restoreCommandName, jobs.CommandTypeDefault, string(paramsBytes))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"status":    "restoring",
-		"job_id":    j.ID,
+		"job_id":    jobID,
 		"record_id": restoreRec.ID,
 	})
+}
+
+// agentAPIURL is the URL the node agent uses to reach this API (archive uploads and downloads).
+func (h *BackupHandler) agentAPIURL(r *http.Request) string {
+	if h.nodeFileHandler != nil {
+		return h.nodeFileHandler.ResolveMasterBaseURL(r)
+	}
+	return resolveAPIURL(r)
 }
 
 // ─── Upload & Download Handlers ─────────────────────────────────────────────
@@ -644,11 +492,7 @@ func (h *BackupHandler) UploadReplicatedBackup(w http.ResponseWriter, r *http.Re
 	}
 
 	// Record the parent copy, start the replica copy (if configured) and apply retention.
-	baseURL := resolveAPIURL(r)
-	if h.nodeFileHandler != nil {
-		baseURL = h.nodeFileHandler.ResolveMasterBaseURL(r)
-	}
-	h.files.AfterParentUpload(rec, targetDir, targetPath, n, baseURL)
+	h.files.AfterParentUpload(rec, targetDir, targetPath, n, h.agentAPIURL(r))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
