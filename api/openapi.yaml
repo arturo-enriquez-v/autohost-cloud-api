@@ -95,6 +95,20 @@ tags:
       Docker Swarm clusters across nodes, connected over the VPN. Only the cluster owner (or an admin)
       can see and manage a cluster; adding a node requires `node:update` on it, since the cluster can then
       schedule workloads there.
+  - name: Folder shares
+    description: |
+      Password-protected links to a folder in a node's shared folder, Google Drive style. Owners manage
+      shares with their user token; visitors use the public endpoints below with a share token obtained by
+      unlocking the share with its password.
+  - name: Public shares
+    description: |
+      Endpoints for share visitors. They take no user token: after `POST /v1/public-shares/{shareId}/unlock`,
+      send the returned token as `X-Share-Token` (or the `st` query parameter, for links such as media
+      sources). Paths are relative to the shared folder, and visitors never see where it lives on the node.
+      What a visitor can do depends on the share's permission: `read` (list, download, stream), `write`
+      (also create folders and upload) or `editor` (also delete).
+  - name: Tailscale Funnel
+    description: Exposing node containers to the internet through Tailscale Funnel.
   - name: Node commands
     description: |
       Commands a node exposes to the dashboard: built-in ones and custom `.sh` scripts the agent discovers.
@@ -3378,6 +3392,623 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /v1/file-shares:
+    get:
+      tags: [Folder shares]
+      operationId: listShares
+      summary: List folder shares
+      description: Shares on nodes where the caller has `files:share`.
+      parameters:
+        - name: node_id
+          in: query
+          description: Only shares of this node.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The shares.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FolderShare"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Folder shares]
+      operationId: createShare
+      summary: Share a folder
+      description: |
+        Requires `files:share` on the node. If no password is given, a random one is generated. The
+        plaintext password is returned **only in this response**; only its hash is stored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [node_id]
+              properties:
+                node_id:
+                  type: string
+                  format: uuid
+                folder_path:
+                  type: string
+                  description: Folder to share, relative to the node's shared folder. `/` shares all of it.
+                  default: /
+                title:
+                  type: string
+                permission:
+                  $ref: "#/components/schemas/SharePermission"
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+                  maxLength: 72
+                funnel_enabled:
+                  type: boolean
+                  description: Also publish the share on the internet through Tailscale Funnel.
+      responses:
+        "201":
+          description: Share created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FolderShareWithPassword"
+        "400":
+          $ref: "#/components/responses/ShareBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          $ref: "#/components/responses/NodeNotFoundJSON"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/file-shares/{shareId}:
+    parameters:
+      - $ref: "#/components/parameters/ShareIDPath"
+    put:
+      tags: [Folder shares]
+      operationId: updateShare
+      summary: Update a share
+      description: |
+        Allowed for the share's creator and users with `files:share` on its node. Only the fields sent are
+        changed. Changing the password, or `regenerate_password`, returns the new plaintext password once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                permission:
+                  $ref: "#/components/schemas/SharePermission"
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+                  maxLength: 72
+                regenerate_password:
+                  type: boolean
+                  description: Replace the password with a new random one.
+                funnel_enabled:
+                  type: boolean
+      responses:
+        "200":
+          description: The updated share.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FolderShareWithPassword"
+        "400":
+          $ref: "#/components/responses/ShareBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ShareNotFound"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+    delete:
+      tags: [Folder shares]
+      operationId: deleteShare
+      summary: Revoke a share
+      description: Visitors' share tokens stop working immediately.
+      responses:
+        "204":
+          description: Revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ShareNotFound"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/public-shares/{shareId}/info:
+    parameters:
+      - $ref: "#/components/parameters/ShareIDPath"
+    get:
+      tags: [Public shares]
+      operationId: getPublicShareInfo
+      summary: Get a share's public information
+      description: What a visitor sees before entering the password. Never includes files or paths.
+      security: []
+      responses:
+        "200":
+          description: Public share information.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, title, node_name, requires_password]
+                properties:
+                  id:
+                    type: string
+                  title:
+                    type: string
+                  node_name:
+                    type: string
+                  requires_password:
+                    type: boolean
+                    const: true
+        "404":
+          $ref: "#/components/responses/ShareNotFound"
+
+  /v1/public-shares/{shareId}/unlock:
+    parameters:
+      - $ref: "#/components/parameters/ShareIDPath"
+    post:
+      tags: [Public shares]
+      operationId: unlockShare
+      summary: Unlock a share with its password
+      description: |
+        Returns a share token valid for 12 hours. Rate limited to 30 attempts per minute per IP and 20
+        attempts per 15 minutes per share.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          description: Unlocked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, share]
+                properties:
+                  token:
+                    type: string
+                    description: Share token for `X-Share-Token`.
+                  share:
+                    type: object
+                    required: [id, title, node_name, permission]
+                    properties:
+                      id:
+                        type: string
+                      title:
+                        type: string
+                      node_name:
+                        type: string
+                      permission:
+                        $ref: "#/components/schemas/SharePermission"
+        "400":
+          $ref: "#/components/responses/BadRequestJSON"
+        "401":
+          description: Wrong password.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/ShareNotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /v1/public-shares/{shareId}/files:
+    parameters:
+      - $ref: "#/components/parameters/ShareIDPath"
+    get:
+      tags: [Public shares]
+      operationId: listPublicShareFiles
+      summary: List a folder of the share
+      security:
+        - shareToken: []
+        - shareTokenQuery: []
+      parameters:
+        - $ref: "#/components/parameters/FilePathQuery"
+      responses:
+        "200":
+          description: The folder listing, with paths relative to the share.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [share_id, title, node_name, permission, current_path, entries]
+                properties:
+                  share_id:
+                    type: string
+                  title:
+                    type: string
+                  node_name:
+                    type: string
+                  permission:
+                    $ref: "#/components/schemas/SharePermission"
+                  current_path:
+                    type: string
+                  entries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/FileEntry"
+        "401":
+          $ref: "#/components/responses/ShareTokenInvalid"
+        "403":
+          $ref: "#/components/responses/SharePermissionDenied"
+        "502":
+          $ref: "#/components/responses/FileAgentError"
+    delete:
+      tags: [Public shares]
+      operationId: deletePublicShareFile
+      summary: Delete a file or folder (editor)
+      description: The share's root folder cannot be deleted.
+      security:
+        - shareToken: []
+        - shareTokenQuery: []
+      parameters:
+        - $ref: "#/components/parameters/FilePathQueryRequired"
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, deleted]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  deleted:
+                    type: string
+                    description: Deleted path, relative to the share.
+        "401":
+          $ref: "#/components/responses/ShareTokenInvalid"
+        "403":
+          $ref: "#/components/responses/SharePermissionDenied"
+        "502":
+          $ref: "#/components/responses/FileAgentError"
+
+  /v1/public-shares/{shareId}/download:
+    parameters:
+      - $ref: "#/components/parameters/ShareIDPath"
+    get:
+      tags: [Public shares]
+      operationId: downloadPublicShareFile
+      summary: Download a file
+      security:
+        - shareToken: []
+        - shareTokenQuery: []
+      parameters:
+        - $ref: "#/components/parameters/FilePathQueryRequired"
+      responses:
+        "200":
+          description: The file, as an attachment.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/ShareTokenInvalid"
+        "403":
+          $ref: "#/components/responses/SharePermissionDenied"
+        "502":
+          $ref: "#/components/responses/FileAgentError"
+
+  /v1/public-shares/{shareId}/stream:
+    parameters:
+      - $ref: "#/components/parameters/ShareIDPath"
+    get:
+      tags: [Public shares]
+      operationId: streamPublicShareFile
+      summary: Stream a file inline (media playback)
+      description: Same as `GET /v1/nodes/{nodeId}/files/stream`, including `Range` support.
+      security:
+        - shareToken: []
+        - shareTokenQuery: []
+      parameters:
+        - $ref: "#/components/parameters/FilePathQueryRequired"
+      responses:
+        "200":
+          description: The file.
+          content:
+            "*/*":
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: The file from the requested offset.
+          content:
+            "*/*":
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/ShareTokenInvalid"
+        "403":
+          $ref: "#/components/responses/SharePermissionDenied"
+        "502":
+          $ref: "#/components/responses/FileAgentError"
+
+  /v1/public-shares/{shareId}/mkdir:
+    parameters:
+      - $ref: "#/components/parameters/ShareIDPath"
+    post:
+      tags: [Public shares]
+      operationId: makePublicShareDirectory
+      summary: Create a folder (write or editor)
+      security:
+        - shareToken: []
+        - shareTokenQuery: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, path]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  path:
+                    type: string
+                    description: Created folder, relative to the share.
+        "400":
+          $ref: "#/components/responses/BadRequestJSON"
+        "401":
+          $ref: "#/components/responses/ShareTokenInvalid"
+        "403":
+          $ref: "#/components/responses/SharePermissionDenied"
+        "502":
+          $ref: "#/components/responses/FileAgentError"
+
+  /v1/public-shares/{shareId}/upload:
+    parameters:
+      - $ref: "#/components/parameters/ShareIDPath"
+    post:
+      tags: [Public shares]
+      operationId: uploadPublicShareFile
+      summary: Upload a file (write or editor)
+      description: Same multipart format as `POST /v1/nodes/{nodeId}/files/upload`.
+      security:
+        - shareToken: []
+        - shareTokenQuery: []
+      parameters:
+        - name: path
+          in: query
+          description: Target folder, relative to the share.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: Uploaded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, path, size_bytes]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  path:
+                    type: string
+                    description: Uploaded file, relative to the share.
+                  size_bytes:
+                    type: integer
+                    format: int64
+        "400":
+          $ref: "#/components/responses/FileError"
+        "401":
+          $ref: "#/components/responses/ShareTokenInvalid"
+        "403":
+          $ref: "#/components/responses/SharePermissionDenied"
+        "502":
+          $ref: "#/components/responses/FileAgentError"
+
+  /v1/tailscale-funnel/status:
+    get:
+      tags: [Tailscale Funnel]
+      operationId: getFunnelStatus
+      summary: Get the Funnel configuration and routes
+      description: Admins see every route; other users see routes to nodes where they have `network:read`.
+      responses:
+        "200":
+          description: Funnel status.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [funnel_dns_name, allowed_ports, routes]
+                properties:
+                  funnel_dns_name:
+                    type: string
+                    description: Public Tailscale DNS name of the API's host.
+                    examples: [autohost.tail1234.ts.net]
+                  allowed_ports:
+                    type: array
+                    items:
+                      type: integer
+                    examples: [[443, 8443, 10000]]
+                  routes:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/FunnelRoute"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/tailscale-funnel/config:
+    post:
+      tags: [Tailscale Funnel]
+      operationId: setFunnelConfig
+      summary: Set the Funnel DNS name (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [funnel_dns_name]
+              properties:
+                funnel_dns_name:
+                  type: string
+      responses:
+        "200":
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  funnel_dns_name:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequestJSON"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/tailscale-funnel/routes:
+    post:
+      tags: [Tailscale Funnel]
+      operationId: setFunnelRoute
+      summary: Publish a container through Funnel
+      description: |
+        Routes `https://<funnel_dns_name>:<funnel_port><path_prefix>` to `container_port` on the target node
+        (over the VPN). Requires `network:manage` on the target node; replacing an existing route at the
+        same port and path also requires it on that route's node. Unknown `funnel_port` values become 443.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_node_id, container_port]
+              properties:
+                funnel_port:
+                  type: integer
+                  enum: [443, 8443, 10000]
+                  default: 443
+                path_prefix:
+                  type: string
+                  default: /
+                  examples: [/app]
+                target_node_id:
+                  type: string
+                  format: uuid
+                container_port:
+                  type: integer
+                  minimum: 1
+                  maximum: 65535
+                container_id:
+                  type: string
+                container_name:
+                  type: string
+                container_image:
+                  type: string
+      responses:
+        "200":
+          description: The route.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FunnelRoute"
+        "400":
+          description: Invalid port or path prefix, or the node has no usable IP.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          description: The target node does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/tailscale-funnel/routes/{routeId}:
+    delete:
+      tags: [Tailscale Funnel]
+      operationId: deleteFunnelRoute
+      summary: Stop publishing a container
+      description: Requires being an admin or having `network:manage` on the route's target node.
+      parameters:
+        - name: routeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          description: Unknown route.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -3390,6 +4021,16 @@ components:
       in: cookie
       name: access_token
       description: Same access token, set as a cookie by the web app.
+    shareToken:
+      type: apiKey
+      in: header
+      name: X-Share-Token
+      description: Share token from `POST /v1/public-shares/{shareId}/unlock`. Valid for 12 hours.
+    shareTokenQuery:
+      type: apiKey
+      in: query
+      name: st
+      description: Same share token, for URLs that cannot carry headers (media sources, download links).
     nodeToken:
       type: http
       scheme: bearer
@@ -3397,6 +4038,14 @@ components:
         Node token (`autohost-node_...`) issued to an agent at enrollment. Only accepted on agent routes.
 
   parameters:
+    ShareIDPath:
+      name: shareId
+      in: path
+      required: true
+      description: Share ID.
+      schema:
+        type: string
+        examples: [sh_k3j9x2]
     VMIDPath:
       name: vmId
       in: path
@@ -3491,6 +4140,34 @@ components:
         format: uuid
 
   responses:
+    ShareNotFound:
+      description: Unknown or revoked share (or one the caller cannot manage).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ShareBadRequest:
+      description: Malformed JSON, or an invalid password or setting.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: must be at least 8 characters
+    ShareTokenInvalid:
+      description: Missing, invalid or expired share token, or the share was revoked.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: share session expired, please re-enter password
+    SharePermissionDenied:
+      description: The share's permission does not allow this, or the path is outside the share.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     VMNotFound:
       description: No VM with this ID.
       content:
@@ -4956,3 +5633,87 @@ components:
             updated_at:
               type: string
               format: date-time
+
+    SharePermission:
+      type: string
+      description: '`read`: list and download. `write`: also create folders and upload. `editor`: also delete.'
+      enum: [read, write, editor]
+      default: read
+
+    FolderShare:
+      type: object
+      required: [id, owner_id, node_id, node_name, folder_path, title, permission, funnel_enabled, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          examples: [sh_k3j9x2]
+        owner_id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        node_name:
+          type: string
+        folder_path:
+          type: string
+        title:
+          type: string
+        permission:
+          $ref: "#/components/schemas/SharePermission"
+        funnel_enabled:
+          type: boolean
+        funnel_url:
+          type: string
+          description: Public internet URL, when published through Funnel.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    FolderShareWithPassword:
+      allOf:
+        - $ref: "#/components/schemas/FolderShare"
+        - type: object
+          properties:
+            password:
+              type: string
+              description: Plaintext password. Only present when it was just set or regenerated.
+
+    FunnelRoute:
+      type: object
+      required: [id, funnel_port, path_prefix, public_url, target_node_id, target_node_name, target_ip, container_port, upstream, created_at]
+      properties:
+        id:
+          type: string
+        funnel_port:
+          type: integer
+          enum: [443, 8443, 10000]
+        path_prefix:
+          type: string
+        public_url:
+          type: string
+          format: uri
+        target_node_id:
+          type: string
+          format: uuid
+        target_node_name:
+          type: string
+        target_ip:
+          type: string
+        container_port:
+          type: integer
+        upstream:
+          type: string
+          examples: ["http://100.64.0.5:8080"]
+        container_id:
+          type: string
+        container_name:
+          type: string
+        container_image:
+          type: string
+        created_at:
+          type: string
+          format: date-time
