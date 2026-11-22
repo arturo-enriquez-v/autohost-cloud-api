@@ -181,9 +181,7 @@ func (s *NodeAgentServer) Connect(
 
 	ns := &nodeStream{send: make(chan *pb.ServerMessage, 64)}
 	s.registry.register(nodeID, ns)
-	if s.redis != nil {
-		_ = s.redis.Set(context.Background(), fmt.Sprintf("nodes:%s:online", nodeID), "1", 2*time.Minute).Err()
-	}
+	s.markOnline(nodeID)
 	defer func() {
 		s.registry.unregister(nodeID, ns)
 		close(ns.send)
@@ -198,7 +196,56 @@ func (s *NodeAgentServer) Connect(
 	}()
 
 	log.Printf("[gRPC] node %s connected", nodeID)
+	s.resumeNodeState(nodeID)
 
+	// Forward queued ServerMessages to the stream.
+	sendErr := make(chan error, 1)
+	go func() {
+		for msg := range ns.send {
+			if err := stream.Send(msg); err != nil {
+				sendErr <- err
+				return
+			}
+		}
+		sendErr <- nil
+	}()
+
+	// Re-validate the node's enrollment periodically so a long-lived stream is cut shortly after the node
+	// is deleted or its tokens are revoked (the TLS client certificate itself stays valid for a year).
+	const enrollmentRecheckInterval = time.Minute
+	nextEnrollmentCheck := time.Now().Add(enrollmentRecheckInterval)
+
+	for {
+		select {
+		case err := <-sendErr:
+			return err
+		default:
+		}
+
+		in, recvErr := stream.Recv()
+		if recvErr != nil {
+			break
+		}
+
+		if time.Now().After(nextEnrollmentCheck) {
+			nextEnrollmentCheck = time.Now().Add(enrollmentRecheckInterval)
+			active := s.checkEnrollmentUncached(nodeID)
+			enrollmentCache.Store(nodeID, enrollmentCacheEntry{active: active, expiresAt: time.Now().Add(enrollmentCacheTTL)})
+			if !active {
+				log.Printf("[gRPC] closing stream for node %s: node deleted or tokens revoked", nodeID)
+				return status.Error(codes.Unauthenticated, "node enrollment revoked")
+			}
+		}
+
+		s.handleNodeMessage(nodeID, in)
+	}
+
+	return nil
+}
+
+// resumeNodeState restores what a (re)connected node should be doing: the agent drops all streams and
+// health-check loops when it disconnects, and may have missed jobs dispatched while it was offline.
+func (s *NodeAgentServer) resumeNodeState(nodeID string) {
 	// Re-issue StreamContainers if there are active subscribers waiting.
 	if s.containerBroker.hasSubscribers(nodeID) {
 		if err := s.containerBroker.startStream(nodeID); err != nil {
@@ -266,361 +313,6 @@ func (s *NodeAgentServer) Connect(
 			}
 		}
 	}
-
-	// Forward queued ServerMessages to the stream.
-	sendErr := make(chan error, 1)
-	go func() {
-		for msg := range ns.send {
-			if err := stream.Send(msg); err != nil {
-				sendErr <- err
-				return
-			}
-		}
-		sendErr <- nil
-	}()
-
-	// Re-validate the node's enrollment periodically so a long-lived stream is cut shortly after the node
-	// is deleted or its tokens are revoked (the TLS client certificate itself stays valid for a year).
-	const enrollmentRecheckInterval = time.Minute
-	nextEnrollmentCheck := time.Now().Add(enrollmentRecheckInterval)
-
-	for {
-		select {
-		case err := <-sendErr:
-			return err
-		default:
-		}
-
-		in, recvErr := stream.Recv()
-		if recvErr != nil {
-			break
-		}
-
-		if time.Now().After(nextEnrollmentCheck) {
-			nextEnrollmentCheck = time.Now().Add(enrollmentRecheckInterval)
-			active := s.checkEnrollmentUncached(nodeID)
-			enrollmentCache.Store(nodeID, enrollmentCacheEntry{active: active, expiresAt: time.Now().Add(enrollmentCacheTTL)})
-			if !active {
-				log.Printf("[gRPC] closing stream for node %s: node deleted or tokens revoked", nodeID)
-				return status.Error(codes.Unauthenticated, "node enrollment revoked")
-			}
-		}
-
-		switch p := in.Payload.(type) {
-		case *pb.NodeMessage_JobResult:
-			r := p.JobResult
-			// A node may only report results for jobs dispatched to itself.
-			if ownerJob, err := s.jobSvc.GetByID(r.GetJobId()); err != nil || ownerJob == nil || ownerJob.NodeID != nodeID {
-				log.Printf("[gRPC] rejecting result for job %s from node %s: job not found or owned by another node", r.GetJobId(), nodeID)
-				continue
-			}
-			jobStatus := jobs.JobStatus(pbJobStatus(r.GetStatus()))
-			if err := s.jobSvc.UpdateResult(
-				r.GetJobId(),
-				jobStatus,
-				r.GetOutput(),
-				r.GetError(),
-			); err != nil {
-				log.Printf("[gRPC] update job %s: %v", r.GetJobId(), err)
-			} else {
-				log.Printf("[gRPC] job %s -> %s (node %s)", r.GetJobId(), r.GetStatus(), nodeID)
-			}
-
-			// Broadcast job completion to Redis for decoupled consumers
-			if s.redis != nil {
-				resData, _ := json.Marshal(map[string]any{
-					"job_id":  r.GetJobId(),
-					"node_id": nodeID,
-					"status":  string(jobStatus),
-					"output":  r.GetOutput(),
-					"error":   r.GetError(),
-				})
-				_ = s.redis.Publish(context.Background(), fmt.Sprintf("nodes:%s:jobs:result", nodeID), resData).Err()
-				_ = s.redis.Publish(context.Background(), fmt.Sprintf("jobs:%s:result", r.GetJobId()), resData).Err()
-			}
-
-			// Update backup_records if this job belongs to a backup/restore operation
-			if s.backupSvc != nil {
-				var outputData struct {
-					S3Key         string `json:"s3_key"`
-					LocalPath     string `json:"local_path"`
-					ParentPath    string `json:"parent_path"`
-					FileSizeBytes int64  `json:"file_size_bytes"`
-				}
-				_ = json.Unmarshal([]byte(r.GetOutput()), &outputData)
-				// parent_path refers to the API server's own disk: never trust an agent-supplied value
-				// outside the backups directory (it is later served and deleted by the API).
-				if outputData.ParentPath != "" && !platform.IsWithinDir(platform.BackupsDir(), outputData.ParentPath) {
-					log.Printf("[gRPC] ignoring parent_path %q reported by node %s for job %s: outside backups dir", outputData.ParentPath, nodeID, r.GetJobId())
-					outputData.ParentPath = ""
-				}
-
-				var errMsg *string
-				if r.GetError() != "" {
-					e := r.GetError()
-					errMsg = &e
-				}
-				statusStr := "completed"
-				if jobStatus != jobs.StatusCompleted {
-					statusStr = "failed"
-				}
-				if err := s.backupSvc.UpdateRecordByJobID(r.GetJobId(), statusStr, outputData.S3Key, outputData.LocalPath, outputData.ParentPath, outputData.FileSizeBytes, errMsg); err != nil {
-					log.Printf("[gRPC] update backup record for job %s: %v", r.GetJobId(), err)
-				} else {
-					log.Printf("[gRPC] backup record updated for job %s -> %s", r.GetJobId(), statusStr)
-				}
-			}
-
-			// Sync marketplace_apps status when an install job finishes.
-			if s.marketplaceRepo != nil {
-				if mApp, err := s.marketplaceRepo.FindByJobID(r.GetJobId()); err == nil {
-					var appStatus apps.AppStatus
-					if jobStatus == jobs.StatusCompleted {
-						appStatus = apps.StatusRunning
-					} else {
-						appStatus = apps.StatusFailed
-					}
-					if err := s.marketplaceRepo.UpdateStatus(mApp.ID, appStatus); err != nil {
-						log.Printf("[gRPC] update marketplace app %s status: %v", mApp.ID, err)
-					}
-				}
-			}
-
-			// Sync VM status when a vm.* job finishes.
-			if s.vmRepo != nil {
-				if j, err := s.jobSvc.GetByID(r.GetJobId()); err == nil && j != nil {
-					if j.CommandName == "vm.create" {
-						var p struct {
-							VMID string `json:"vm_id"`
-						}
-						if err := json.Unmarshal([]byte(j.Params), &p); err == nil && p.VMID != "" {
-							if targetVM, err := s.vmRepo.GetByID(context.Background(), p.VMID); err == nil && targetVM != nil {
-								if jobStatus != jobs.StatusCompleted {
-									targetVM.Status = string(infra.StatusError)
-									targetVM.ErrorMessage = r.GetError()
-									if _, err := s.vmRepo.Update(context.Background(), targetVM); err != nil {
-										log.Printf("[gRPC] update vm %s status to error: %v", targetVM.ID, err)
-									} else {
-										log.Printf("[gRPC] updated vm %s (%s) status to error: %s", targetVM.ID, targetVM.Name, r.GetError())
-									}
-								} else {
-									targetVM.ErrorMessage = ""
-									_, _ = s.vmRepo.Update(context.Background(), targetVM)
-								}
-							}
-						}
-					} else if strings.HasPrefix(j.CommandName, "vm.") {
-						parts := strings.Split(j.CommandName, ".")
-						if len(parts) >= 3 {
-							action := parts[1]
-							vmName := parts[2]
-							if targetVM, err := s.vmRepo.GetByHostAndName(context.Background(), nodeID, vmName); err == nil && targetVM != nil {
-								if jobStatus != jobs.StatusCompleted {
-									targetVM.ErrorMessage = r.GetError()
-									if action == "start" {
-										targetVM.Status = string(infra.StatusStopped)
-									}
-									_, _ = s.vmRepo.Update(context.Background(), targetVM)
-								} else {
-									targetVM.ErrorMessage = ""
-									if action == "start" {
-										targetVM.Status = string(infra.StatusRunning)
-									} else if action == "stop" {
-										targetVM.Status = string(infra.StatusStopped)
-									}
-									_, _ = s.vmRepo.Update(context.Background(), targetVM)
-								}
-							}
-						}
-					}
-				}
-			}
-
-		case *pb.NodeMessage_Heartbeat:
-			if s.redis != nil {
-				_ = s.redis.Set(context.Background(), fmt.Sprintf("nodes:%s:online", nodeID), "1", 2*time.Minute).Err()
-			}
-			if err := s.nodeSvc.UpdateLastSeen(nodeID); err != nil {
-				log.Printf("[gRPC] update last_seen for node %s: %v", nodeID, err)
-			} else {
-				log.Printf("[gRPC] heartbeat from node %s", p.Heartbeat.GetNodeId())
-			}
-
-		case *pb.NodeMessage_Metric:
-			m := p.Metric
-			if s.redis != nil {
-				_ = s.redis.Set(context.Background(), fmt.Sprintf("nodes:%s:online", nodeID), "1", 2*time.Minute).Err()
-			}
-			// Fan-out to live SSE subscribers immediately — zero DB cost.
-			s.metricBroker.fanOut(nodeID, m)
-
-			// Publish to Redis for distributed subscribers (e.g. Cloud Run REST API).
-			if s.redis != nil {
-				payload := map[string]any{
-					"cpu_usage_percent":      m.GetCpuUsagePercent(),
-					"memory_total_bytes":     m.GetRamTotalBytes(),
-					"memory_used_bytes":      m.GetRamUsedBytes(),
-					"memory_available_bytes": m.GetRamAvailableBytes(),
-					"memory_usage_percent":   m.GetRamUsagePercent(),
-					"disk_total_bytes":       m.GetDiskTotalBytes(),
-					"disk_used_bytes":        m.GetDiskUsedBytes(),
-					"disk_available_bytes":   m.GetDiskAvailableBytes(),
-					"disk_usage_percent":     m.GetDiskUsagePercent(),
-					"uptime_seconds":         m.GetUptimeSeconds(),
-					"cpu_temp_celsius":       m.GetCpuTempCelsius(),
-					"collected_at":           time.Now().UTC().Format(time.RFC3339),
-				}
-				if data, err := json.Marshal(payload); err == nil {
-					_ = s.redis.Publish(context.Background(), fmt.Sprintf("nodes:%s:metrics", nodeID), data).Err()
-				}
-			}
-
-			// Persist to DB at most once per minute to keep write volume low.
-			if s.shouldPersistMetric(nodeID) {
-				req := &node.CreateNodeMetricRequest{
-					NodeID:               nodeID,
-					CPUUsagePercent:      float64(m.GetCpuUsagePercent()),
-					MemoryTotalBytes:     int64(m.GetRamTotalBytes()),
-					MemoryUsedBytes:      int64(m.GetRamUsedBytes()),
-					MemoryAvailableBytes: int64(m.GetRamAvailableBytes()),
-					MemoryUsagePercent:   float64(m.GetRamUsagePercent()),
-					DiskTotalBytes:       int64(m.GetDiskTotalBytes()),
-					DiskUsedBytes:        int64(m.GetDiskUsedBytes()),
-					DiskAvailableBytes:   int64(m.GetDiskAvailableBytes()),
-					DiskUsagePercent:     float64(m.GetDiskUsagePercent()),
-					CPUTempCelsius:       float64(m.GetCpuTempCelsius()),
-					CollectedAt:          time.Now(),
-				}
-				if _, err := s.metricSvc.StoreNodeMetric(req); err != nil {
-					log.Printf("[gRPC] store metrics for node %s: %v", nodeID, err)
-				}
-				// Piggyback last_seen update on the same throttled window.
-				if err := s.nodeSvc.UpdateLastSeen(nodeID); err != nil {
-					log.Printf("[gRPC] update last_seen (metric) for node %s: %v", nodeID, err)
-				}
-				// Check alert thresholds asynchronously; never block the stream.
-				go s.checkThresholdAlerts(nodeID, req)
-			}
-
-		case *pb.NodeMessage_LogEntry:
-			s.logs.fanOut(nodeID, p.LogEntry)
-			if s.redis != nil && p.LogEntry != nil {
-				entry := map[string]any{
-					"timestamp_us": p.LogEntry.GetTimestampUs(),
-					"unit":         p.LogEntry.GetUnit(),
-					"message":      p.LogEntry.GetMessage(),
-				}
-				if data, err := json.Marshal(entry); err == nil {
-					_ = s.redis.Publish(context.Background(), fmt.Sprintf("nodes:%s:logs", nodeID), data).Err()
-				}
-			}
-
-		case *pb.NodeMessage_HypervisorInfo:
-			s.storeHypervisorInfo(nodeID, p.HypervisorInfo)
-
-		case *pb.NodeMessage_ContainerList:
-			s.containerBroker.fanOut(nodeID, p.ContainerList)
-			if s.redis != nil && p.ContainerList != nil {
-				type sseContainerInfo struct {
-					ID      string `json:"id"`
-					Name    string `json:"name"`
-					Image   string `json:"image"`
-					State   string `json:"state"`
-					Status  string `json:"status"`
-					CPU     string `json:"cpu,omitempty"`
-					Mem     string `json:"mem,omitempty"`
-					MemPerc string `json:"memPerc,omitempty"`
-				}
-				type sseContainerList struct {
-					Containers []sseContainerInfo `json:"containers"`
-					Error      string             `json:"error,omitempty"`
-				}
-				list := sseContainerList{
-					Error:      p.ContainerList.GetError(),
-					Containers: make([]sseContainerInfo, 0, len(p.ContainerList.GetContainers())),
-				}
-				for _, c := range p.ContainerList.GetContainers() {
-					list.Containers = append(list.Containers, sseContainerInfo{
-						ID:      c.GetId(),
-						Name:    c.GetName(),
-						Image:   c.GetImage(),
-						State:   c.GetState(),
-						Status:  c.GetStatus(),
-						CPU:     c.GetCpu(),
-						Mem:     c.GetMem(),
-						MemPerc: c.GetMemPerc(),
-					})
-				}
-				if data, err := json.Marshal(list); err == nil {
-					_ = s.redis.Set(context.Background(), fmt.Sprintf("nodes:%s:containers:latest", nodeID), data, 10*time.Minute).Err()
-					_ = s.redis.Publish(context.Background(), fmt.Sprintf("nodes:%s:containers", nodeID), data).Err()
-				}
-			}
-			if s.containerMetricSvc != nil && p.ContainerList != nil && len(p.ContainerList.Containers) > 0 {
-				var items []node.ContainerSnapshotItem
-				for _, c := range p.ContainerList.Containers {
-					items = append(items, node.ContainerSnapshotItem{
-						ID:      c.Id,
-						Name:    c.Name,
-						State:   c.State,
-						Status:  c.Status,
-						CPU:     c.Cpu,
-						Mem:     c.Mem,
-						MemPerc: c.MemPerc,
-					})
-				}
-				go func() {
-					if err := s.containerMetricSvc.ProcessSnapshot(nodeID, items); err != nil {
-						log.Printf("[gRPC] store container metrics for node %s: %v", nodeID, err)
-					}
-				}()
-			}
-
-		case *pb.NodeMessage_HealthResult:
-			go s.handleHealthCheckResult(nodeID, p.HealthResult)
-
-		case *pb.NodeMessage_LogDiagnostic:
-			go s.handleLogDiagnosticResult(nodeID, p.LogDiagnostic)
-
-		case *pb.NodeMessage_NetworkStats:
-			go s.handleNetworkStatsResult(nodeID, p.NetworkStats)
-
-		case *pb.NodeMessage_TerminalOutput:
-			if s.terminalBroker != nil {
-				s.terminalBroker.handleOutput(nodeID, p.TerminalOutput)
-			}
-			if s.redis != nil && p.TerminalOutput != nil {
-				evt, _ := json.Marshal(map[string]any{
-					"type":       "output",
-					"session_id": p.TerminalOutput.GetSessionId(),
-					"data":       p.TerminalOutput.GetData(),
-				})
-				_ = s.redis.Publish(context.Background(), fmt.Sprintf("nodes:%s:terminal:%s:out", nodeID, p.TerminalOutput.GetSessionId()), evt).Err()
-			}
-
-		case *pb.NodeMessage_TerminalClosed:
-			if s.terminalBroker != nil {
-				s.terminalBroker.handleClosed(nodeID, p.TerminalClosed)
-			}
-			if s.redis != nil && p.TerminalClosed != nil {
-				evt, _ := json.Marshal(map[string]any{
-					"type":       "closed",
-					"session_id": p.TerminalClosed.GetSessionId(),
-					"exit_code":  p.TerminalClosed.GetExitCode(),
-					"error":      p.TerminalClosed.GetError(),
-				})
-				_ = s.redis.Publish(context.Background(), fmt.Sprintf("nodes:%s:terminal:%s:out", nodeID, p.TerminalClosed.GetSessionId()), evt).Err()
-			}
-
-		case *pb.NodeMessage_FileOpResponse:
-			go s.handleFileOpResponse(nodeID, p.FileOpResponse)
-
-		default:
-			log.Printf("[gRPC] unknown payload from node %s", nodeID)
-		}
-	}
-
-	return nil
 }
 
 // ---- ReportMetrics (kept for backward compat — unary) -----------------------
