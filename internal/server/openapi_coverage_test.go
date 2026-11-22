@@ -21,18 +21,13 @@ import (
 // test flags prefixes that are already fully covered so this list only shrinks.
 var pendingDocPrefixes = []string{
 	"/v1/plans",
-	"/v1/caddy-routes",
-	"/v1/cloudflare-tunnel",
 	"/v1/marketplace",
 	"/v1/webhooks",
 	"/v1/telegram-bots",
 	"/v1/external-logs",
 	"/v1/external-log-tokens",
-	"/v1/vpn",
 	"/v1/log-diagnostics",
 	"/v1/notifications",
-	"/v1/agent/network-stats",
-	"/v1/node-network",
 }
 
 var pathParam = regexp.MustCompile(`\{[^}]*\}`)

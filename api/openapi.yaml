@@ -109,6 +109,25 @@ tags:
       (also create folders and upload) or `editor` (also delete).
   - name: Tailscale Funnel
     description: Exposing node containers to the internet through Tailscale Funnel.
+  - name: Caddy routes
+    description: |
+      Reverse-proxy routes served by Caddy on a node. The API stores each route and sends the node a
+      `caddy.upsert-route` or `caddy.delete-route` job to apply it; the response does not wait for that job.
+  - name: Cloudflare Tunnel
+    description: |
+      One Cloudflare Tunnel run by the API host (the master node) that publishes containers on any node
+      through hostnames. It runs in `managed` mode (a Cloudflare account, logged in with
+      `POST /v1/cloudflare-tunnel/login`, with DNS records under a base domain) or `quick` mode (a random
+      `*.trycloudflare.com` URL with no account). Tunnel settings are admin only; routes need
+      `network:manage` on their target node.
+  - name: VPN
+    description: |
+      Joining the Headscale (Tailscale) VPN that connects nodes. Users get a pre-auth key; agents report the
+      VPN IP they obtain.
+  - name: Node network
+    description: |
+      Network snapshot of a node: interface counters, listening ports, VPN peers, active connections and
+      recent HTTP requests. The agent reports it with its node token; users read the latest one.
   - name: Alerts
     description: |
       Threshold alerts per node (CPU, RAM, disk, offline), sent to Telegram, and the history of fired
@@ -4024,6 +4043,501 @@ paths:
         "500":
           $ref: "#/components/responses/InternalErrorJSON"
 
+  /v1/caddy-routes/{nodeId}:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      tags: [Caddy routes]
+      operationId: listCaddyRoutes
+      summary: List a node's Caddy routes
+      description: Requires `network:read` on the node.
+      responses:
+        "200":
+          description: The node's routes.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CaddyRoute"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NodeNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Caddy routes]
+      operationId: upsertCaddyRoute
+      summary: Create or update a Caddy route
+      description: |
+        Requires `network:manage` on the node. Saves the route (one per domain and node; an existing domain is
+        updated) and sends the node a `caddy.upsert-route` job to apply it. A failure to send the job is only
+        logged: the route is saved and the response is still `200`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domain, upstream]
+              properties:
+                domain:
+                  type: string
+                  description: Hostname to serve. Trimmed and lowercased.
+                  examples: [app.example.com]
+                upstream:
+                  type: string
+                  description: Address Caddy proxies to, as the node sees it.
+                  examples: ["localhost:8080"]
+                tls_mode:
+                  $ref: "#/components/schemas/CaddyTLSMode"
+      responses:
+        "200":
+          description: The saved route.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaddyRoute"
+        "400":
+          description: Malformed JSON, `domain` or `upstream` missing, or an invalid `tls_mode`.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["invalid tls_mode: must be auto, internal, or http_only"]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NodeNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/caddy-routes/{nodeId}/{domain}:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+      - name: domain
+        in: path
+        required: true
+        description: Domain of the route, as stored (lowercase).
+        schema:
+          type: string
+    delete:
+      tags: [Caddy routes]
+      operationId: deleteCaddyRoute
+      summary: Delete a Caddy route
+      description: |
+        Requires `network:manage` on the node. Deletes the route and sends the node a `caddy.delete-route`
+        job; a failure to send the job is only logged.
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The node or the route does not exist.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [route not found]
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/cloudflare-tunnel/status:
+    get:
+      tags: [Cloudflare Tunnel]
+      operationId: getCloudflareTunnelStatus
+      summary: Get the tunnel status and routes
+      description: |
+        Any user can call it. Non-admins only see routes to nodes where they have `network:read`, and never
+        `login_url`, `login_error` or `recent_logs`.
+      responses:
+        "200":
+          description: Tunnel status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloudflareTunnelStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/cloudflare-tunnel/login:
+    post:
+      tags: [Cloudflare Tunnel]
+      operationId: startCloudflareLogin
+      summary: Start the Cloudflare account login (admin)
+      description: |
+        Runs `cloudflared tunnel login` on the API host and returns the URL where an admin authorizes the
+        account. Poll `GET /v1/cloudflare-tunnel/status` until `authenticated` is true; the API then creates
+        the tunnel and starts it in `managed` mode.
+      responses:
+        "200":
+          description: Login started.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, login_url]
+                properties:
+                  status:
+                    type: string
+                    const: waiting_auth
+                  login_url:
+                    type: string
+                    format: uri
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/CloudflareAdminOnly"
+        "500":
+          $ref: "#/components/responses/CloudflareProcessError"
+
+  /v1/cloudflare-tunnel/quick-tunnel:
+    post:
+      tags: [Cloudflare Tunnel]
+      operationId: startCloudflareQuickTunnel
+      summary: Start a quick tunnel (admin)
+      description: Starts a tunnel with a random `*.trycloudflare.com` URL that needs no Cloudflare account.
+      responses:
+        "200":
+          description: Quick tunnel running.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, mode, quick_tunnel_url]
+                properties:
+                  status:
+                    type: string
+                    const: running
+                  mode:
+                    type: string
+                    const: quick
+                  quick_tunnel_url:
+                    type: string
+                    description: Public URL. It can be empty if cloudflared has not reported it yet; read it later from the status.
+                    examples: [https://random-words.trycloudflare.com]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/CloudflareAdminOnly"
+        "500":
+          $ref: "#/components/responses/CloudflareProcessError"
+
+  /v1/cloudflare-tunnel/config:
+    post:
+      tags: [Cloudflare Tunnel]
+      operationId: setCloudflareTunnelConfig
+      summary: Set the base domain (admin)
+      description: |
+        Sets the domain new routes are created under (`<subdomain>.<base_domain>`). A leading `http://` or
+        `https://` and a trailing `/` are removed; an empty value clears it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                base_domain:
+                  type: string
+                  examples: [example.com]
+      responses:
+        "200":
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [base_domain]
+                properties:
+                  base_domain:
+                    type: string
+        "400":
+          $ref: "#/components/responses/CloudflareInvalidDomain"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/CloudflareAdminOnly"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/cloudflare-tunnel/disconnect:
+    post:
+      tags: [Cloudflare Tunnel]
+      operationId: disconnectCloudflareTunnel
+      summary: Stop the tunnel and forget the account (admin)
+      description: Stops cloudflared and removes the Cloudflare account credentials. Always answers `200`.
+      responses:
+        "200":
+          description: Disconnected.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: disconnected
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/CloudflareAdminOnly"
+
+  /v1/cloudflare-tunnel/routes:
+    post:
+      tags: [Cloudflare Tunnel]
+      operationId: upsertCloudflareTunnelRoute
+      summary: Publish a container through the tunnel
+      description: |
+        Routes a hostname to `port` on the target node, reached over its VPN IP (loopback for the master node,
+        or its local IP if it has no VPN IP), creates the DNS record and reloads cloudflared. Requires
+        `network:manage` on the target node.
+
+        The hostname is `domain` if given; otherwise `<subdomain>.<base_domain>` (`@` or no subdomain means the
+        base domain itself), with `base_domain` defaulting to the configured one. Without any base domain it
+        falls back to `<subdomain>.local` or `<node hostname>-<port>.local`.
+
+        Only admins may pass a `base_domain` different from the configured one. Replacing a route that already
+        serves the hostname also requires `network:manage` on that route's node.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_node_id, port]
+              properties:
+                target_node_id:
+                  type: string
+                  format: uuid
+                port:
+                  type: integer
+                  minimum: 1
+                  maximum: 65535
+                subdomain:
+                  type: string
+                  examples: [app]
+                base_domain:
+                  type: string
+                domain:
+                  type: string
+                  description: Full hostname. Takes precedence over `subdomain` and `base_domain`.
+                container_id:
+                  type: string
+                container_name:
+                  type: string
+                container_image:
+                  type: string
+      responses:
+        "200":
+          description: The route. Check `dns_configured` and `dns_message` for the DNS record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloudflareTunnelRoute"
+        "400":
+          description: |
+            Malformed JSON, `target_node_id` missing or an invalid `port`, an invalid hostname, or the node has
+            no usable IP.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["invalid domain: subdomain"]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            No `network:manage` on the target node, a non-admin changing the base domain, or the hostname is
+            already routed to a node the caller cannot manage.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["forbidden: domain is already routed to a node you cannot manage"]
+        "404":
+          description: The target node does not exist.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [target node not found]
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/cloudflare-tunnel/routes/{domain}:
+    delete:
+      tags: [Cloudflare Tunnel]
+      operationId: deleteCloudflareTunnelRoute
+      summary: Stop publishing a hostname
+      description: Requires being an admin or having `network:manage` on the route's target node.
+      parameters:
+        - name: domain
+          in: path
+          required: true
+          description: Full hostname of the route (case-insensitive).
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No route for this hostname.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [route not found]
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/vpn/key:
+    post:
+      tags: [VPN]
+      operationId: createVPNKey
+      summary: Get a VPN pre-auth key
+      description: |
+        Creates the caller's Headscale user if needed and returns a new reusable pre-auth key, valid for 30
+        days, plus the CLI command that joins a machine to the VPN with it. `GET` does the same.
+      responses:
+        "200":
+          $ref: "#/components/responses/VPNKey"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [VPN]
+      operationId: getVPNKey
+      summary: Get a VPN pre-auth key (alias)
+      description: Same as `POST /v1/vpn/key`. It also creates a new key on every call.
+      responses:
+        "200":
+          $ref: "#/components/responses/VPNKey"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/vpn/status:
+    post:
+      tags: [VPN, Agent]
+      operationId: reportVPNStatus
+      summary: Report the node's VPN IP (agent)
+      description: |
+        Stores the node's VPN address, used to reach it from the API (Funnel, Cloudflare Tunnel). An empty
+        `ip_vpn` clears it.
+      security:
+        - nodeToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ip_vpn:
+                  type: string
+                  description: An IP address or CIDR prefix.
+                  examples: [100.64.0.5]
+      responses:
+        "200":
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, ip_vpn]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+                  ip_vpn:
+                    type: string
+                    description: The normalized address.
+        "400":
+          description: Malformed JSON or an address that is not an IP or a CIDR prefix.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ['invalid VPN address "abc"']
+        "401":
+          $ref: "#/components/responses/NodeUnauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/agent/network-stats:
+    post:
+      tags: [Node network, Agent]
+      operationId: reportNetworkStats
+      summary: Report a network snapshot (agent)
+      description: |
+        Stores a new snapshot. The API keeps every snapshot, but only the latest is exposed. Agents connected
+        over gRPC answer on-demand requests on their stream instead.
+      security:
+        - nodeToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NetworkStatsReport"
+      responses:
+        "204":
+          description: Stored.
+        "400":
+          description: Malformed JSON.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [invalid body]
+        "401":
+          $ref: "#/components/responses/NodeUnauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/node-network/{nodeId}:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      tags: [Node network]
+      operationId: getNodeNetworkStats
+      summary: Get a node's network snapshot
+      description: |
+        Requires `network:read` on the node. If the agent is connected over gRPC, the API asks it for a fresh
+        snapshot (3 s timeout); otherwise, or if that fails, it returns the last stored one. A node that has
+        never reported returns an object with only `node_id` set.
+      responses:
+        "200":
+          description: The snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeNetworkStats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NodeNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /v1/node-alerts/{nodeId}:
     parameters:
       - $ref: "#/components/parameters/NodeIDPathNodeId"
@@ -4883,6 +5397,42 @@ components:
           example:
             error: too many requests, retry in 42 seconds
 
+    NodeNotFound:
+      description: |
+        The node does not exist. The node permission check runs first, so only callers allowed on every node
+        (admins) get `404`; others get `403`.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: [node not found]
+    CloudflareAdminOnly:
+      description: Only global admins can change the tunnel.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ["forbidden: admin only"]
+    CloudflareProcessError:
+      description: cloudflared could not be downloaded or started. The message describes the cause.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ["failed to start quick tunnel: exec: \"cloudflared\": executable file not found"]
+    CloudflareInvalidDomain:
+      description: Malformed JSON or an invalid hostname.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ["invalid domain: base_domain"]
+    VPNKey:
+      description: A new pre-auth key.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/VPNKey"
   schemas:
     Error:
       type: object
@@ -6274,6 +6824,336 @@ components:
         created_at:
           type: string
           format: date-time
+
+    CaddyTLSMode:
+      type: string
+      enum: [auto, internal, http_only]
+      default: auto
+      description: |
+        `auto`: public certificate from Let's Encrypt. `internal`: certificate from Caddy's local CA.
+        `http_only`: plain HTTP.
+
+    CaddyRoute:
+      type: object
+      required: [id, node_id, user_id, domain, upstream, tls_mode, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+          description: User who last saved the route.
+        domain:
+          type: string
+          examples: [app.example.com]
+        upstream:
+          type: string
+          examples: ["localhost:8080"]
+        tls_mode:
+          $ref: "#/components/schemas/CaddyTLSMode"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CloudflareTunnelRoute:
+      type: object
+      required: [domain, subdomain, base_domain, target_node_id, target_node_name, target_ip, port, upstream, dns_configured, created_at, updated_at]
+      properties:
+        domain:
+          type: string
+          description: Full public hostname.
+          examples: [app.example.com]
+        subdomain:
+          type: string
+        base_domain:
+          type: string
+        target_node_id:
+          type: string
+          format: uuid
+        target_node_name:
+          type: string
+        target_ip:
+          type: string
+          examples: [100.64.0.5]
+        port:
+          type: integer
+        upstream:
+          type: string
+          examples: ["http://100.64.0.5:8080"]
+        container_id:
+          type: string
+        container_name:
+          type: string
+        container_image:
+          type: string
+        dns_configured:
+          type: boolean
+          description: Whether the DNS record was created in Cloudflare.
+        dns_message:
+          type: string
+          description: Result or error of the DNS step.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CloudflareTunnelStatus:
+      type: object
+      required: [installed, authenticated, running, login_in_process, mode, tunnel_id, tunnel_name, base_domain, routes]
+      properties:
+        installed:
+          type: boolean
+          description: Whether the cloudflared binary is available on the API host.
+        authenticated:
+          type: boolean
+          description: Whether a Cloudflare account is logged in.
+        running:
+          type: boolean
+        login_in_process:
+          type: boolean
+        login_url:
+          type: string
+          format: uri
+          description: Authorization URL of a login in progress (admins only).
+        login_error:
+          type: string
+          description: Admins only.
+        mode:
+          type: string
+          enum: [managed, quick]
+        tunnel_id:
+          type: string
+        tunnel_name:
+          type: string
+        base_domain:
+          type: string
+        quick_tunnel_url:
+          type: string
+        master_node_id:
+          type: string
+          format: uuid
+          description: The node running on the API host, where the tunnel runs.
+        master_hostname:
+          type: string
+        routes:
+          type: array
+          items:
+            $ref: "#/components/schemas/CloudflareTunnelRoute"
+        recent_logs:
+          type: array
+          description: Latest cloudflared output lines (admins only).
+          items:
+            type: string
+
+    VPNKey:
+      type: object
+      required: [login_server, preauth_key, user, command]
+      properties:
+        login_server:
+          type: string
+          description: Headscale URL.
+          examples: [https://hs.autohst.dev]
+        preauth_key:
+          type: string
+          description: Reusable pre-auth key, valid for 30 days.
+        user:
+          type: string
+          description: The caller's Headscale user.
+        command:
+          type: string
+          description: CLI command that joins a machine to the VPN. `--login-server` is omitted for the default server.
+          examples: [autohost vpn connect --authkey <key>]
+
+    NetworkInterfaceStat:
+      type: object
+      required: [interface, rx_bytes, rx_packets, rx_errors, rx_dropped, tx_bytes, tx_packets, tx_errors, tx_dropped]
+      description: Cumulative counters since the interface came up.
+      properties:
+        interface:
+          type: string
+          examples: [eth0]
+        rx_bytes:
+          type: integer
+          format: int64
+        rx_packets:
+          type: integer
+          format: int64
+        rx_errors:
+          type: integer
+          format: int64
+        rx_dropped:
+          type: integer
+          format: int64
+        tx_bytes:
+          type: integer
+          format: int64
+        tx_packets:
+          type: integer
+          format: int64
+        tx_errors:
+          type: integer
+          format: int64
+        tx_dropped:
+          type: integer
+          format: int64
+
+    ListeningPort:
+      type: object
+      required: [port, protocol, bind_addr]
+      properties:
+        port:
+          type: integer
+        protocol:
+          type: string
+          examples: [tcp]
+        bind_addr:
+          type: string
+          examples: [0.0.0.0]
+
+    VPNPeer:
+      type: object
+      required: [ip, hostname, online, latency_ms]
+      properties:
+        ip:
+          type: string
+        hostname:
+          type: string
+        online:
+          type: boolean
+        latency_ms:
+          type: number
+        relay:
+          type: string
+          description: DERP relay in use, if the connection is not direct.
+
+    ActiveConnection:
+      type: object
+      required: [local_ip, local_port, remote_ip, remote_port, protocol, state]
+      properties:
+        local_ip:
+          type: string
+        local_port:
+          type: integer
+        remote_ip:
+          type: string
+        remote_port:
+          type: integer
+        protocol:
+          type: string
+        state:
+          type: string
+          examples: [ESTABLISHED]
+
+    HTTPRequestLog:
+      type: object
+      required: [timestamp, client_ip, method, path, status_code, duration_ms]
+      properties:
+        timestamp:
+          type: string
+        client_ip:
+          type: string
+        method:
+          type: string
+        path:
+          type: string
+        status_code:
+          type: integer
+        duration_ms:
+          type: number
+        user_agent:
+          type: string
+
+    NetworkStatsReport:
+      type: object
+      properties:
+        interfaces:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/NetworkInterfaceStat"
+        ports:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/ListeningPort"
+        peers:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/VPNPeer"
+        connections:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/ActiveConnection"
+        requests:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/HTTPRequestLog"
+        rps:
+          type: number
+          description: HTTP requests per second.
+
+    NodeNetworkStats:
+      type: object
+      required: [id, node_id, collected_at, rx_bytes, tx_bytes, rx_dropped, tx_dropped, rx_errors, tx_errors, rps, interfaces, ports, peers, connections, requests]
+      description: |
+        A snapshot. The `rx_*`/`tx_*` totals add up every interface. Lists may be `null` when the agent sent
+        none; `id` is empty and `collected_at` is the zero time for a fresh on-demand or empty snapshot.
+      properties:
+        id:
+          type: string
+        node_id:
+          type: string
+          format: uuid
+        collected_at:
+          type: string
+          format: date-time
+        rx_bytes:
+          type: integer
+          format: int64
+        tx_bytes:
+          type: integer
+          format: int64
+        rx_dropped:
+          type: integer
+          format: int64
+        tx_dropped:
+          type: integer
+          format: int64
+        rx_errors:
+          type: integer
+          format: int64
+        tx_errors:
+          type: integer
+          format: int64
+        rps:
+          type: number
+        interfaces:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/NetworkInterfaceStat"
+        ports:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/ListeningPort"
+        peers:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/VPNPeer"
+        connections:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/ActiveConnection"
+        requests:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/HTTPRequestLog"
 
     NodeAlertConfigRequest:
       type: object
