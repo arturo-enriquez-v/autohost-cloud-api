@@ -1,0 +1,16 @@
+# Known, intentional Redocly warnings. Run `npx @redocly/cli lint api/openapi.yaml`.
+# - /health, setup-status and logout have no 4xx response.
+# - The terminal endpoint is a WebSocket: it answers 101, not 2xx.
+# - LiveNodeMetric, ContainerList and LogEntry are the payloads of SSE events. OpenAPI 3.1 cannot type
+#   event-stream items, so the endpoints reference them in their descriptions instead of with $ref.
+api/openapi.yaml:
+  operation-4xx-response:
+    - '#/paths/~1health/get/responses'
+    - '#/paths/~1v1~1auth~1setup-status/get/responses'
+    - '#/paths/~1v1~1auth~1logout/post/responses'
+  operation-2xx-response:
+    - '#/paths/~1v1~1nodes~1{nodeId}~1terminal/get/responses'
+  no-unused-components:
+    - '#/components/schemas/LiveNodeMetric'
+    - '#/components/schemas/ContainerList'
+    - '#/components/schemas/LogEntry'

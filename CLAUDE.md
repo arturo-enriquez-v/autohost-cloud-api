@@ -13,7 +13,7 @@ go test ./internal/server -count=1   # cobertura de la spec, $refs y requireNode
 go vet ./...
 make migrate-up          # aplicar migraciones
 make proto               # regenerar gRPC desde proto/ (y actualizar la copia del agente)
-npx --no-install @redocly/cli lint api/openapi.yaml       # lint de la spec (7 warnings conocidos, 0 errores)
+npx --no-install @redocly/cli lint api/openapi.yaml       # lint de la spec (excepciones en .redocly.lint-ignore.yaml)
 ```
 
 `SERVICE_MODE` = `all` | `http` | `grpc`. `API_DOCS_ENABLED=true` sirve `/docs` (Scalar) y `/openapi.yaml`.
@@ -33,6 +33,7 @@ internal/dispatcher         envío de jobs a nodos conectados
 internal/app                wiring de módulos y BD
 migrations/                 NNNN_nombre.up.sql / .down.sql, numeración secuencial
 api/openapi.yaml            spec OpenAPI 3.1, embebida en el binario (api/api.go)
+api/grpc.md                 guía del gRPC con el agente (conexión, auth, flujos); referencia en proto/
 ```
 
 Flujo: handler (auth, permisos, parseo, códigos HTTP) → servicio en `core` (reglas) → repositorio (SQL).
@@ -68,6 +69,13 @@ los códigos y el formato de error reales (texto plano o JSON) aunque sean incoh
 incoherencia en PENDIENTES; reutilizar `components/responses` (`Unauthorized`, `Forbidden`, `NodeNotFound`,
 `InternalError`, `*JSON`...) y `components/parameters`; `operationId` en camelCase y único; los strings con
 `: ` o que empiezan por `` ` `` van entre comillas.
+
+## gRPC
+
+El contrato con el agente es `proto/node_agent/v1/node_agent.proto`, con cada mensaje y campo comentado;
+`api/grpc.md` explica conexión, autenticación y flujos. Al cambiarlo: comentar los campos nuevos, seguir
+las reglas de compatibilidad de `api/grpc.md`, `make proto`, copiar `internal/grpc/nodepb/*.pb.go` a
+`../autohost-agent/internal/transport/nodepb/` y actualizar `api/grpc.md` si cambia un flujo.
 
 ## Tests
 

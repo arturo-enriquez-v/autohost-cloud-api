@@ -1,24 +1,36 @@
 syntax = "proto3";
 
+// Protocol between the AutoHost API (server) and the node agent (client).
+//
+// The agent dials the API and authenticates every RPC with its node token in the
+// "authorization" metadata ("Bearer autohost-node_...") and, when mTLS is configured, with its
+// client certificate (CN = node ID). The node is always taken from those credentials, never from a
+// message field. See api/grpc.md for the connection lifecycle and the message flows.
+//
+// Compatibility: agents and API servers of different versions talk to each other. Never renumber or
+// reuse a field, add new fields instead of changing the meaning of existing ones, and make every new
+// field optional for the receiver (the zero value must mean "not set").
 package node_agent.v1;
 
 option go_package = "github.com/arturo/autohost-cloud-api/internal/grpc/nodepb";
 
 // ─── Shared enums ────────────────────────────────────────────────────────────
 
+// Kind of command, mirrored by the API's job `command_type`.
 enum CommandType {
-  COMMAND_TYPE_DEFAULT     = 0;
-  COMMAND_TYPE_CUSTOM      = 1;
-  COMMAND_TYPE_INSTALL_APP = 2;
-  COMMAND_TYPE_SWARM       = 3;
+  COMMAND_TYPE_DEFAULT     = 0;  // Built-in command of the agent (see its dispatcher registry).
+  COMMAND_TYPE_CUSTOM      = 1;  // A `.sh` script in the node's custom commands directory.
+  COMMAND_TYPE_INSTALL_APP = 2;  // Marketplace install; `params` carries the compose file and settings.
+  COMMAND_TYPE_SWARM       = 3;  // Docker Swarm operation for clusters.
 }
 
-// ProfileType selects what the agent should sample.
+// ProfileType selects what the agent should sample. Unused: see RequestProfilePayload.
 enum ProfileType {
-  PROFILE_TYPE_HEAP = 0;  // Heap / memory allocation snapshot (instantaneous)
-  PROFILE_TYPE_CPU  = 1;  // CPU sampling for duration_seconds
+  PROFILE_TYPE_HEAP = 0;  // Heap / memory allocation snapshot (instantaneous).
+  PROFILE_TYPE_CPU  = 1;  // CPU sampling for duration_seconds.
 }
 
+// Final state of a job. The agent only reports COMPLETED or FAILED; RUNNING is never sent.
 enum JobStatus {
   JOB_STATUS_RUNNING   = 0;
   JOB_STATUS_COMPLETED = 1;
@@ -26,215 +38,352 @@ enum JobStatus {
 }
 
 // ─── RegisterCommands ────────────────────────────────────────────────────────
-// The agent calls this on startup to announce the commands it supports.
-// Each message in the client stream is one command; the server responds once.
 
+// One command the agent can run. The agent streams one per command on every (re)connection,
+// before opening Connect; the API upserts them by (node, name).
 message RegisterCommandRequest {
-  string node_id     = 1;  // validated against the auth token server-side
-  string name        = 2;
+  string node_id     = 1;  // Ignored: the node comes from the credentials.
+  string name        = 2;  // Command name, e.g. "docker.install" or a custom script name.
   string description = 3;
   CommandType type   = 4;
-  string script_path = 5;  // only set for COMMAND_TYPE_CUSTOM
+  string script_path = 5;  // Only for COMMAND_TYPE_CUSTOM: absolute path of the script on the node.
 }
 
+// Sent once, after the agent closes the RegisterCommands stream.
 message RegisterCommandsResponse {
-  int32  registered = 1;   // total commands upserted in this batch
+  int32 registered = 1;  // Commands upserted in this batch (failed ones are skipped and logged).
 }
-
 
 // ─── Connect (bidirectional streaming) ───────────────────────────────────────
-// The agent opens a single long-lived stream.
-//   agent  → server : NodeMessage  (job results, heartbeats, log entries)
-//   server → agent  : ServerMessage (execute_job, stream_logs, stop_logs)
 
+// Everything the agent sends on the Connect stream. Exactly one payload is set.
 message NodeMessage {
   oneof payload {
-    JobResultPayload         job_result       = 1;
-    HeartbeatPayload         heartbeat        = 2;
-    LogEntryPayload          log_entry        = 3;
-    MetricPayload            metric           = 4;
-    HealthCheckResultPayload health_result    = 5;
-    ProfileDataPayload       profile_data     = 6;
-    ContainerListPayload     container_list   = 7;
-    LogDiagnosticPayload     log_diagnostic   = 8;
-    NetworkStatsPayload      network_stats    = 9;
-    HypervisorInfoPayload    hypervisor_info  = 10;
-    TerminalOutputPayload        terminal_output   = 11;
-    TerminalClosedPayload        terminal_closed   = 12;
-    FileOperationResponsePayload file_op_response  = 13;
+    JobResultPayload             job_result       = 1;   // Result of an ExecuteJobPayload.
+    HeartbeatPayload             heartbeat        = 2;   // Every 30 s.
+    LogEntryPayload              log_entry        = 3;   // One per journald line while a log stream is active.
+    MetricPayload                metric           = 4;   // Every 5 s.
+    HealthCheckResultPayload     health_result    = 5;   // After each health check run.
+    ProfileDataPayload           profile_data     = 6;   // Unused.
+    ContainerListPayload         container_list   = 7;   // While a container stream is active.
+    LogDiagnosticPayload         log_diagnostic   = 8;   // Result of a CollectLogsPayload.
+    NetworkStatsPayload          network_stats    = 9;   // Result of a RequestNetworkStatsPayload.
+    HypervisorInfoPayload        hypervisor_info  = 10;  // Once per session, only on KVM hosts.
+    TerminalOutputPayload        terminal_output  = 11;  // PTY output of a terminal session.
+    TerminalClosedPayload        terminal_closed  = 12;  // A terminal session ended.
+    FileOperationResponsePayload file_op_response = 13;  // Result of a FileOperationRequestPayload.
+  }
+}
+
+// Everything the API sends on the Connect stream. Exactly one payload is set.
+message ServerMessage {
+  oneof payload {
+    ExecuteJobPayload           execute_job            = 1;   // Run a job; answered with JobResultPayload.
+    StreamLogsPayload           stream_logs            = 2;   // Start following journald.
+    StopLogsPayload             stop_logs              = 3;   // Stop following journald.
+    ConfigureHealthCheckPayload configure_health_check = 4;   // Create or update a health check.
+    StopHealthCheckPayload      stop_health_check      = 5;   // Remove a health check.
+    RequestProfilePayload       request_profile        = 6;   // Unused.
+    StreamContainersPayload     stream_containers      = 7;   // Start reporting containers.
+    StopContainersPayload       stop_containers        = 8;   // Stop reporting containers.
+    CollectLogsPayload          collect_logs           = 9;   // Collect logs for a diagnostic.
+    RequestNetworkStatsPayload  request_network_stats  = 10;  // Ask for a network snapshot now.
+    StartTerminalPayload        start_terminal         = 11;  // Open a PTY session.
+    TerminalInputPayload        terminal_input         = 12;  // Keystrokes for a PTY session.
+    TerminalResizePayload       terminal_resize        = 13;  // Resize a PTY session.
+    CloseTerminalPayload        close_terminal         = 14;  // Close a PTY session.
+    FileOperationRequestPayload file_op_request        = 15;  // File operation in the shared folder.
   }
 }
 
 // ─── Hypervisor (agent → server) ─────────────────────────────────────────────
 
-// Reports whether the node can host virtual machines (KVM + libvirt) and how
-// many resources it has available for them. Sent once per Connect session.
+// Whether the node can host virtual machines (KVM + libvirt) and its capacity for them. Sent once per
+// Connect session, and only when KVM and libvirt are usable; other nodes never send it.
 message HypervisorInfoPayload {
-  bool   capable                 = 1;  // true when KVM and libvirt are both usable
-  bool   kvm_available           = 2;  // /dev/kvm is present
-  bool   libvirt_available       = 3;  // virsh can reach qemu:///system
+  bool   capable                 = 1;  // True when KVM and libvirt are both usable.
+  bool   kvm_available           = 2;  // /dev/kvm is present.
+  bool   libvirt_available       = 3;  // virsh can reach qemu:///system.
   string libvirt_version         = 4;
-  string reason                  = 5;  // human-readable cause when capable == false
-  string network_name            = 6;  // libvirt network used for guests (e.g. "default")
-  uint32 cpu_cores               = 7;  // host logical cores
-  uint64 ram_total_bytes         = 8;  // host RAM
-  uint64 storage_total_bytes     = 9;  // size of the VM storage pool filesystem
+  string reason                  = 5;  // Human-readable cause when capable is false.
+  string network_name            = 6;  // libvirt network used for guests, e.g. "default".
+  uint32 cpu_cores               = 7;  // Host logical cores.
+  uint64 ram_total_bytes         = 8;  // Host RAM.
+  uint64 storage_total_bytes     = 9;  // Size of the filesystem holding the VM storage pool.
   uint64 storage_available_bytes = 10;
 }
 
-// ─── Metric (agent → server, via Connect stream) ─────────────────────────────
-// Mirrors MetricRequest but lives in NodeMessage for the Connect stream.
+// ─── Heartbeat and metrics (agent → server) ──────────────────────────────────
 
+// Liveness signal, every 30 s. Updates the node's last_seen_at and its online flag.
+message HeartbeatPayload {
+  string node_id = 1;  // Informational only: the node comes from the credentials.
+}
+
+// System metrics, every 5 s (the first one right after connecting). Every sample goes to live
+// subscribers (GET /v1/node-metrics/{nodeId}/live); the API stores at most one every 15 s and checks
+// the node's alert thresholds on those.
 message MetricPayload {
-  float  cpu_usage_percent    = 1;
+  float  cpu_usage_percent    = 1;   // 0-100.
   uint64 ram_total_bytes      = 2;
   uint64 ram_used_bytes       = 3;
   uint64 ram_available_bytes  = 4;
-  float  ram_usage_percent    = 5;
-  uint64 disk_total_bytes     = 6;
+  float  ram_usage_percent    = 5;   // 0-100.
+  uint64 disk_total_bytes     = 6;   // Root filesystem.
   uint64 disk_used_bytes      = 7;
   uint64 disk_available_bytes = 8;
-  float  disk_usage_percent   = 9;
+  float  disk_usage_percent   = 9;   // 0-100.
   int64  uptime_seconds       = 10;
-  float  cpu_temp_celsius     = 11;
+  float  cpu_temp_celsius     = 11;  // 0 when the node has no temperature sensor.
 }
 
-message ServerMessage {
-  oneof payload {
-    ExecuteJobPayload           execute_job            = 1;
-    StreamLogsPayload           stream_logs            = 2;
-    StopLogsPayload             stop_logs              = 3;
-    ConfigureHealthCheckPayload configure_health_check = 4;
-    StopHealthCheckPayload      stop_health_check      = 5;
-    RequestProfilePayload       request_profile        = 6;
-    StreamContainersPayload     stream_containers      = 7;
-    StopContainersPayload       stop_containers        = 8;
-    CollectLogsPayload          collect_logs           = 9;
-    RequestNetworkStatsPayload  request_network_stats  = 10;
-    StartTerminalPayload        start_terminal         = 11;
-    TerminalInputPayload        terminal_input         = 12;
-    TerminalResizePayload       terminal_resize        = 13;
-    CloseTerminalPayload        close_terminal         = 14;
-    FileOperationRequestPayload file_op_request        = 15;
-  }
-}
+// ─── Jobs (server → agent, then agent → server) ──────────────────────────────
 
-message JobResultPayload {
-  string    job_id  = 1;
-  JobStatus status  = 2;
-  string    output  = 3;
-  string    error   = 4;
-}
-
-message HeartbeatPayload {
-  string node_id = 1;
-}
-
+// Run a job. Sent when the job is created if the node is connected; if not, the job stays pending in
+// the API. On reconnection the API only re-sends pending COMMAND_TYPE_INSTALL_APP jobs. The agent skips
+// a job_id it already completed and answers COMPLETED again.
 message ExecuteJobPayload {
-  string      job_id       = 1;
-  string      command_name = 2;
+  string      job_id       = 1;  // API job ID (UUID); echoed in JobResultPayload.
+  string      command_name = 2;  // Registered command, e.g. "caddy.upsert-route" or a custom script name.
   CommandType command_type = 3;
-  string      params       = 4;  // JSON-encoded parameters (e.g. for INSTALL_APP)
+  string      params       = 4;  // JSON object with the command's parameters; empty when it takes none.
 }
 
-// ─── Log streaming ───────────────────────────────────────────────────────────
+// Final result of a job, sent once per ExecuteJobPayload.
+message JobResultPayload {
+  string    job_id = 1;  // From ExecuteJobPayload.
+  JobStatus status = 2;  // COMPLETED or FAILED.
+  string    output = 3;  // Command output (stdout/stderr), also on failure.
+  string    error  = 4;  // Error message when status is FAILED.
+}
 
-// Sent by server to ask the agent to start streaming logs.
+// ─── Log streaming (server → agent, then agent → server) ─────────────────────
+
+// Start following journald. Sent when the first user opens GET /v1/node-logs/{nodeId}/stream, and
+// again on reconnection while users are still subscribed. A new StreamLogsPayload replaces the
+// previous stream.
 message StreamLogsPayload {
-  string unit  = 1;  // systemd unit name, e.g. "autohost-agent" or "" for all
-  int32  lines = 2;  // how many historical lines to tail first (0 = no history)
+  string unit  = 1;  // systemd unit, e.g. "autohost-agent", or "docker:<container>"; empty for all units.
+  int32  lines = 2;  // Past lines to send first (0 = only new lines).
 }
 
-// Sent by server to ask the agent to stop streaming logs.
+// Stop following journald. Sent when the last subscriber leaves.
 message StopLogsPayload {}
 
-// Sent by agent to the server, one per log line.
+// One journald line, while a log stream is active.
 message LogEntryPayload {
-  int64  timestamp_us = 1;  // Unix microseconds
-  string unit         = 2;  // source systemd unit
+  int64  timestamp_us = 1;  // Unix time in microseconds.
+  string unit         = 2;  // Source systemd unit.
   string message      = 3;
-}
-
-// ─── Health Check (server → agent) ───────────────────────────────────────────
-
-// Sent by the server to configure or update a health check on the agent.
-message ConfigureHealthCheckPayload {
-  string monitor_id           = 1;
-  string service_name         = 2;
-  string check_type           = 3;  // "process" | "tcp" | "http"
-  string http_url             = 4;
-  int32  http_expected_status = 5;
-  string tcp_host             = 6;
-  int32  tcp_port             = 7;
-  int32  interval_seconds     = 8;
-  int32  failure_threshold    = 9;
-  bool   enabled              = 10;
-  string auto_heal_config     = 11; // JSON string of AutoHealConfig
-  string auto_heal_state      = 12; // JSON string of ServiceHealthState
-}
-
-// Sent by the server to remove a health check from the agent.
-message StopHealthCheckPayload {
-  string monitor_id = 1;
-}
-
-// ─── Health Check Result (agent → server) ────────────────────────────────────
-
-// Sent by the agent after each health check execution.
-message HealthCheckResultPayload {
-  string monitor_id            = 1;
-  string status                = 2;  // "up" | "down"
-  int32  latency_ms            = 3;
-  string message               = 4;
-  int32  consecutive_failures  = 5;
-  string auto_heal_state       = 6; // JSON string of updated ServiceHealthState
-}
-
-// ─── Profiling (server → agent, then agent → server) ─────────────────────────
-
-// Sent by server to ask the agent to collect a pprof profile.
-message RequestProfilePayload {
-  string      request_id       = 1;  // correlation ID (UUID)
-  ProfileType profile_type     = 2;
-  int32       duration_seconds = 3;  // only relevant for PROFILE_TYPE_CPU (0 → 30 s default)
-}
-
-// Sent by agent to deliver the raw pprof bytes back to the server.
-message ProfileDataPayload {
-  string      request_id   = 1;  // matches RequestProfilePayload.request_id
-  ProfileType profile_type = 2;
-  bytes       data         = 3;  // raw pprof binary (pprof.WriteHeapProfile / StopCPUProfile output)
-  string      error        = 4;  // non-empty when collection failed
 }
 
 // ─── Container streaming (server → agent, then agent → server) ───────────────
 
-// Sent by server to ask the agent to start streaming container state snapshots.
+// Start reporting containers. Sent when the first user opens GET /v1/node-containers/{nodeId}/stream,
+// and again on reconnection while users are still subscribed.
 message StreamContainersPayload {}
 
-// Sent by server to ask the agent to stop streaming container state.
+// Stop reporting containers. Sent when the last subscriber leaves.
 message StopContainersPayload {}
 
-// One Docker container entry within a ContainerListPayload snapshot.
+// One Docker container within a ContainerListPayload.
 message ContainerInfo {
   string id       = 1;
   string name     = 2;
   string image    = 3;
-  string state    = 4;  // "running" | "exited" | "paused" | "restarting" | …
-  string status   = 5;  // human-readable, e.g. "Up 2 hours"
-  string cpu      = 6;  // CPU usage percentage string (only for running containers)
-  string mem      = 7;  // memory usage/limit string (only for running containers)
-  string mem_perc = 8;  // memory percentage string (only for running containers)
+  string state    = 4;  // "running", "exited", "paused", "restarting"...
+  string status   = 5;  // Human-readable, e.g. "Up 2 hours".
+  string cpu      = 6;  // CPU usage, e.g. "0.12%". Only for running containers.
+  string mem      = 7;  // Memory usage and limit, e.g. "12MiB / 1.9GiB". Only for running containers.
+  string mem_perc = 8;  // Memory usage, e.g. "0.61%". Only for running containers.
 }
 
-// Full container list snapshot sent by the agent whenever the list changes.
+// Full snapshot of the node's containers, sent whenever it changes while a container stream is active.
 message ContainerListPayload {
   repeated ContainerInfo containers = 1;
-  string error = 2;  // non-empty when Docker is unavailable
+  string error = 2;  // Non-empty when Docker is unavailable.
 }
 
-// ─── Metrics ─────────────────────────────────────────────────────────────────
+// ─── Health checks (server → agent, then agent → server) ─────────────────────
 
+// Create or update a service monitor on the agent, keyed by monitor_id. Sent when a monitor is created
+// or changed (disabling it sends enabled = false), and for every enabled monitor on each reconnection
+// (the agent drops its checks when the stream ends).
+message ConfigureHealthCheckPayload {
+  string monitor_id           = 1;
+  string service_name         = 2;   // For "process": the Docker container to check.
+  string check_type           = 3;   // "process" (the container is running), "tcp" or "http".
+  string http_url             = 4;   // For "http".
+  int32  http_expected_status = 5;   // For "http".
+  string tcp_host             = 6;   // For "tcp".
+  int32  tcp_port             = 7;   // For "tcp".
+  int32  interval_seconds     = 8;
+  int32  failure_threshold    = 9;   // Consecutive failures before the service is "down".
+  bool   enabled              = 10;
+  string auto_heal_config     = 11;  // JSON of the monitor's auto-heal configuration; empty when off.
+  string auto_heal_state      = 12;  // JSON of the last auto-heal state the API stored, to resume it.
+}
+
+// Remove a service monitor from the agent. Sent when the monitor is deleted.
+message StopHealthCheckPayload {
+  string monitor_id = 1;
+}
+
+// Result of one health check run. The API stores it, updates the monitor's status and sends a
+// "service down" alert when the threshold is crossed.
+message HealthCheckResultPayload {
+  string monitor_id           = 1;
+  string status               = 2;  // "up" or "down".
+  int32  latency_ms           = 3;
+  string message              = 4;  // Error or detail of the check.
+  int32  consecutive_failures = 5;
+  string auto_heal_state      = 6;  // JSON of the updated auto-heal state, stored by the API.
+}
+
+// ─── Log diagnostics (server → agent, then agent → server) ───────────────────
+
+// Collect, sanitize and analyze logs for POST /v1/log-diagnostics/collect.
+message CollectLogsPayload {
+  string   request_id         = 1;  // Diagnostic request ID (UUID); echoed in LogDiagnosticPayload.
+  repeated string sources     = 2;  // systemd units, or "docker:<container>"; up to 5.
+  int32    lines_per_source   = 3;  // Default 200; the agent caps it at 500.
+  bool     include_containers = 4;  // Also collect every running container, up to 5 sources in total.
+}
+
+// The collected logs and the agent's own analysis. The API may replace the analysis with an AI one.
+message LogDiagnosticPayload {
+  string                   request_id      = 1;  // From CollectLogsPayload.
+  string                   diagnostic_json = 2;  // JSON report: summary, system_health, issues...
+  repeated LogSourceBundle sources         = 3;  // Sanitized logs, one per source.
+  string                   error           = 4;  // Non-empty if the collection failed.
+}
+
+// The logs of one source within a diagnostic.
+message LogSourceBundle {
+  string source     = 1;  // As requested, e.g. "autohost-agent" or "docker:nginx".
+  string raw_logs   = 2;  // Sanitized log text, or "ERROR: ..." if the source could not be read.
+  int32  line_count = 3;
+}
+
+// ─── Network stats (server → agent, then agent → server) ─────────────────────
+
+// Ask for a network snapshot now, for GET /v1/node-network/{nodeId}. The API waits 3 s for the answer.
+message RequestNetworkStatsPayload {
+  string request_id = 1;  // Correlation ID; echoed in NetworkStatsPayload.
+}
+
+// A network snapshot. The API stores it and returns it to the waiting request.
+message NetworkStatsPayload {
+  string request_id = 1;  // From RequestNetworkStatsPayload.
+  string stats_json = 2;  // JSON with interfaces, ports, peers, connections, requests and rps
+                          // (same shape as POST /v1/agent/network-stats).
+  string error      = 3;  // Non-empty if the snapshot could not be taken.
+}
+
+// ─── Web terminal (server → agent, then agent → server) ──────────────────────
+// Bridges the WebSocket of GET /v1/nodes/{nodeId}/terminal to a PTY on the node. The API closes every
+// session of a node when its stream ends.
+
+// Open a PTY shell session.
+message StartTerminalPayload {
+  string session_id = 1;  // Session ID (UUID), used in every terminal message.
+  uint32 cols       = 2;  // Initial columns, e.g. 80.
+  uint32 rows       = 3;  // Initial rows, e.g. 24.
+  string shell      = 4;  // Preferred shell, e.g. "/bin/bash"; empty lets the agent choose.
+  string cwd        = 5;  // Initial working directory; empty for the default.
+}
+
+// Keystrokes from the browser.
+message TerminalInputPayload {
+  string session_id = 1;
+  bytes  data       = 2;
+}
+
+// The browser terminal was resized.
+message TerminalResizePayload {
+  string session_id = 1;
+  uint32 cols       = 2;
+  uint32 rows       = 3;
+}
+
+// Close the session (the user closed the terminal).
+message CloseTerminalPayload {
+  string session_id = 1;
+}
+
+// PTY output (stdout and stderr) for the browser.
+message TerminalOutputPayload {
+  string session_id = 1;
+  bytes  data       = 2;
+}
+
+// The shell exited or could not start. No more messages follow for this session.
+message TerminalClosedPayload {
+  string session_id = 1;
+  int32  exit_code  = 2;
+  string error      = 3;  // Non-empty when the session failed.
+}
+
+// ─── Files in the shared folder (server → agent, then agent → server) ────────
+// Paths are relative to the node's shared folder; the agent rejects any path that resolves outside it.
+
+enum FileOpType {
+  FILE_OP_LIST          = 0;  // List the entries of `path`.
+  FILE_OP_MKDIR         = 1;  // Create the directory `path`.
+  FILE_OP_DELETE        = 2;  // Delete the file or directory `path`.
+  FILE_OP_PUSH_TO_URL   = 3;  // Upload the file `path` with an HTTP POST to transfer_url.
+  FILE_OP_PULL_FROM_URL = 4;  // Download transfer_url with an HTTP GET into `path`.
+  FILE_OP_RENAME        = 5;  // Rename or move `path` to dest_path.
+}
+
+// A file operation. Transfers (PUSH/PULL) move the bytes over HTTP to the API, not over the stream.
+message FileOperationRequestPayload {
+  string     request_id   = 1;  // Correlation ID (UUID); echoed in FileOperationResponsePayload.
+  FileOpType op_type      = 2;
+  string     path         = 3;  // Relative path inside the shared folder.
+  string     transfer_url = 4;  // For PUSH_TO_URL and PULL_FROM_URL: API URL to send to or read from.
+  string     auth_token   = 5;  // For transfers: one-time token to present to transfer_url.
+  string     dest_path    = 6;  // For FILE_OP_RENAME: new relative path.
+}
+
+// One entry of a directory listing.
+message FileEntryInfo {
+  string name        = 1;
+  string path        = 2;  // Relative to the shared folder.
+  bool   is_dir      = 3;
+  int64  size_bytes  = 4;
+  int64  modified_at = 5;  // Unix time in seconds.
+  string mode        = 6;  // e.g. "-rw-r--r--".
+}
+
+// Result of a FileOperationRequestPayload.
+message FileOperationResponsePayload {
+  string                 request_id = 1;  // From FileOperationRequestPayload.
+  bool                   success    = 2;
+  string                 error      = 3;  // Non-empty when success is false.
+  repeated FileEntryInfo entries    = 4;  // For FILE_OP_LIST.
+}
+
+// ─── Profiling (unused) ──────────────────────────────────────────────────────
+
+// Unused: the API never sends it and ignores ProfileDataPayload. Kept so old peers still parse.
+message RequestProfilePayload {
+  string      request_id       = 1;  // Correlation ID (UUID).
+  ProfileType profile_type     = 2;
+  int32       duration_seconds = 3;  // Only for PROFILE_TYPE_CPU (0 = 30 s).
+}
+
+// Unused: see RequestProfilePayload.
+message ProfileDataPayload {
+  string      request_id   = 1;  // From RequestProfilePayload.
+  ProfileType profile_type = 2;
+  bytes       data         = 3;  // Raw pprof output.
+  string      error        = 4;  // Non-empty when collection failed.
+}
+
+// ─── ReportMetrics (legacy) ──────────────────────────────────────────────────
+
+// Same fields as MetricPayload. Legacy: current agents send MetricPayload on Connect instead.
 message MetricRequest {
   float  cpu_usage_percent    = 1;
   uint64 ram_total_bytes      = 2;
@@ -250,133 +399,22 @@ message MetricRequest {
 }
 
 message MetricResponse {
-  bool success = 1;
-}
-
-// ─── Log Diagnostics (server → agent, then agent → server) ──────────────────
-
-// Server asks agent to collect, sanitize and prepare a diagnostic log bundle.
-message CollectLogsPayload {
-  string   request_id          = 1;  // correlation UUID
-  repeated string sources      = 2;  // e.g. ["autohost-agent", "docker:nginx"]
-  int32    lines_per_source    = 3;  // max lines per source (default 200, max 500)
-  bool     include_containers  = 4;  // also collect all running container logs
-}
-
-// Agent returns sanitized logs + local pattern analysis to the server.
-message LogDiagnosticPayload {
-  string                   request_id       = 1;  // correlation UUID
-  string                   diagnostic_json  = 2;  // full JSON diagnostic report
-  repeated LogSourceBundle sources          = 3;  // raw sanitized log bundles
-  string                   error            = 4;  // non-empty if collection failed
-}
-
-// One log source within a diagnostic bundle.
-message LogSourceBundle {
-  string source     = 1;  // e.g. "journalctl:autohost-agent" or "docker:nginx"
-  string raw_logs   = 2;  // sanitized log text
-  int32  line_count = 3;
-}
-
-// ─── Network Stats (server → agent, then agent → server, on-demand) ─────────
-
-message RequestNetworkStatsPayload {
-  string request_id = 1;
-}
-
-message NetworkStatsPayload {
-  string request_id = 1;
-  string stats_json = 2;  // JSON-encoded IngestPayload
-  string error      = 3;
-}
-
-// ─── Interactive Web Terminal (bidirectional via Connect stream) ─────────────
-
-// Server asks agent to spawn an interactive PTY shell session.
-message StartTerminalPayload {
-  string session_id = 1;  // UUID identifying this terminal session
-  uint32 cols       = 2;  // initial terminal columns (e.g. 80 or 120)
-  uint32 rows       = 3;  // initial terminal rows (e.g. 24 or 40)
-  string shell      = 4;  // optional preferred shell (e.g. "/bin/bash"), empty = auto-detect
-  string cwd        = 5;  // optional initial working directory
-}
-
-// Server forwards raw stdin keystrokes from the browser to the agent PTY.
-message TerminalInputPayload {
-  string session_id = 1;
-  bytes  data       = 2;
-}
-
-// Server notifies agent that the browser terminal window resized.
-message TerminalResizePayload {
-  string session_id = 1;
-  uint32 cols       = 2;
-  uint32 rows       = 3;
-}
-
-// Server asks agent to terminate the PTY session.
-message CloseTerminalPayload {
-  string session_id = 1;
-}
-
-// Agent streams raw stdout/stderr bytes from the PTY back to the server.
-message TerminalOutputPayload {
-  string session_id = 1;
-  bytes  data       = 2;
-}
-
-// Agent notifies server that the PTY process exited or failed to start.
-message TerminalClosedPayload {
-  string session_id = 1;
-  int32  exit_code  = 2;
-  string error      = 3;
-}
-
-// ─── Node File System & Transfers (server → agent, then agent → server) ──────
-
-enum FileOpType {
-  FILE_OP_LIST          = 0;  // List directory entries in shared folder
-  FILE_OP_MKDIR         = 1;  // Create a directory inside shared folder
-  FILE_OP_DELETE        = 2;  // Delete a file or directory inside shared folder
-  FILE_OP_PUSH_TO_URL   = 3;  // Agent uploads a local shared file via HTTP POST to transfer_url
-  FILE_OP_PULL_FROM_URL = 4;  // Agent downloads a file via HTTP GET from transfer_url into shared folder
-  FILE_OP_RENAME        = 5;  // Rename or move a file/directory inside shared folder
-}
-
-message FileOperationRequestPayload {
-  string     request_id   = 1;  // Correlation UUID
-  FileOpType op_type      = 2;
-  string     path         = 3;  // Relative path inside node's shared directory
-  string     transfer_url = 4;  // Used for PUSH_TO_URL and PULL_FROM_URL
-  string     auth_token   = 5;  // One-time transfer token
-  string     dest_path    = 6;  // Destination relative path for FILE_OP_RENAME
-}
-
-message FileEntryInfo {
-  string name        = 1;
-  string path        = 2;
-  bool   is_dir      = 3;
-  int64  size_bytes  = 4;
-  int64  modified_at = 5;  // Unix timestamp (seconds)
-  string mode        = 6;  // e.g. "-rw-r--r--"
-}
-
-message FileOperationResponsePayload {
-  string                 request_id = 1;
-  bool                   success    = 2;
-  string                 error      = 3;
-  repeated FileEntryInfo entries    = 4;  // Populated for FILE_OP_LIST
+  bool success = 1;  // Always true once authenticated.
 }
 
 // ─── Service ─────────────────────────────────────────────────────────────────
 
 service NodeAgentService {
-  // Agent streams its commands; server upserts them all, then acks.
+  // Announces the agent's commands. Called on every (re)connection, before Connect: the agent streams
+  // one RegisterCommandRequest per command and the API answers once with how many it upserted.
   rpc RegisterCommands(stream RegisterCommandRequest) returns (RegisterCommandsResponse);
 
-  // Long-lived bidirectional stream used to dispatch jobs and receive results.
+  // The agent's long-lived session. While it is open the node is online and the API can send it jobs
+  // and requests; the agent sends heartbeats, metrics and results. The agent reconnects 10 s after the
+  // stream ends. The API re-checks the node's enrollment every minute and closes the stream with
+  // UNAUTHENTICATED if the node was deleted or its tokens revoked.
   rpc Connect(stream NodeMessage) returns (stream ServerMessage);
 
-  // Send node system metrics to the server.
+  // Legacy: only authenticates and logs the sample; nothing is stored. Use MetricPayload on Connect.
   rpc ReportMetrics(MetricRequest) returns (MetricResponse);
 }
