@@ -115,6 +115,10 @@ func (h *ScheduledTaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	created, err := h.service.Create(task)
 	if err != nil {
+		if errors.Is(err, jobs.ErrInvalidTaskData) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		log.Printf("[ERROR] create scheduled task: %v", err)
 		http.Error(w, "could not create task", http.StatusInternalServerError)
 		return
@@ -195,6 +199,10 @@ func (h *ScheduledTaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := h.service.Update(existing)
 	if err != nil {
+		if errors.Is(err, jobs.ErrInvalidTaskData) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		log.Printf("[ERROR] update scheduled task: %v", err)
 		http.Error(w, "could not update task", http.StatusInternalServerError)
 		return
@@ -262,6 +270,13 @@ func (h *ScheduledTaskHandler) Toggle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	task.Enabled = !task.Enabled
+	// Enabling makes the task run on the caller's behalf again: they must still be allowed to run it.
+	if task.Enabled {
+		if status, msg := h.authorizeScheduledCommand(r.Context(), claims.UserID, task.NodeID, task.CommandName); status != http.StatusOK {
+			http.Error(w, msg, status)
+			return
+		}
+	}
 	updated, err := h.service.Update(task)
 	if err != nil {
 		log.Printf("[ERROR] toggle scheduled task: %v", err)

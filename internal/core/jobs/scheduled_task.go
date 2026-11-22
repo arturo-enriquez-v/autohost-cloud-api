@@ -80,7 +80,7 @@ func (s *ScheduledTaskService) Create(task *ScheduledTask) (*ScheduledTask, erro
 	}
 	next, err := computeNextRun(task)
 	if err != nil {
-		return nil, ErrInvalidTaskData
+		return nil, fmt.Errorf("%w: %v", ErrInvalidTaskData, err)
 	}
 	task.NextRunAt = next
 	return s.repo.Create(task)
@@ -105,7 +105,7 @@ func (s *ScheduledTaskService) FindByID(id string) (*ScheduledTask, error) {
 func (s *ScheduledTaskService) Update(task *ScheduledTask) (*ScheduledTask, error) {
 	next, err := computeNextRun(task)
 	if err != nil {
-		return nil, ErrInvalidTaskData
+		return nil, fmt.Errorf("%w: %v", ErrInvalidTaskData, err)
 	}
 	task.NextRunAt = next
 	return s.repo.Update(task)

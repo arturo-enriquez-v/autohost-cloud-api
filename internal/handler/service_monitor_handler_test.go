@@ -5,6 +5,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -64,5 +65,39 @@ func TestCreateHandler_Unauthorized(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, w.Code)
+	}
+}
+
+// Auto-heal "recreate" runs "docker compose up" as root on the node, so it requires terminal:exec and
+// validated arguments.
+func TestAuthorizeAutoHeal(t *testing.T) {
+	h := NewServiceMonitorHandler(nil, nil)
+	h.SetRBACService(newOwnerRBAC("owner", "node-1"), nil)
+
+	recreate := func(composePath, service string) json.RawMessage {
+		b, _ := json.Marshal(map[string]any{"recreate": map[string]any{
+			"enabled": true, "compose_file_path": composePath, "service_name": service,
+		}})
+		return b
+	}
+	tests := []struct {
+		name, user string
+		cfg        json.RawMessage
+		want       int
+	}{
+		{"no auto-heal", "other", nil, http.StatusOK},
+		{"restart only", "other", json.RawMessage(`{"enabled":true,"restart":{"enabled":true}}`), http.StatusOK},
+		{"recreate with terminal access", "owner", recreate("/srv/app/compose.yml", "api"), http.StatusOK},
+		{"recreate without terminal access", "other", recreate("/srv/app/compose.yml", "api"), http.StatusForbidden},
+		{"relative compose path", "owner", recreate("compose.yml", "api"), http.StatusBadRequest},
+		{"flag as service name", "owner", recreate("/srv/app/compose.yml", "--project-directory=/"), http.StatusBadRequest},
+		{"malformed config", "owner", json.RawMessage(`{"recreate":"yes"}`), http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got, msg := h.authorizeAutoHeal(context.Background(), tt.user, "node-1", tt.cfg); got != tt.want {
+				t.Errorf("status = %d (%s), want %d", got, msg, tt.want)
+			}
+		})
 	}
 }

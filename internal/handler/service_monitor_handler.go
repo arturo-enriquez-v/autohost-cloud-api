@@ -4,10 +4,13 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -45,6 +48,77 @@ func (h *ServiceMonitorHandler) Routes() chi.Router {
 	r.With(middleware.Auth).Get("/{id}/history", h.EventHistory)
 	r.With(middleware.Auth).Get("/{id}/uptime", h.Uptime24h)
 	return r
+}
+
+// composeServiceNameRe matches Docker Compose service names; anything else (e.g. a leading "-") could be
+// read as a flag by "docker compose up".
+var composeServiceNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
+
+// authorizeAutoHeal validates an auto-heal config. Its "recreate" step makes the agent run
+// "docker compose -f <compose_file_path> up" as root, which is equivalent to running arbitrary commands on
+// the node, so enabling it requires terminal:exec on top of monitors:manage.
+func (h *ServiceMonitorHandler) authorizeAutoHeal(ctx context.Context, userID, nodeID string, raw json.RawMessage) (int, string) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return http.StatusOK, ""
+	}
+	var cfg struct {
+		Recreate struct {
+			Enabled         bool   `json:"enabled"`
+			ComposeFilePath string `json:"compose_file_path"`
+			ServiceName     string `json:"service_name"`
+		} `json:"recreate"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return http.StatusBadRequest, "invalid auto_heal_config"
+	}
+	rc := cfg.Recreate
+	if p := rc.ComposeFilePath; p != "" && (!strings.HasPrefix(p, "/") || strings.ContainsAny(p, "\x00\n")) {
+		return http.StatusBadRequest, "auto_heal_config.recreate.compose_file_path must be an absolute path"
+	}
+	if rc.ServiceName != "" && !composeServiceNameRe.MatchString(rc.ServiceName) {
+		return http.StatusBadRequest, "auto_heal_config.recreate.service_name is not a valid compose service name"
+	}
+	if !rc.Enabled {
+		return http.StatusOK, ""
+	}
+	if h.rbac == nil {
+		return http.StatusForbidden, "forbidden"
+	}
+	if ok, err := h.rbac.HasNodePermission(ctx, userID, nodeID, identity.PermTerminalExec); err != nil || !ok {
+		return http.StatusForbidden, "forbidden: auto-heal recreate requires terminal:exec on the node"
+	}
+	return http.StatusOK, ""
+}
+
+// authorizeMonitorRead loads a monitor and checks the caller may read it. Monitors the caller cannot read
+// answer 404, like unknown IDs.
+func (h *ServiceMonitorHandler) authorizeMonitorRead(w http.ResponseWriter, r *http.Request) (*apps.ServiceMonitor, bool) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return nil, false
+	}
+	monitor, err := h.service.FindByID(chi.URLParam(r, "id"))
+	if err != nil {
+		if errors.Is(err, apps.ErrServiceMonitorNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return nil, false
+		}
+		http.Error(w, "could not fetch monitor", http.StatusInternalServerError)
+		return nil, false
+	}
+	if h.nodeSvc == nil {
+		if monitor.UserID != claims.UserID {
+			http.Error(w, "not found", http.StatusNotFound)
+			return nil, false
+		}
+		return monitor, true
+	}
+	if _, status := checkNodeIDAccess(r.Context(), h.rbac, h.nodeSvc, monitor.NodeID, claims.UserID, identity.PermMonitorsRead); status != http.StatusOK {
+		http.Error(w, "not found", http.StatusNotFound)
+		return nil, false
+	}
+	return monitor, true
 }
 
 // ─── List ─────────────────────────────────────────────────────────────────────
@@ -120,6 +194,10 @@ func (h *ServiceMonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		ownerID = effectiveNodeOwnerID(n, claims.UserID)
 	}
+	if status, msg := h.authorizeAutoHeal(r.Context(), claims.UserID, req.NodeID, req.AutoHealConfig); status != http.StatusOK {
+		http.Error(w, msg, status)
+		return
+	}
 
 	monitor := &apps.ServiceMonitor{
 		NodeID:             req.NodeID,
@@ -193,6 +271,11 @@ func (h *ServiceMonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var req upsertMonitorRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	if status, msg := h.authorizeAutoHeal(r.Context(), claims.UserID, existing.NodeID, req.AutoHealConfig); status != http.StatusOK {
+		http.Error(w, msg, status)
 		return
 	}
 
@@ -276,7 +359,9 @@ func (h *ServiceMonitorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Tell the agent to stop this health check
-	h.grpc.StopHealthCheck(monitor.NodeID, id)
+	if h.grpc != nil {
+		h.grpc.StopHealthCheck(monitor.NodeID, id)
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -284,12 +369,11 @@ func (h *ServiceMonitorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // ─── Event History ────────────────────────────────────────────────────────────
 
 func (h *ServiceMonitorHandler) EventHistory(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetClaims(r.Context()) == nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	monitor, ok := h.authorizeMonitorRead(w, r)
+	if !ok {
 		return
 	}
-
-	id := chi.URLParam(r, "id")
+	id := monitor.ID
 
 	limit := 100
 	if l := r.URL.Query().Get("limit"); l != "" {
@@ -311,12 +395,11 @@ func (h *ServiceMonitorHandler) EventHistory(w http.ResponseWriter, r *http.Requ
 // ─── Uptime 24h ───────────────────────────────────────────────────────────────
 
 func (h *ServiceMonitorHandler) Uptime24h(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetClaims(r.Context()) == nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	monitor, ok := h.authorizeMonitorRead(w, r)
+	if !ok {
 		return
 	}
-
-	id := chi.URLParam(r, "id")
+	id := monitor.ID
 	points, err := h.service.UptimeHistory24h(id)
 	if err != nil {
 		http.Error(w, "could not fetch uptime history", http.StatusInternalServerError)

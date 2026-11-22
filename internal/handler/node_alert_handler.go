@@ -63,6 +63,13 @@ func (h *NodeAlertHandler) GetByNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The bot token controls the Telegram bot: only users who may change the alert config can read it.
+	if !checkNodeAccess(r.Context(), h.rbacSvc, n, claims.UserID, identity.PermAlertsManage) {
+		redacted := *alert
+		redacted.TelegramBotToken = ""
+		alert = &redacted
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(alert)
 }

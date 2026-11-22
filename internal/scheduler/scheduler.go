@@ -8,6 +8,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/jobs"
 )
 
@@ -16,19 +17,29 @@ type Dispatcher interface {
 	DispatchJob(nodeID, jobID, commandName string, commandType jobs.CommandType) error
 }
 
+// PermissionChecker reports whether a user holds a permission on a node (implemented by identity.RBACService).
+type PermissionChecker interface {
+	HasNodePermission(ctx context.Context, userID, nodeID, perm string) (bool, error)
+}
+
 // Scheduler polls for due tasks and dispatches them via the node dispatcher.
 type Scheduler struct {
 	taskSvc    *jobs.ScheduledTaskService
 	jobSvc     *jobs.JobService
 	dispatcher Dispatcher
+	perms      PermissionChecker
 }
 
-func NewScheduler(taskSvc *jobs.ScheduledTaskService, jobSvc *jobs.JobService, dispatcher Dispatcher) *Scheduler {
-	return &Scheduler{
+func NewScheduler(taskSvc *jobs.ScheduledTaskService, jobSvc *jobs.JobService, dispatcher Dispatcher, rbac *identity.RBACService) *Scheduler {
+	s := &Scheduler{
 		taskSvc:    taskSvc,
 		jobSvc:     jobSvc,
 		dispatcher: dispatcher,
 	}
+	if rbac != nil {
+		s.perms = rbac
+	}
+	return s
 }
 
 // Start runs the scheduler loop until the context is cancelled.
@@ -64,12 +75,30 @@ func (s *Scheduler) runDue() {
 func (s *Scheduler) dispatch(task *jobs.ScheduledTask) {
 	// Tasks created before the command allow-list existed may reference commands that are no longer
 	// dispatchable without validated parameters. Skip them instead of running them.
-	if _, err := jobs.ResolveUserJobPermission(task.CommandName, ""); err != nil {
+	perm, err := jobs.ResolveUserJobPermission(task.CommandName, "")
+	if err != nil {
 		log.Printf("[scheduler] skipping task %s: command %q not allowed: %v", task.ID, task.CommandName, err)
 		if err := s.taskSvc.MarkRan(task.ID, nil); err != nil {
 			log.Printf("[scheduler] error advancing skipped task %s: %v", task.ID, err)
 		}
 		return
+	}
+	// The task runs on behalf of its owner: re-check their permission on every run, so revoking a user's
+	// access to the node also stops their scheduled tasks. A failed check only skips this run.
+	if s.perms != nil {
+		ok, err := s.perms.HasNodePermission(context.Background(), task.UserID, task.NodeID, perm)
+		if err != nil {
+			log.Printf("[scheduler] skipping task %s: permission check failed: %v", task.ID, err)
+			return
+		}
+		if !ok {
+			log.Printf("[scheduler] disabling task %s: user %s no longer has %s on node %s", task.ID, task.UserID, perm, task.NodeID)
+			task.Enabled = false
+			if _, err := s.taskSvc.Update(task); err != nil {
+				log.Printf("[scheduler] error disabling task %s: %v", task.ID, err)
+			}
+			return
+		}
 	}
 	j, err := s.jobSvc.Dispatch(task.NodeID, task.CommandName, jobs.CommandTypeCustom)
 	if err != nil {

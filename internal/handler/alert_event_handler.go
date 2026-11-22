@@ -30,6 +30,9 @@ func (h *AlertEventHandler) Routes() chi.Router {
 	return r
 }
 
+// maxAlertEventsPage caps ?limit= so one request cannot load the whole alert history.
+const maxAlertEventsPage = 200
+
 type listAlertsResponse struct {
 	Events []*node.AlertEvent `json:"events"`
 	Total  int                `json:"total"`
@@ -48,7 +51,7 @@ func (h *AlertEventHandler) List(w http.ResponseWriter, r *http.Request) {
 	offset := 0
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
+			limit = min(n, maxAlertEventsPage)
 		}
 	}
 	if v := r.URL.Query().Get("offset"); v != "" {
