@@ -139,6 +139,16 @@ tags:
       analyzes. The API enriches the report with AI when it is configured. A diagnostic goes from `pending`
       (waiting for the agent) to `preview` (report ready), and then to `approved` or `rejected`.
       `pending` and `rejected` diagnostics are deleted after 2 days, and `approved` ones after 30.
+  - name: Webhooks
+    description: Incoming webhooks from external services, authenticated by their signature instead of a token.
+  - name: Telegram bots
+    description: |
+      Telegram bots saved by a user, to reuse in node alerts (`telegram_bot_id`). Each user only sees and
+      manages their own bots.
+  - name: Notifications
+    description: |
+      Unread counters and recent items for the dashboard's notification bell: alert events and external
+      logs created after the user last acknowledged them.
   - name: Alerts
     description: |
       Threshold alerts per node (CPU, RAM, disk, offline), sent to Telegram, and the history of fired
@@ -5051,6 +5061,282 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/webhooks/github:
+    post:
+      tags: [Webhooks]
+      operationId: receiveGitHubWebhook
+      summary: Receive a GitHub push webhook
+      description: |
+        Runs a command on a node when GitHub reports a push. One webhook per API instance, configured with
+        environment variables: `GITHUB_WEBHOOK_SECRET` (the webhook secret), `GITHUB_WEBHOOK_NODE_ID`,
+        `GITHUB_WEBHOOK_COMMAND` and, optionally, `GITHUB_WEBHOOK_BRANCH` (a full ref such as
+        `refs/heads/main`; empty reacts to every branch).
+
+        `ping` events, events other than `push`, and pushes to other branches are acknowledged with `200` and
+        ignored. A push creates a job; if the node is not connected it stays pending. Only the first 1 MB of
+        the body is read.
+      security: []
+      parameters:
+        - name: X-Hub-Signature-256
+          in: header
+          required: true
+          description: "`sha256=` followed by the HMAC-SHA256 of the body with the webhook secret, in hex."
+          schema:
+            type: string
+        - name: X-GitHub-Event
+          in: header
+          required: true
+          schema:
+            type: string
+            examples: [push]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: GitHub's event payload. Only `ref` is used.
+              properties:
+                ref:
+                  type: string
+                  examples: [refs/heads/main]
+                repository:
+                  type: object
+                  properties:
+                    full_name:
+                      type: string
+      responses:
+        "200":
+          description: Event acknowledged and ignored. No body.
+        "202":
+          description: Job created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id]
+                properties:
+                  job_id:
+                    type: string
+                    format: uuid
+        "400":
+          description: The body could not be read or is not valid JSON.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [invalid payload]
+        "401":
+          description: Missing or wrong signature.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [invalid signature]
+        "500":
+          description: The job could not be created.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [could not dispatch job]
+        "503":
+          description: The webhook is not configured on this instance.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [webhook not configured]
+
+  /v1/telegram-bots:
+    get:
+      tags: [Telegram bots]
+      operationId: listTelegramBots
+      summary: List your Telegram bots
+      responses:
+        "200":
+          description: Your bots, including their tokens.
+          content:
+            application/json:
+              schema:
+                type: [array, "null"]
+                items:
+                  $ref: "#/components/schemas/TelegramBot"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Telegram bots]
+      operationId: createTelegramBot
+      summary: Save a Telegram bot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TelegramBotRequest"
+      responses:
+        "201":
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelegramBot"
+        "400":
+          $ref: "#/components/responses/TelegramBotBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/telegram-bots/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Bot ID.
+        schema:
+          type: string
+          format: uuid
+    put:
+      tags: [Telegram bots]
+      operationId: updateTelegramBot
+      summary: Update a Telegram bot
+      description: Replaces every field; all of them are required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TelegramBotRequest"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelegramBot"
+        "400":
+          $ref: "#/components/responses/TelegramBotBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/TelegramBotNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Telegram bots]
+      operationId: deleteTelegramBot
+      summary: Delete a Telegram bot
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/TelegramBotNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/telegram-bots/test:
+    post:
+      tags: [Telegram bots]
+      operationId: testTelegramBot
+      summary: Send a test message
+      description: Sends a test message from the server with the given token and chat ID. Nothing is saved.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bot_token, chat_id]
+              properties:
+                bot_token:
+                  type: string
+                chat_id:
+                  type: string
+      responses:
+        "200":
+          description: Message sent.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, message]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+                  message:
+                    type: string
+        "400":
+          description: |
+            Missing fields (`text/plain`), or Telegram rejected the message (JSON, with Telegram's error).
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: [bot token and chat id are required]
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/notifications/summary:
+    get:
+      tags: [Notifications]
+      operationId: getNotificationSummary
+      summary: Get unread counts and recent items
+      description: |
+        Counts alert events and external logs created after the last acknowledgment (or after the user signed
+        up, if they never acknowledged). The recent lists hold the latest 10 of each, read or not.
+      responses:
+        "200":
+          description: The summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/NotificationInternalError"
+
+  /v1/notifications/ack:
+    post:
+      tags: [Notifications]
+      operationId: acknowledgeNotifications
+      summary: Mark notifications as read
+      description: Marks everything up to now as read in the given scope.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scope:
+                  type: string
+                  enum: [alerts, logs, all]
+                  default: all
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessTrue"
+        "400":
+          description: Malformed JSON or an unknown scope. JSON body with a `text/plain` content type.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ['{"error":"invalid scope: must be ''alerts'', ''logs'' or ''all''"}']
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/NotificationInternalError"
+
   /v1/node-alerts/{nodeId}:
     parameters:
       - $ref: "#/components/parameters/NodeIDPathNodeId"
@@ -5988,6 +6274,27 @@ components:
             $ref: "#/components/schemas/Error"
           example:
             error: no preview diagnostic found to approve
+    TelegramBotBadRequest:
+      description: Malformed JSON, or `name`, `bot_token` or `chat_id` missing.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: [invalid request body]
+    TelegramBotNotFound:
+      description: The bot does not exist or is not yours.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: [telegram bot not found]
+    NotificationInternalError:
+      description: Unexpected server error. JSON body with a `text/plain` content type.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ['{"error":"failed to get notifications summary"}']
   schemas:
     Error:
       type: object
@@ -7877,6 +8184,109 @@ components:
         approved_at:
           type: string
           format: date-time
+
+    TelegramBotRequest:
+      type: object
+      required: [name, bot_token, chat_id]
+      properties:
+        name:
+          type: string
+          examples: [Ops alerts]
+        bot_token:
+          type: string
+          description: Token from BotFather. A leading `bot` is accepted.
+          examples: ["123456789:AAE..."]
+        chat_id:
+          type: string
+          examples: ["-1001234567890"]
+
+    TelegramBot:
+      type: object
+      required: [id, user_id, name, bot_token, chat_id, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        bot_token:
+          type: string
+          description: Returned in full to the bot's owner.
+        chat_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    NotificationSummary:
+      type: object
+      required: [unread_alerts_count, unread_logs_count, total_unread, last_seen_alerts_at, last_seen_logs_at, recent_alerts, recent_logs]
+      properties:
+        unread_alerts_count:
+          type: integer
+        unread_logs_count:
+          type: integer
+        total_unread:
+          type: integer
+        last_seen_alerts_at:
+          type: string
+          format: date-time
+        last_seen_logs_at:
+          type: string
+          format: date-time
+        recent_alerts:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            required: [id, node_id, alert_type, message, created_at]
+            properties:
+              id:
+                type: string
+                format: uuid
+              node_id:
+                type: string
+                format: uuid
+              node_name:
+                type: string
+              alert_type:
+                type: string
+                examples: [cpu]
+              message:
+                type: string
+              created_at:
+                type: string
+                format: date-time
+        recent_logs:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            required: [id, title, level, created_at]
+            properties:
+              id:
+                type: string
+                format: uuid
+              node_id:
+                type: string
+                format: uuid
+              node_name:
+                type: string
+              title:
+                type: string
+              level:
+                $ref: "#/components/schemas/ExternalLogLevel"
+              message:
+                type: string
+              created_at:
+                type: string
+                format: date-time
 
     NodeAlertConfigRequest:
       type: object

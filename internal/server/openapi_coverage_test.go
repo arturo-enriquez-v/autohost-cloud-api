@@ -22,9 +22,6 @@ import (
 var pendingDocPrefixes = []string{
 	"/v1/plans",
 	"/v1/marketplace",
-	"/v1/webhooks",
-	"/v1/telegram-bots",
-	"/v1/notifications",
 }
 
 var pathParam = regexp.MustCompile(`\{[^}]*\}`)
