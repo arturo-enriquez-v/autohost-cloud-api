@@ -143,7 +143,54 @@ type shareWithPassword struct {
 }
 
 func writeShareJSONError(w http.ResponseWriter, msg string, code int) {
-	http.Error(w, fmt.Sprintf(`{"error":%q}`, msg), code)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// toVisitorPath converts a path inside the node's shared folder into a path relative to the share root, so
+// visitors never learn where the shared folder lives on the node.
+func toVisitorPath(shareRoot, nodePath string) string {
+	root := filepath.Clean("/" + shareRoot)
+	p := filepath.Clean("/" + nodePath)
+	if root == "/" {
+		return p
+	}
+	if p == root {
+		return "/"
+	}
+	if strings.HasPrefix(p, root+"/") {
+		return strings.TrimPrefix(p, root)
+	}
+	return p
+}
+
+// relayWithVisitorPaths runs a delegated file operation and relays its response, rewriting the given string
+// fields of a successful JSON body from node paths to visitor paths (see toVisitorPath).
+func relayWithVisitorPaths(w http.ResponseWriter, share *SharedFolderLink, run func(http.ResponseWriter), fields ...string) {
+	rec := httptest.NewRecorder()
+	run(rec)
+	body := rec.Body.Bytes()
+	if rec.Code < http.StatusMultipleChoices {
+		var m map[string]any
+		if err := json.Unmarshal(body, &m); err == nil {
+			for _, f := range fields {
+				if p, ok := m[f].(string); ok {
+					m[f] = toVisitorPath(share.FolderPath, p)
+				}
+			}
+			if b, err := json.Marshal(m); err == nil {
+				body = append(b, '\n')
+			}
+		}
+	}
+	for k, v := range rec.Header() {
+		w.Header()[k] = v
+	}
+	w.Header().Del("Content-Length")
+	w.WriteHeader(rec.Code)
+	_, _ = w.Write(body)
 }
 
 // canManageShare: the share's creator, or users with files:share on its node. Evaluated outside the
@@ -459,17 +506,9 @@ func (h *PublicShareHandler) PublicListFiles(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Rewrite entry paths relative to share.FolderPath so internal parent paths are never leaked.
-	cleanRoot := filepath.Clean("/" + share.FolderPath)
 	relEntries := make([]NodeFileEntry, 0, len(rawResp.Entries))
 	for _, e := range rawResp.Entries {
-		eClean := filepath.Clean("/" + e.Path)
-		if cleanRoot != "/" && strings.HasPrefix(eClean, cleanRoot) {
-			eClean = strings.TrimPrefix(eClean, cleanRoot)
-			if eClean == "" {
-				eClean = "/"
-			}
-		}
-		e.Path = filepath.Clean("/" + eClean)
+		e.Path = toVisitorPath(share.FolderPath, e.Path)
 		relEntries = append(relEntries, e)
 	}
 
@@ -533,7 +572,7 @@ func (h *PublicShareHandler) PublicMakeDirectory(w http.ResponseWriter, r *http.
 	newBody, _ := json.Marshal(map[string]string{"path": realNodePath})
 	delegatedReq := injectNodeAndPath(r, targetNode, realNodePath)
 	delegatedReq.Body = ioNopCloser(newBody)
-	h.fileHandler.MakeDirectory(w, delegatedReq)
+	relayWithVisitorPaths(w, share, func(rw http.ResponseWriter) { h.fileHandler.MakeDirectory(rw, delegatedReq) }, "path")
 }
 
 // POST /v1/public-shares/{shareId}/upload (Allowed for "write" and "editor")
@@ -547,7 +586,11 @@ func (h *PublicShareHandler) PublicUploadFile(w http.ResponseWriter, r *http.Req
 		writeShareJSONError(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	h.fileHandler.UploadFile(w, injectNodeAndPath(r, targetNode, realNodePath))
+	// The upload is relayed through a recorder, so lift the connection's deadlines here (UploadFile cannot).
+	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	delegatedReq := injectNodeAndPath(r, targetNode, realNodePath)
+	relayWithVisitorPaths(w, share, func(rw http.ResponseWriter) { h.fileHandler.UploadFile(rw, delegatedReq) }, "path")
 }
 
 // DELETE /v1/public-shares/{shareId}/files?path=/... (Allowed ONLY for "editor")
@@ -566,7 +609,8 @@ func (h *PublicShareHandler) PublicDeleteFile(w http.ResponseWriter, r *http.Req
 		writeShareJSONError(w, "Acceso denegado", http.StatusForbidden)
 		return
 	}
-	h.fileHandler.DeleteFile(w, injectNodeAndPath(r, targetNode, realNodePath))
+	delegatedReq := injectNodeAndPath(r, targetNode, realNodePath)
+	relayWithVisitorPaths(w, share, func(rw http.ResponseWriter) { h.fileHandler.DeleteFile(rw, delegatedReq) }, "deleted")
 }
 
 func ioNopCloser(b []byte) *readCloserBuffer {
