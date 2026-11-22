@@ -20,16 +20,11 @@ import (
 // under them are allowed to be missing from the spec. Remove a prefix once its module is documented; the
 // test flags prefixes that are already fully covered so this list only shrinks.
 var pendingDocPrefixes = []string{
-	"/v1/node-alerts",
-	"/v1/scheduled-tasks",
-	"/v1/alert-events",
 	"/v1/plans",
-	"/v1/service-monitors",
 	"/v1/caddy-routes",
 	"/v1/cloudflare-tunnel",
 	"/v1/marketplace",
 	"/v1/webhooks",
-	"/v1/reports",
 	"/v1/telegram-bots",
 	"/v1/external-logs",
 	"/v1/external-log-tokens",

@@ -109,6 +109,21 @@ tags:
       (also create folders and upload) or `editor` (also delete).
   - name: Tailscale Funnel
     description: Exposing node containers to the internet through Tailscale Funnel.
+  - name: Alerts
+    description: |
+      Threshold alerts per node (CPU, RAM, disk, offline), sent to Telegram, and the history of fired
+      alerts.
+  - name: Service monitors
+    description: |
+      Health checks the agent runs against a service (HTTP, TCP or a Docker container), with optional
+      auto-heal: restart the container, or recreate it with Docker Compose.
+  - name: Scheduled tasks
+    description: |
+      Commands run on a node on a schedule. They accept the same commands as `POST /v1/jobs`, run on behalf
+      of their creator, and are disabled automatically if the creator loses the permission to run them.
+      The scheduler checks for due tasks once a minute.
+  - name: Reports
+    description: Daily node status report, queued for delivery to the user.
   - name: Node commands
     description: |
       Commands a node exposes to the dashboard: built-in ones and custom `.sh` scripts the agent discovers.
@@ -4009,6 +4024,504 @@ paths:
         "500":
           $ref: "#/components/responses/InternalErrorJSON"
 
+  /v1/node-alerts/{nodeId}:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      tags: [Alerts]
+      operationId: getNodeAlertConfig
+      summary: Get a node's alert configuration
+      description: |
+        Requires `alerts:read`. Nodes without a configuration return an empty one. The Telegram bot token
+        is only included for users with `alerts:manage`; for others it is an empty string.
+      responses:
+        "200":
+          description: The alert configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeAlertConfig"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Alerts]
+      operationId: setNodeAlertConfig
+      summary: Set a node's alert configuration
+      description: |
+        Requires `alerts:manage`. Replaces the whole configuration. Use either a saved bot
+        (`telegram_bot_id`) or an explicit `telegram_bot_token` and `telegram_chat_id`. A threshold of
+        `null` disables that alert. Repeated alerts for the same metric are throttled.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NodeAlertConfigRequest"
+      responses:
+        "200":
+          description: The saved configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeAlertConfig"
+        "400":
+          description: Malformed JSON.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/alert-events:
+    get:
+      tags: [Alerts]
+      operationId: listAlertEvents
+      summary: List fired alerts
+      description: |
+        Alerts fired on nodes the caller owns, newest first, with the total for pagination. Alerts of nodes
+        shared with the caller through permissions are not included.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: node_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: from
+          in: query
+          description: First day to include (UTC).
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          description: Last day to include (UTC), whole day.
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: A page of alert events.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events, total]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AlertEvent"
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/service-monitors:
+    get:
+      tags: [Service monitors]
+      operationId: listServiceMonitors
+      summary: List a node's service monitors
+      description: Requires `monitors:read` on the node.
+      parameters:
+        - name: nodeId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The node's monitors.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ServiceMonitor"
+        "400":
+          description: '`nodeId` missing.'
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Service monitors]
+      operationId: createServiceMonitor
+      summary: Create a service monitor
+      description: |
+        Requires `monitors:manage` on the node. The configuration is pushed to the agent right away.
+        Enabling auto-heal `recreate` also requires `terminal:exec`, because it runs Docker Compose as root
+        on the node.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceMonitorRequest"
+      responses:
+        "201":
+          description: Monitor created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceMonitor"
+        "400":
+          $ref: "#/components/responses/MonitorBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/service-monitors/{id}:
+    parameters:
+      - $ref: "#/components/parameters/MonitorIDPath"
+    put:
+      tags: [Service monitors]
+      operationId: updateServiceMonitor
+      summary: Update a service monitor
+      description: |
+        Requires `monitors:manage` on the node (and `terminal:exec` to enable auto-heal `recreate`).
+        Replaces every field; `auto_heal_config` and `auto_heal_state` are kept when omitted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceMonitorRequest"
+      responses:
+        "200":
+          description: The updated monitor.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceMonitor"
+        "400":
+          $ref: "#/components/responses/MonitorBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/MonitorNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Service monitors]
+      operationId: deleteServiceMonitor
+      summary: Delete a service monitor
+      description: Requires `monitors:manage` on the node. The agent stops the check.
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/MonitorNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/service-monitors/{id}/history:
+    parameters:
+      - $ref: "#/components/parameters/MonitorIDPath"
+    get:
+      tags: [Service monitors]
+      operationId: getServiceMonitorHistory
+      summary: Get a monitor's check history
+      description: Requires `monitors:read` on the node; other monitors answer `404`.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        "200":
+          description: Check results, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ServiceHealthEvent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/MonitorNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/service-monitors/{id}/uptime:
+    parameters:
+      - $ref: "#/components/parameters/MonitorIDPath"
+    get:
+      tags: [Service monitors]
+      operationId: getServiceMonitorUptime
+      summary: Get a monitor's uptime over the last 24 hours
+      description: One point per 5-minute window. Requires `monitors:read` on the node; other monitors answer `404`.
+      responses:
+        "200":
+          description: Uptime points, oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [bucket, status]
+                  properties:
+                    bucket:
+                      type: string
+                      format: date-time
+                    status:
+                      type: string
+                      enum: [up, down, no_data]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/MonitorNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/scheduled-tasks:
+    get:
+      tags: [Scheduled tasks]
+      operationId: listScheduledTasks
+      summary: List the caller's scheduled tasks
+      responses:
+        "200":
+          description: The caller's tasks.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScheduledTask"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Scheduled tasks]
+      operationId: createScheduledTask
+      summary: Schedule a command
+      description: Requires `jobs:manage` on the node, plus the permission the command itself needs (see `POST /v1/jobs`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/ScheduledTaskRequest"
+                - type: object
+                  required: [node_id]
+                  properties:
+                    node_id:
+                      type: string
+                      format: uuid
+                    enabled:
+                      type: boolean
+                      default: true
+      responses:
+        "201":
+          description: Task created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduledTask"
+        "400":
+          $ref: "#/components/responses/ScheduledTaskBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/scheduled-tasks/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ScheduledTaskIDPath"
+    put:
+      tags: [Scheduled tasks]
+      operationId: updateScheduledTask
+      summary: Update a scheduled task
+      description: Only the task's creator can change it; other tasks answer `404`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/ScheduledTaskRequest"
+                - type: object
+                  properties:
+                    enabled:
+                      type: boolean
+      responses:
+        "200":
+          description: The updated task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduledTask"
+        "400":
+          $ref: "#/components/responses/ScheduledTaskBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/ScheduledTaskNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Scheduled tasks]
+      operationId: deleteScheduledTask
+      summary: Delete a scheduled task
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ScheduledTaskNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/scheduled-tasks/{id}/toggle:
+    parameters:
+      - $ref: "#/components/parameters/ScheduledTaskIDPath"
+    patch:
+      tags: [Scheduled tasks]
+      operationId: toggleScheduledTask
+      summary: Enable or disable a scheduled task
+      description: Flips `enabled`. Enabling requires the permission the command needs on the node.
+      responses:
+        "200":
+          description: The updated task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduledTask"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/ScheduledTaskNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/reports/settings:
+    get:
+      tags: [Reports]
+      operationId: getReportSettings
+      summary: Get the caller's daily report settings
+      responses:
+        "200":
+          description: The settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+    put:
+      tags: [Reports]
+      operationId: setReportSettings
+      summary: Set the caller's daily report settings
+      description: '`hour_utc` outside 0–23 is stored as 8.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportSettings"
+      responses:
+        "200":
+          description: The settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportSettings"
+        "400":
+          $ref: "#/components/responses/BadRequestJSON"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/reports/node-status/trigger:
+    post:
+      tags: [Reports]
+      operationId: triggerNodeStatusReport
+      summary: Send the node status report now
+      description: |
+        Builds the last 24 hours' report for the caller's nodes and queues it for delivery. The response
+        summarizes what was queued.
+      responses:
+        "200":
+          description: Report queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, nodes_total, nodes_active, nodes_alerts, fecha_reporte]
+                properties:
+                  status:
+                    type: string
+                    const: queued
+                  nodes_total:
+                    type: integer
+                  nodes_active:
+                    type: integer
+                  nodes_alerts:
+                    type: integer
+                  fecha_reporte:
+                    type: string
+                    description: Report date.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -4038,6 +4551,22 @@ components:
         Node token (`autohost-node_...`) issued to an agent at enrollment. Only accepted on agent routes.
 
   parameters:
+    MonitorIDPath:
+      name: id
+      in: path
+      required: true
+      description: Service monitor ID.
+      schema:
+        type: string
+        format: uuid
+    ScheduledTaskIDPath:
+      name: id
+      in: path
+      required: true
+      description: Scheduled task ID.
+      schema:
+        type: string
+        format: uuid
     ShareIDPath:
       name: shareId
       in: path
@@ -4140,6 +4669,34 @@ components:
         format: uuid
 
   responses:
+    MonitorNotFound:
+      description: Unknown monitor, or one the caller cannot read.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: [not found]
+    MonitorBadRequest:
+      description: Malformed JSON, missing fields or an invalid auto-heal configuration.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: [auto_heal_config.recreate.compose_file_path must be an absolute path]
+    ScheduledTaskNotFound:
+      description: Unknown task, or one the caller did not create.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: [not found]
+    ScheduledTaskBadRequest:
+      description: Missing fields, a command not allowed (see `POST /v1/jobs`) or an invalid schedule.
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ["invalid task data: interval_seconds must be > 0"]
     ShareNotFound:
       description: Unknown or revoked share (or one the caller cannot manage).
       content:
@@ -5717,3 +6274,274 @@ components:
         created_at:
           type: string
           format: date-time
+
+    NodeAlertConfigRequest:
+      type: object
+      properties:
+        telegram_bot_id:
+          type: [string, "null"]
+          format: uuid
+          description: A saved bot (`/v1/telegram-bots`). When set, the explicit token and chat ID are ignored.
+        telegram_bot_token:
+          type: string
+        telegram_chat_id:
+          type: string
+        cpu_threshold:
+          type: [number, "null"]
+          description: Alert when CPU usage reaches this percentage.
+        ram_threshold:
+          type: [number, "null"]
+        disk_threshold:
+          type: [number, "null"]
+        alert_on_offline:
+          type: boolean
+
+    NodeAlertConfig:
+      allOf:
+        - $ref: "#/components/schemas/NodeAlertConfigRequest"
+        - type: object
+          required: [node_id]
+          properties:
+            id:
+              type: string
+              format: uuid
+            node_id:
+              type: string
+              format: uuid
+            telegram_bot_token:
+              type: string
+              description: Empty unless the caller has `alerts:manage` on the node.
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+
+    AlertEvent:
+      type: object
+      required: [id, node_id, alert_type, message, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: [string, "null"]
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        alert_type:
+          type: string
+          enum: [offline, cpu, ram, disk]
+        message:
+          type: string
+          description: The notification text (HTML, as sent to Telegram).
+        created_at:
+          type: string
+          format: date-time
+
+    AutoHealConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        consecutive_failures_threshold:
+          type: integer
+          description: Failed checks in a row before acting.
+        grace_period_seconds:
+          type: integer
+          description: Wait after an action before acting again.
+        restart:
+          type: object
+          description: Restart the container, up to `max_attempts` times within `window_seconds`.
+          properties:
+            enabled:
+              type: boolean
+            max_attempts:
+              type: integer
+            window_seconds:
+              type: integer
+        recreate:
+          type: object
+          description: |
+            When restarts are exhausted, run `docker compose -f <compose_file_path> up -d --force-recreate
+            <service_name>`. Enabling it requires `terminal:exec`.
+          properties:
+            enabled:
+              type: boolean
+            compose_file_path:
+              type: string
+              description: Absolute path of the compose file on the node.
+            service_name:
+              type: string
+              description: Compose service; defaults to the monitor's `service_name`.
+            max_attempts:
+              type: integer
+
+    ServiceMonitorRequest:
+      type: object
+      required: [node_id, service_name, check_type]
+      properties:
+        node_id:
+          type: string
+          format: uuid
+          description: Ignored on update.
+        service_name:
+          type: string
+          description: Container name for `process` checks; a label otherwise.
+        check_type:
+          type: string
+          description: '`http`: GET `http_url`. `tcp`: connect to `tcp_host:tcp_port`. `process`: the Docker container is running.'
+          enum: [http, tcp, process]
+        http_url:
+          type: string
+          format: uri
+        http_expected_status:
+          type: integer
+          examples: [200]
+        tcp_host:
+          type: string
+        tcp_port:
+          type: integer
+        interval_seconds:
+          type: integer
+          examples: [30]
+        failure_threshold:
+          type: integer
+          description: Failed checks in a row before the service is reported down.
+        notify_telegram:
+          type: boolean
+        enabled:
+          type: boolean
+        auto_heal_config:
+          $ref: "#/components/schemas/AutoHealConfig"
+        auto_heal_state:
+          type: object
+          description: Internal auto-heal state reported by the agent; normally omitted.
+
+    ServiceMonitor:
+      allOf:
+        - $ref: "#/components/schemas/ServiceMonitorRequest"
+        - type: object
+          required: [id, user_id, status, consecutive_failures, created_at, updated_at]
+          properties:
+            id:
+              type: string
+              format: uuid
+            user_id:
+              type: string
+              format: uuid
+            status:
+              type: string
+              enum: [healthy, degraded, down, unknown]
+            consecutive_failures:
+              type: integer
+            last_checked_at:
+              type: [string, "null"]
+              format: date-time
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+
+    ServiceHealthEvent:
+      type: object
+      required: [id, monitor_id, node_id, status, latency_ms, message, checked_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        monitor_id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [up, down]
+        latency_ms:
+          type: integer
+        message:
+          type: string
+        checked_at:
+          type: string
+          format: date-time
+
+    ScheduledTaskRequest:
+      type: object
+      required: [command_id, command_name, schedule_type]
+      properties:
+        command_id:
+          type: string
+          format: uuid
+          description: ID of the node command (see `/v1/node-commands`).
+        command_name:
+          type: string
+        schedule_type:
+          type: string
+          enum: [interval, daily]
+        interval_seconds:
+          type: [integer, "null"]
+          minimum: 1
+          description: Required for `interval`. Runs at most once a minute in practice.
+        run_at_time:
+          type: [string, "null"]
+          description: Required for `daily`. Time of day in UTC, `HH:MM`.
+          examples: ["03:30"]
+
+    ScheduledTask:
+      allOf:
+        - $ref: "#/components/schemas/ScheduledTaskRequest"
+        - type: object
+          required: [id, user_id, node_id, enabled, next_run_at, created_at, updated_at]
+          properties:
+            id:
+              type: string
+              format: uuid
+            user_id:
+              type: string
+              format: uuid
+            node_id:
+              type: string
+              format: uuid
+            enabled:
+              type: boolean
+            last_run_at:
+              type: [string, "null"]
+              format: date-time
+            next_run_at:
+              type: string
+              format: date-time
+            last_job_id:
+              type: [string, "null"]
+              format: uuid
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+
+    ReportSettings:
+      type: object
+      required: [enabled, hour_utc, excluded_node_ids]
+      properties:
+        enabled:
+          type: boolean
+        hour_utc:
+          type: integer
+          minimum: 0
+          maximum: 23
+          description: Hour of the day (UTC) the daily report is sent.
+        excluded_node_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
