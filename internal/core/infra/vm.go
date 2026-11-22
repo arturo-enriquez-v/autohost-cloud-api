@@ -9,8 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -206,25 +204,7 @@ func (s *VMService) CreateVM(ctx context.Context, hostNodeID, userID string, req
 	}
 
 	// 6. Create job and dispatch vm.create to host node
-	apiURL := os.Getenv("API_PUBLIC_URL")
-	if apiURL == "" {
-		apiURL = os.Getenv("API_URL")
-	}
-	if apiURL == "" || strings.Contains(apiURL, "localhost") || strings.Contains(apiURL, "127.0.0.1") {
-		// Attempt to resolve outbound host IP so remote hypervisors & guest VMs can reach this API
-		if conn, err := net.Dial("udp", "8.8.8.8:80"); err == nil {
-			localAddr := conn.LocalAddr().(*net.UDPAddr)
-			conn.Close()
-			port := os.Getenv("PORT")
-			if port == "" {
-				port = "8080"
-			}
-			apiURL = fmt.Sprintf("http://%s:%s", localAddr.IP.String(), port)
-		}
-	}
-	if apiURL == "" {
-		apiURL = "http://localhost:8080"
-	}
+	apiURL := s.guestAPIURL()
 
 	params := map[string]any{
 		"vm_id":         created.ID,
@@ -255,6 +235,26 @@ func (s *VMService) CreateVM(ctx context.Context, hostNodeID, userID string, req
 }
 
 // ActionVM runs a lifecycle action (start, stop, reboot, destroy) against a VM.
+// guestAPIURL is the API URL the guest VM enrolls against: the same one suggested to any new node
+// (API_PUBLIC_URL, then the local node's VPN or LAN address, then NEXT_PUBLIC_API_URL). It is empty when
+// none is known, and the host agent then uses the api_url from its own config, which it already reaches.
+// The outbound interface's address is not used: inside Docker it is the container's, unreachable from
+// the guest.
+func (s *VMService) guestAPIURL() string {
+	var localIPs []string
+	if local, err := s.nodeRepo.FindLocalNode(); err == nil && local != nil {
+		if local.IPVPN != nil {
+			localIPs = append(localIPs, *local.IPVPN)
+		}
+		localIPs = append(localIPs, local.IPLocal)
+	}
+	u := platform.AgentAPIURL(localIPs, "")
+	if strings.Contains(u, "localhost") || strings.Contains(u, "127.0.0.1") {
+		return ""
+	}
+	return u
+}
+
 func (s *VMService) ActionVM(ctx context.Context, vmID, userID, action string) error {
 	v, err := s.repo.GetByID(ctx, vmID)
 	if err != nil {
