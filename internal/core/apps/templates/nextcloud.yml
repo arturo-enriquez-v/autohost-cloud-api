@@ -1,7 +1,7 @@
 services:
-  $mysql-database:
+  $service-name-db:
     image: mariadb:10.6
-    container_name: $mysql-database
+    container_name: $service-name-db
     restart: always
     ports:
       - "$mysql-port:3306"
@@ -11,7 +11,7 @@ services:
       MYSQL_USER: $mysql-user
       MYSQL_PASSWORD: $mysql-password
     volumes:
-      - $mysql-database:/var/lib/mysql
+      - $service-name-db:/var/lib/mysql
     networks:
       - autohost_net
 
@@ -25,16 +25,16 @@ services:
       MYSQL_DATABASE: $mysql-database
       MYSQL_USER: $mysql-user
       MYSQL_PASSWORD: $mysql-password
-      MYSQL_HOST: $mysql-database
+      MYSQL_HOST: $service-name-db
     depends_on:
-      - $mysql-database
+      - $service-name-db
     volumes:
       - $service-name:/var/www/html
     networks:
       - autohost_net
 
 volumes:
-  $mysql-database:
+  $service-name-db:
   $service-name:
 
 networks:
