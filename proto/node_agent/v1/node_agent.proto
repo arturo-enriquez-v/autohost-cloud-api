@@ -196,6 +196,16 @@ message ContainerInfo {
   string cpu      = 6;  // CPU usage, e.g. "0.12%". Only for running containers.
   string mem      = 7;  // Memory usage and limit, e.g. "12MiB / 1.9GiB". Only for running containers.
   string mem_perc = 8;  // Memory usage, e.g. "0.61%". Only for running containers.
+  // Ports published on the host, one per host port and protocol. Empty from older agents, which
+  // append them to status instead ("Up 2 hours [8080:80/tcp]").
+  repeated ContainerPort ports = 9;
+}
+
+// A container port published on the host.
+message ContainerPort {
+  uint32 public_port  = 1;  // Port on the host.
+  uint32 private_port = 2;  // Port inside the container.
+  string protocol     = 3;  // "tcp", "udp" or "sctp".
 }
 
 // Full snapshot of the node's containers, sent whenever it changes while a container stream is active.

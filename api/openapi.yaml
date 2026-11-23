@@ -7610,6 +7610,26 @@ components:
         memPerc:
           type: string
           description: Memory usage percentage as reported by Docker. Note the camelCase name.
+        ports:
+          type: array
+          description: |
+            Ports published on the host, one per host port and protocol. Missing for older agents, which
+            append them to `status` instead (`Up 2 hours [8080:80/tcp]`).
+          items:
+            type: object
+            required: [public, private, protocol]
+            properties:
+              public:
+                type: integer
+                description: Port on the host.
+                examples: [8080]
+              private:
+                type: integer
+                description: Port inside the container.
+                examples: [80]
+              protocol:
+                type: string
+                enum: [tcp, udp, sctp]
 
     ContainerList:
       type: object

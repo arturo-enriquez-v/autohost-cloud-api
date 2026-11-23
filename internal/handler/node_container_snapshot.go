@@ -137,9 +137,21 @@ func containerListFromPayload(snapshot *pb.ContainerListPayload) sseContainerLis
 			CPU:     c.GetCpu(),
 			Mem:     c.GetMem(),
 			MemPerc: c.GetMemPerc(),
+			Ports:   containerPortsFromPB(c.GetPorts()),
 		})
 	}
 	return list
+}
+
+func containerPortsFromPB(ports []*pb.ContainerPort) []sseContainerPort {
+	if len(ports) == 0 {
+		return nil
+	}
+	out := make([]sseContainerPort, 0, len(ports))
+	for _, p := range ports {
+		out = append(out, sseContainerPort{Public: p.GetPublicPort(), Private: p.GetPrivatePort(), Protocol: p.GetProtocol()})
+	}
+	return out
 }
 
 // redisContainerSource talks to the agent through the gRPC instance that holds its stream, using the

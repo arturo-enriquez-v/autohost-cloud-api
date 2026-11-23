@@ -70,14 +70,22 @@ func (h *NodeContainerHandler) Routes() http.Handler {
 
 // sseContainerInfo is the JSON shape of one container in the SSE event.
 type sseContainerInfo struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Image   string `json:"image"`
-	State   string `json:"state"`
-	Status  string `json:"status"`
-	CPU     string `json:"cpu,omitempty"`
-	Mem     string `json:"mem,omitempty"`
-	MemPerc string `json:"memPerc,omitempty"`
+	ID      string             `json:"id"`
+	Name    string             `json:"name"`
+	Image   string             `json:"image"`
+	State   string             `json:"state"`
+	Status  string             `json:"status"`
+	CPU     string             `json:"cpu,omitempty"`
+	Mem     string             `json:"mem,omitempty"`
+	MemPerc string             `json:"memPerc,omitempty"`
+	Ports   []sseContainerPort `json:"ports,omitempty"`
+}
+
+// sseContainerPort is a container port published on the host.
+type sseContainerPort struct {
+	Public   uint32 `json:"public"`
+	Private  uint32 `json:"private"`
+	Protocol string `json:"protocol"`
 }
 
 // sseContainerList is the top-level SSE data payload.

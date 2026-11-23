@@ -142,14 +142,33 @@ func (s *NodeAgentServer) handleLogEntry(nodeID string, e *pb.LogEntryPayload) {
 // containerInfo and containerList are the JSON shape of container snapshots published to SSE subscribers
 // (see handler.sseContainerList, which must stay identical).
 type containerInfo struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Image   string `json:"image"`
-	State   string `json:"state"`
-	Status  string `json:"status"`
-	CPU     string `json:"cpu,omitempty"`
-	Mem     string `json:"mem,omitempty"`
-	MemPerc string `json:"memPerc,omitempty"`
+	ID      string          `json:"id"`
+	Name    string          `json:"name"`
+	Image   string          `json:"image"`
+	State   string          `json:"state"`
+	Status  string          `json:"status"`
+	CPU     string          `json:"cpu,omitempty"`
+	Mem     string          `json:"mem,omitempty"`
+	MemPerc string          `json:"memPerc,omitempty"`
+	Ports   []containerPort `json:"ports,omitempty"`
+}
+
+// containerPort is a port published on the host (see handler.sseContainerPort, which must stay identical).
+type containerPort struct {
+	Public   uint32 `json:"public"`
+	Private  uint32 `json:"private"`
+	Protocol string `json:"protocol"`
+}
+
+func containerPortsFromPB(ports []*pb.ContainerPort) []containerPort {
+	if len(ports) == 0 {
+		return nil
+	}
+	out := make([]containerPort, 0, len(ports))
+	for _, p := range ports {
+		out = append(out, containerPort{Public: p.GetPublicPort(), Private: p.GetPrivatePort(), Protocol: p.GetProtocol()})
+	}
+	return out
 }
 
 type containerList struct {
@@ -178,6 +197,7 @@ func (s *NodeAgentServer) handleContainerList(nodeID string, cl *pb.ContainerLis
 				CPU:     c.GetCpu(),
 				Mem:     c.GetMem(),
 				MemPerc: c.GetMemPerc(),
+				Ports:   containerPortsFromPB(c.GetPorts()),
 			})
 		}
 		if data, err := json.Marshal(list); err == nil {
