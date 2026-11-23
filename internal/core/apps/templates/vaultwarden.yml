@@ -1,0 +1,20 @@
+services:
+  $service-name:
+    image: vaultwarden/server:1.37.5-alpine
+    container_name: $service-name
+    restart: unless-stopped
+    ports:
+      - "$port:80"
+    environment:
+      SIGNUPS_ALLOWED: "$signups-allowed"
+    volumes:
+      - $service-name-data:/data
+    networks:
+      - autohost_net
+
+volumes:
+  $service-name-data:
+
+networks:
+  autohost_net:
+    external: true

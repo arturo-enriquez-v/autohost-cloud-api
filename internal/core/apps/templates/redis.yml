@@ -1,0 +1,19 @@
+services:
+  $service-name:
+    image: redis:8.8-alpine
+    container_name: $service-name
+    restart: unless-stopped
+    ports:
+      - "$port:6379"
+    command: ["redis-server", "--requirepass", "$redis-password", "--appendonly", "yes"]
+    volumes:
+      - $service-name-data:/data
+    networks:
+      - autohost_net
+
+volumes:
+  $service-name-data:
+
+networks:
+  autohost_net:
+    external: true

@@ -1,0 +1,23 @@
+services:
+  $service-name:
+    image: adguard/adguardhome:v1.0.0
+    container_name: $service-name
+    restart: unless-stopped
+    ports:
+      - "$dns-port:53/tcp"
+      - "$dns-port:53/udp"
+      - "$setup-port:3000/tcp"
+      - "$port:80/tcp"
+    volumes:
+      - $service-name-work:/opt/adguardhome/work
+      - $service-name-conf:/opt/adguardhome/conf
+    networks:
+      - autohost_net
+
+volumes:
+  $service-name-work:
+  $service-name-conf:
+
+networks:
+  autohost_net:
+    external: true

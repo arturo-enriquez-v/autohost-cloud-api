@@ -1,0 +1,24 @@
+services:
+  $service-name:
+    image: stirlingtools/stirling-pdf:3.5.0
+    container_name: $service-name
+    restart: unless-stopped
+    ports:
+      - "$port:8080"
+    environment:
+      SECURITY_ENABLELOGIN: "false"
+    volumes:
+      - $service-name-configs:/configs
+      - $service-name-storage:/storage
+      - $service-name-tessdata:/usr/share/tessdata
+    networks:
+      - autohost_net
+
+volumes:
+  $service-name-configs:
+  $service-name-storage:
+  $service-name-tessdata:
+
+networks:
+  autohost_net:
+    external: true

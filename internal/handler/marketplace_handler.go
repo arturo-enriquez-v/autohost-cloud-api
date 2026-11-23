@@ -5,6 +5,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -106,14 +107,29 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var composeStr string
+	env := req.EnvVars
 	if req.Compose != "" {
 		composeStr = req.Compose
 	} else {
 		// Validate the app is in the catalog.
-		if _, ok := apps.GetCatalogEntry(req.AppName); !ok {
+		entry, ok := apps.GetCatalogEntry(req.AppName)
+		if !ok {
 			http.Error(w, fmt.Sprintf("app %q not found in catalog", req.AppName), http.StatusBadRequest)
 			return
 		}
+
+		resolved, err := entry.ResolveEnv(req.EnvVars)
+		switch {
+		case errors.Is(err, apps.ErrMissingAppSetting), errors.Is(err, apps.ErrInvalidAppSetting):
+			// Built from the catalog keys only, safe to return.
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		case err != nil:
+			log.Printf("[ERROR] marketplace: resolve settings (%s): %v", req.AppName, err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		env = resolved
 
 		// Retrieve compose template from local or embedded self-hosted catalog.
 		composeContent, err := apps.GetAppTemplate(req.AppName)
@@ -129,7 +145,7 @@ func (h *MarketplaceHandler) DeployApp(w http.ResponseWriter, r *http.Request) {
 	installParams := InstallAppParams{
 		AppName: req.AppName,
 		Compose: composeStr,
-		Env:     req.EnvVars,
+		Env:     env,
 		Devices: req.Devices,
 		CapAdd:  req.CapAdd,
 		PUID:    req.PUID,

@@ -135,7 +135,7 @@ func TestMarketplaceHandler_DeployApp_SuccessSelfHosted(t *testing.T) {
 	h := NewMarketplaceHandler(jobService, appRepo, disp)
 	h.SetRBACService(newOwnerRBAC("user-1", "node-1"))
 
-	body := []byte(`{"node_id": "node-1", "app_name": "joplin", "env_vars": {"service-name": "joplin", "port": "22300"}}`)
+	body := []byte(`{"node_id": "node-1", "app_name": "joplin", "env_vars": {"service-name": "joplin", "port": "22300", "postgres-password": "pw"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/marketplace/apps/deploy", bytes.NewReader(body))
 	ctx := middleware.ContextWithClaims(req.Context(), &middleware.Claims{
 		UserID: "user-1",
@@ -163,5 +163,54 @@ func TestMarketplaceHandler_DeployApp_SuccessSelfHosted(t *testing.T) {
 	}
 	if params.Env["port"] != "22300" {
 		t.Errorf("expected port '22300', got %q", params.Env["port"])
+	}
+}
+
+func TestMarketplaceHandler_DeployApp_RejectsBadSettings(t *testing.T) {
+	cases := map[string]string{
+		"missing required": `{"node_id": "node-1", "app_name": "postgres", "env_vars": {}}`,
+		"breaks template":  `{"node_id": "node-1", "app_name": "postgres", "env_vars": {"postgres-password": "a\"b"}}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			disp := &mockParamDispatcher{}
+			h := NewMarketplaceHandler(jobs.NewJobService(&mockJobRepo{}), &mockMarketplaceRepo{}, disp)
+			h.SetRBACService(newOwnerRBAC("user-1", "node-1"))
+
+			req := httptest.NewRequest(http.MethodPost, "/v1/marketplace/apps/deploy", bytes.NewReader([]byte(body)))
+			req = req.WithContext(middleware.ContextWithClaims(req.Context(), &middleware.Claims{UserID: "user-1"}))
+			w := httptest.NewRecorder()
+			h.DeployApp(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+			}
+			if disp.lastParams != "" {
+				t.Fatal("no job must be dispatched")
+			}
+		})
+	}
+}
+
+func TestMarketplaceHandler_DeployApp_GeneratesSecrets(t *testing.T) {
+	disp := &mockParamDispatcher{}
+	h := NewMarketplaceHandler(jobs.NewJobService(&mockJobRepo{}), &mockMarketplaceRepo{}, disp)
+	h.SetRBACService(newOwnerRBAC("user-1", "node-1"))
+
+	body := []byte(`{"node_id": "node-1", "app_name": "homarr", "env_vars": {"service-name": "homarr", "port": "7575"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/marketplace/apps/deploy", bytes.NewReader(body))
+	req = req.WithContext(middleware.ContextWithClaims(req.Context(), &middleware.Claims{UserID: "user-1"}))
+	w := httptest.NewRecorder()
+	h.DeployApp(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var params InstallAppParams
+	if err := json.Unmarshal([]byte(disp.lastParams), &params); err != nil {
+		t.Fatal(err)
+	}
+	if len(params.Env["encryption-key"]) != 64 {
+		t.Fatalf("expected a generated 64-char encryption key, got %q", params.Env["encryption-key"])
 	}
 }

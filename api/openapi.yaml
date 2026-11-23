@@ -5649,7 +5649,11 @@ paths:
                   type: object
                   additionalProperties:
                     type: string
-                  description: Values for the app's variables, by `key` (see `env_vars` in the catalog).
+                  description: |
+                    Values for the app's variables, by `key` (see `env_vars` in the catalog). For a catalog app,
+                    empty values take the catalog `default` or are generated (`generate`), and keys the app does
+                    not define are ignored. Values cannot contain quotes, `$`, backticks, backslashes or line
+                    breaks, and are at most 256 characters.
                   examples: [{"service-name": nextcloud, port: "8080"}]
                 devices:
                   type: array
@@ -5689,12 +5693,14 @@ paths:
                     type: string
                     const: installing
         "400":
-          description: Malformed JSON, `node_id` or `app_name` missing, or an app not in the catalog (without `compose`).
+          description: |
+            Malformed JSON, `node_id` or `app_name` missing, an app not in the catalog (without `compose`), a
+            required catalog variable without a value, or a variable value that is not allowed.
           content:
             text/plain:
               schema:
                 type: string
-                examples: ['app "foo" not found in catalog']
+                examples: ['app "foo" not found in catalog', "missing required app setting: postgres-password"]
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -8884,6 +8890,10 @@ components:
                 description: Show the field as a password input.
               default:
                 type: string
+              generate:
+                type: string
+                enum: [hex32]
+                description: "If the value is left empty, the API generates one (`hex32`: 64 hex characters)."
 
     MarketplaceApp:
       type: object

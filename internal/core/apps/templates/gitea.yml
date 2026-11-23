@@ -1,0 +1,44 @@
+services:
+  $service-name-db:
+    image: postgres:17-alpine
+    container_name: $service-name-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gitea
+      POSTGRES_USER: gitea
+      POSTGRES_PASSWORD: "$db-password"
+    volumes:
+      - $service-name-db:/var/lib/postgresql/data
+    networks:
+      - autohost_net
+
+  $service-name:
+    image: gitea/gitea:28
+    container_name: $service-name
+    restart: unless-stopped
+    ports:
+      - "$port:3000"
+      - "$ssh-port:22"
+    environment:
+      USER_UID: "1000"
+      USER_GID: "1000"
+      GITEA__database__DB_TYPE: postgres
+      GITEA__database__HOST: "$service-name-db:5432"
+      GITEA__database__NAME: gitea
+      GITEA__database__USER: gitea
+      GITEA__database__PASSWD: "$db-password"
+      GITEA__server__SSH_PORT: "$ssh-port"
+    volumes:
+      - $service-name-data:/data
+    depends_on:
+      - $service-name-db
+    networks:
+      - autohost_net
+
+volumes:
+  $service-name-db:
+  $service-name-data:
+
+networks:
+  autohost_net:
+    external: true

@@ -1,0 +1,18 @@
+services:
+  $service-name:
+    image: louislam/uptime-kuma:2
+    container_name: $service-name
+    restart: unless-stopped
+    ports:
+      - "$port:3001"
+    volumes:
+      - $service-name-data:/app/data
+    networks:
+      - autohost_net
+
+volumes:
+  $service-name-data:
+
+networks:
+  autohost_net:
+    external: true
