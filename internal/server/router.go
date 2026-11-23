@@ -216,6 +216,9 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/node-network", p.NodeNetworkHandler.NodeRoutes())
 	})
 
+	// Custom API tokens may only write through routes guarded by requireNodePerm.
+	handlerMiddleware.SetNodePermRoutes(r, nodePermRoutes(r))
+
 	return r
 }
 

@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 )
@@ -22,24 +23,39 @@ func NewAPITokenRepository(db *sqlx.DB) *APITokenRepository {
 	return &APITokenRepository{db: db}
 }
 
-const apiTokenColumns = `id, user_id, name, token_hash, token_prefix, scope, expires_at, created_at, last_used_at, revoked_at`
+const apiTokenColumns = `id, user_id, name, token_hash, token_prefix, scope, permissions, expires_at, created_at, last_used_at, revoked_at`
+
+// apiTokenRow adds the TEXT[] permissions column, which sqlx cannot scan into a plain []string.
+type apiTokenRow struct {
+	identity.APIToken
+	DBPermissions pq.StringArray `db:"permissions"`
+}
+
+func (row *apiTokenRow) toDomain() *identity.APIToken {
+	t := row.APIToken
+	t.Permissions = []string(row.DBPermissions)
+	if t.Permissions == nil {
+		t.Permissions = []string{}
+	}
+	return &t
+}
 
 func (r *APITokenRepository) Create(ctx context.Context, t *identity.APIToken) (*identity.APIToken, error) {
-	var out identity.APIToken
+	var out apiTokenRow
 	err := r.db.QueryRowxContext(ctx, `
-		INSERT INTO api_tokens (user_id, name, token_hash, token_prefix, scope, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO api_tokens (user_id, name, token_hash, token_prefix, scope, permissions, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING `+apiTokenColumns,
-		t.UserID, t.Name, t.TokenHash, t.TokenPrefix, t.Scope, t.ExpiresAt,
+		t.UserID, t.Name, t.TokenHash, t.TokenPrefix, t.Scope, pq.StringArray(nonNilStrings(t.Permissions)), t.ExpiresAt,
 	).StructScan(&out)
 	if err != nil {
 		return nil, fmt.Errorf("create api token: %w", err)
 	}
-	return &out, nil
+	return out.toDomain(), nil
 }
 
 func (r *APITokenRepository) GetByHash(ctx context.Context, tokenHash string) (*identity.APIToken, error) {
-	var out identity.APIToken
+	var out apiTokenRow
 	err := r.db.GetContext(ctx, &out, `SELECT `+apiTokenColumns+` FROM api_tokens WHERE token_hash = $1`, tokenHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, identity.ErrAPITokenNotFound
@@ -47,17 +63,21 @@ func (r *APITokenRepository) GetByHash(ctx context.Context, tokenHash string) (*
 	if err != nil {
 		return nil, fmt.Errorf("get api token: %w", err)
 	}
-	return &out, nil
+	return out.toDomain(), nil
 }
 
 func (r *APITokenRepository) ListByUser(ctx context.Context, userID string) ([]*identity.APIToken, error) {
-	tokens := []*identity.APIToken{}
-	err := r.db.SelectContext(ctx, &tokens, `
+	var rows []apiTokenRow
+	err := r.db.SelectContext(ctx, &rows, `
 		SELECT `+apiTokenColumns+` FROM api_tokens
 		WHERE user_id = $1
 		ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list api tokens: %w", err)
+	}
+	tokens := make([]*identity.APIToken, 0, len(rows))
+	for i := range rows {
+		tokens = append(tokens, rows[i].toDomain())
 	}
 	return tokens, nil
 }
@@ -92,4 +112,11 @@ func (r *APITokenRepository) TouchLastUsed(ctx context.Context, tokenID string) 
 		UPDATE api_tokens SET last_used_at = NOW()
 		WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 minute')`, tokenID)
 	return err
+}
+
+func nonNilStrings(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
 }

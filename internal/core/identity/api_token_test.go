@@ -6,6 +6,7 @@ package identity
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -205,5 +206,65 @@ func TestAPITokenRevokeIsScopedToOwner(t *testing.T) {
 	}
 	if _, err := svc.Authenticate(ctx, created.Token); err != nil {
 		t.Fatalf("token must stay valid after a foreign revoke attempt: %v", err)
+	}
+}
+
+func TestAPITokenCustomScopeValidation(t *testing.T) {
+	svc, _ := newTestAPITokenService(nil)
+	cases := []struct {
+		name string
+		in   CreateAPITokenInput
+		want error
+	}{
+		{"custom without permissions", CreateAPITokenInput{Name: "t", Scope: "custom"}, ErrAPITokenPermissionsRequired},
+		{"unknown permission", CreateAPITokenInput{Name: "t", Scope: "custom", Permissions: []string{"files:write", "root:all"}}, ErrAPITokenInvalidPermission},
+		{"wildcard", CreateAPITokenInput{Name: "t", Scope: "custom", Permissions: []string{"*"}}, ErrAPITokenInvalidPermission},
+		{"permissions on read scope", CreateAPITokenInput{Name: "t", Scope: "read", Permissions: []string{"files:read"}}, ErrAPITokenInvalidPermission},
+		{"permissions on write scope", CreateAPITokenInput{Name: "t", Scope: "write", Permissions: []string{"files:read"}}, ErrAPITokenInvalidPermission},
+	}
+	for _, tc := range cases {
+		if _, err := svc.Create(context.Background(), "u1", tc.in); !errors.Is(err, tc.want) {
+			t.Errorf("%s: got %v, want %v", tc.name, err, tc.want)
+		}
+	}
+}
+
+func TestAPITokenCustomScopeStoresNormalizedPermissions(t *testing.T) {
+	svc, repo := newTestAPITokenService(fakeUserLookup{"u1": {ID: "u1", IsActive: true}})
+	created, err := svc.Create(context.Background(), "u1", CreateAPITokenInput{
+		Name: "files bot", Scope: "custom", Permissions: []string{" FILES:WRITE "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{PermNodeRead, PermFilesRead, PermFilesWrite}
+	if got := repo.tokens[created.APIToken.ID].Permissions; !slices.Equal(got, want) {
+		t.Fatalf("stored permissions = %v, want %v (implied reads added)", got, want)
+	}
+	p, err := svc.Authenticate(context.Background(), created.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(p.Permissions, want) {
+		t.Fatalf("principal permissions = %v, want %v", p.Permissions, want)
+	}
+}
+
+func TestAPITokenEffectivePermissions(t *testing.T) {
+	read := (&APIToken{Scope: APITokenScopeRead}).EffectivePermissions()
+	for _, p := range read {
+		if !strings.HasSuffix(p, ":read") {
+			t.Errorf("read token grants %s", p)
+		}
+	}
+	if !slices.Contains(read, PermFilesRead) || slices.Contains(read, PermTerminalExec) {
+		t.Errorf("unexpected read permissions %v", read)
+	}
+	if got := (&APIToken{Scope: APITokenScopeWrite}).EffectivePermissions(); !slices.Equal(got, []string{PermWildcard}) {
+		t.Errorf("write token permissions = %v, want [*]", got)
+	}
+	// Unknown scopes fall back to read-only.
+	if got := (&APIToken{Scope: "bogus"}).EffectivePermissions(); slices.Contains(got, PermWildcard) || slices.Contains(got, PermFilesWrite) {
+		t.Errorf("unknown scope permissions = %v, want read-only", got)
 	}
 }

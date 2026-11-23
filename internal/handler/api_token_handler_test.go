@@ -147,3 +147,31 @@ func TestRequireNodePermReadOnlyToken(t *testing.T) {
 		}
 	}
 }
+
+func TestRequireNodePermCustomToken(t *testing.T) {
+	rbac := newOwnerRBAC("u1", "node-1")
+	claims := &middleware.Claims{UserID: "u1", APITokenID: "t3", APITokenScope: "custom"}
+	tokenPerms := identity.NormalizePermissions([]string{identity.PermFilesWrite})
+
+	cases := []struct {
+		perm string
+		want int
+	}{
+		{identity.PermFilesRead, http.StatusOK},
+		{identity.PermFilesWrite, http.StatusOK},
+		{identity.PermFilesDelete, http.StatusForbidden},
+		{identity.PermTerminalExec, http.StatusForbidden},
+		{identity.PermContainersRead, http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		mw := requireNodePerm(func() *identity.RBACService { return rbac }, tc.perm)
+		req := httptest.NewRequest(http.MethodPost, "/v1/nodes/node-1/files/upload", nil)
+		ctx := identity.WithTokenPermissions(middleware.ContextWithClaims(req.Context(), claims), tokenPerms)
+		req = withNodeID(req.WithContext(ctx), "node-1")
+		rec := httptest.NewRecorder()
+		mw(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("files:write token, perm %s on an owned node: got %d, want %d", tc.perm, rec.Code, tc.want)
+		}
+	}
+}

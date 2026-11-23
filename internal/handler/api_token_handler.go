@@ -72,7 +72,9 @@ func (h *APITokenHandler) Create(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, identity.ErrAPITokenNameRequired),
 		errors.Is(err, identity.ErrAPITokenNameTooLong),
 		errors.Is(err, identity.ErrAPITokenInvalidScope),
-		errors.Is(err, identity.ErrAPITokenInvalidTTL):
+		errors.Is(err, identity.ErrAPITokenInvalidTTL),
+		errors.Is(err, identity.ErrAPITokenPermissionsRequired),
+		errors.Is(err, identity.ErrAPITokenInvalidPermission):
 		response.RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	case errors.Is(err, identity.ErrAPITokenLimitReached):

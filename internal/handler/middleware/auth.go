@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 )
 
 var jwtSecret []byte
@@ -33,13 +35,22 @@ type Claims struct {
 	// Set only when the request authenticated with a personal API token instead of a session JWT.
 	APITokenID    string `json:"-"`
 	APITokenScope string `json:"-"`
+	// APITokenPermissions are the node permissions the token may use (["*"] for write tokens).
+	APITokenPermissions []string `json:"-"`
 }
 
 // ViaAPIToken reports whether the request authenticated with a personal API token.
 func (c *Claims) ViaAPIToken() bool { return c != nil && c.APITokenID != "" }
 
-// ReadOnly reports whether the credential may only perform read operations.
-func (c *Claims) ReadOnly() bool { return c.ViaAPIToken() && c.APITokenScope != "write" }
+// ReadOnly reports whether the credential may only perform read operations. Unknown scopes are treated
+// as read-only (fail closed).
+func (c *Claims) ReadOnly() bool {
+	return c.ViaAPIToken() && c.APITokenScope != "write" && c.APITokenScope != "custom"
+}
+
+// NodeScopedWrites reports whether the credential may only write through node routes guarded by
+// requireNodePerm (custom API tokens).
+func (c *Claims) NodeScopedWrites() bool { return c.ViaAPIToken() && c.APITokenScope == "custom" }
 
 // APITokenAuthenticator resolves a personal API token (Authorization: Bearer ahp_...) to claims.
 type APITokenAuthenticator func(ctx context.Context, raw string) (*Claims, error)
@@ -157,11 +168,18 @@ func authAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler, raw
 		http.Error(w, "invalid token", http.StatusUnauthorized)
 		return
 	}
-	if claims.ReadOnly() && !isReadOnlyRequest(r) {
+	switch {
+	case claims.ReadOnly() && !isReadOnlyRequest(r):
 		http.Error(w, "read-only api token", http.StatusForbidden)
 		return
+	case claims.NodeScopedWrites() && !isReadOnlyRequest(r) && !isNodePermRoute(r):
+		http.Error(w, "this api token can only make changes on nodes", http.StatusForbidden)
+		return
 	}
-	next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), claimsKey, claims)))
+	ctx := context.WithValue(r.Context(), claimsKey, claims)
+	// Every node permission check made for this request is limited to the token's permissions.
+	ctx = identity.WithTokenPermissions(ctx, claims.APITokenPermissions)
+	next.ServeHTTP(w, r.WithContext(ctx))
 }
 
 // isReadOnlyRequest reports whether a read-only token may make the request: safe methods only, and no

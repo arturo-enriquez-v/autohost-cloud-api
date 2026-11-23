@@ -6,6 +6,7 @@ package identity
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -660,7 +661,22 @@ func (s *RBACService) replaceNodePermissions(actorID, userID string, inputs []No
 }
 
 // GetEffectiveNodePermissions computes a user's effective role_preset and granular permissions on a node.
+// When ctx carries an API token limit (WithTokenPermissions), the result is the intersection of the
+// user's permissions and the token's, reported with the "custom" preset.
 func (s *RBACService) GetEffectiveNodePermissions(ctx context.Context, userID, nodeID string) (rolePreset string, permissions []string, allowed bool, err error) {
+	rolePreset, permissions, allowed, err = s.userNodePermissions(ctx, userID, nodeID)
+	if err != nil || !allowed {
+		return rolePreset, permissions, allowed, err
+	}
+	if limit, ok := tokenPermissions(ctx); ok && !slices.Contains(limit, PermWildcard) {
+		limited := intersectPermissions(permissions, limit)
+		return NodePresetCustom, limited, len(limited) > 0, nil
+	}
+	return rolePreset, permissions, allowed, nil
+}
+
+// userNodePermissions computes the user's own permissions on a node, ignoring any API token limit.
+func (s *RBACService) userNodePermissions(ctx context.Context, userID, nodeID string) (rolePreset string, permissions []string, allowed bool, err error) {
 	if userID == "" || nodeID == "" || s == nil || s.repo == nil {
 		return "", nil, false, nil
 	}

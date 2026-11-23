@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -41,8 +42,9 @@ func TestAPITokenRepository(t *testing.T) {
 
 	repo := NewAPITokenRepository(db)
 	created, err := repo.Create(ctx, &identity.APIToken{
-		UserID: owner, Name: "mcp", TokenHash: "hash-1", TokenPrefix: "ahp_1234", Scope: "read",
-		ExpiresAt: time.Now().Add(time.Hour),
+		UserID: owner, Name: "mcp", TokenHash: "hash-1", TokenPrefix: "ahp_1234", Scope: "custom",
+		Permissions: []string{"node:read", "files:read", "files:write"},
+		ExpiresAt:   time.Now().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -56,8 +58,14 @@ func TestAPITokenRepository(t *testing.T) {
 	}
 
 	got, err := repo.GetByHash(ctx, "hash-1")
-	if err != nil || got.ID != created.ID || got.UserID != owner || got.Scope != "read" {
+	if err != nil || got.ID != created.ID || got.UserID != owner || got.Scope != "custom" {
 		t.Fatalf("GetByHash = %+v, %v", got, err)
+	}
+	if !slices.Equal(got.Permissions, []string{"node:read", "files:read", "files:write"}) {
+		t.Fatalf("permissions round-trip = %v", got.Permissions)
+	}
+	if exp, _ := repo.GetByHash(ctx, "hash-2"); exp == nil || exp.Permissions == nil || len(exp.Permissions) != 0 {
+		t.Fatalf("a token without permissions must read back an empty, non-nil list: %+v", exp)
 	}
 	if _, err := repo.GetByHash(ctx, "missing"); !errors.Is(err, identity.ErrAPITokenNotFound) {
 		t.Fatalf("GetByHash(missing) = %v, want ErrAPITokenNotFound", err)

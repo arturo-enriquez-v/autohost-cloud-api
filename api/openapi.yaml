@@ -11,9 +11,13 @@ info:
       in the `access_token` cookie instead, and WebSocket/SSE connections as the `token` (or
       `access_token`) query parameter.
     - **Scripts and MCP clients** can use a personal API token (`ahp_...`, from `POST /v1/api-tokens`) as
-      `Authorization: Bearer <token>` on the same routes. It acts as its owner; a `read` token can only make
-      `GET`/`HEAD` requests (no WebSocket upgrades) and only gets `*:read` node permissions. API tokens are
-      only accepted in the `Authorization` header and cannot manage API tokens.
+      `Authorization: Bearer <token>` on the same routes. It acts as its owner, limited by its scope:
+      - `read`: `GET`/`HEAD` requests only (no WebSocket upgrades), and only `*:read` node permissions.
+      - `custom`: a list of node permissions. Reads are allowed everywhere; changes (and WebSocket
+        upgrades) only on node routes, with the intersection of the token's and the owner's permissions.
+      - `write`: all of the owner's permissions.
+
+      API tokens are only accepted in the `Authorization` header and cannot manage API tokens.
     - **Node agents** send their node token as `Authorization: Bearer <node_token>` on agent-only routes.
 
     Access tokens are short-lived; renew them with `POST /v1/auth/refresh`. Refresh tokens are rotated:
@@ -510,9 +514,11 @@ paths:
       operationId: createApiToken
       summary: Create an API token
       description: |
-        Creates a token that acts as the caller. `read` tokens can only make read requests; `write` tokens
-        have all of the caller's permissions, including `terminal:exec` where the caller holds it. The raw
-        token is returned once, in this response. A user can have at most 20 active tokens.
+        Creates a token that acts as the caller. `read` tokens can only make read requests; `custom` tokens
+        carry a list of node permissions (see `GET /v1/users/permissions-catalog`) and can only make changes
+        on node routes; `write` tokens have all of the caller's permissions, including `terminal:exec` where
+        the caller holds it. A token never exceeds its owner's permissions. The raw token is returned once,
+        in this response. A user can have at most 20 active tokens.
       requestBody:
         required: true
         content:
@@ -6681,7 +6687,7 @@ components:
 
     APIToken:
       type: object
-      required: [id, name, token_prefix, scope, expires_at, created_at]
+      required: [id, name, token_prefix, scope, permissions, expires_at, created_at]
       properties:
         id:
           type: string
@@ -6694,7 +6700,13 @@ components:
           examples: [ahp_3f9a1c2e]
         scope:
           type: string
-          enum: [read, write]
+          enum: [read, custom, write]
+        permissions:
+          type: array
+          description: Node permissions of a `custom` token, with implied reads added. Empty for other scopes.
+          items:
+            type: string
+          examples: [[node:read, files:read, files:write]]
         expires_at:
           type: string
           format: date-time
@@ -6719,8 +6731,18 @@ components:
           examples: [Claude MCP]
         scope:
           type: string
-          enum: [read, write]
-          description: "`read`: GET/HEAD requests only, `*:read` node permissions. `write`: all of the owner's permissions."
+          enum: [read, custom, write]
+          description: |
+            `read`: GET/HEAD requests only, `*:read` node permissions. `custom`: the node permissions in
+            `permissions`; changes only on node routes. `write`: all of the owner's permissions.
+        permissions:
+          type: array
+          description: |
+            Required for `custom`, rejected for other scopes. Node permission keys from the catalog (`*` is
+            not accepted: use `write`). Implied reads are added (`files:write` adds `files:read` and `node:read`).
+          items:
+            type: string
+          examples: [[files:write]]
         expires_in_days:
           type: integer
           minimum: 1
