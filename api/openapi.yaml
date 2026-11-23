@@ -2382,6 +2382,105 @@ paths:
         "502":
           $ref: "#/components/responses/FileAgentError"
 
+  /v1/nodes/{nodeId}/files/content:
+    parameters:
+      - $ref: "#/components/parameters/NodeIDPathNodeId"
+    get:
+      tags: [Files]
+      operationId: readFileContent
+      summary: Read a text file
+      description: |
+        Requires `files:read`. Returns a UTF-8 text file of up to 1 MiB as a JSON string, for clients that
+        cannot handle binary downloads (scripts, MCP clients). Binary or larger files: use `/download`.
+      parameters:
+        - $ref: "#/components/parameters/FilePathQueryRequired"
+      responses:
+        "200":
+          description: The file's content.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileContent"
+        "400":
+          $ref: "#/components/responses/FileError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/FileError"
+        "413":
+          description: The file is larger than 1 MiB.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "file is larger than 1048576 bytes: use /download"
+        "415":
+          description: The file is not UTF-8 text (or contains NUL bytes).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "file is not UTF-8 text: use /download"
+        "502":
+          $ref: "#/components/responses/FileAgentError"
+        "504":
+          $ref: "#/components/responses/FileAgentError"
+    put:
+      tags: [Files]
+      operationId: writeFileContent
+      summary: Write a text file
+      description: |
+        Requires `files:write`. Creates a text file of up to 1 MiB from a JSON string, creating missing
+        directories. An existing file is only replaced with `overwrite: true`. For binary or larger files use
+        the multipart `/upload`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WriteFileContentRequest"
+      responses:
+        "200":
+          description: An existing file was replaced.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WriteFileContentResult"
+        "201":
+          description: The file was created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WriteFileContentResult"
+        "400":
+          $ref: "#/components/responses/FileError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The file exists and `overwrite` is not set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: file already exists (set overwrite to true to replace it)
+        "413":
+          description: The content is larger than 1 MiB.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          $ref: "#/components/responses/FileAgentError"
+        "504":
+          $ref: "#/components/responses/FileAgentError"
+
   /v1/nodes/{nodeId}/files/stream:
     parameters:
       - $ref: "#/components/parameters/NodeIDPathNodeId"
@@ -6759,6 +6858,44 @@ components:
           examples: [ahp_3f9a1c2e...]
         api_token:
           $ref: "#/components/schemas/APIToken"
+
+    FileContent:
+      type: object
+      required: [path, size_bytes, content]
+      properties:
+        path:
+          type: string
+          examples: [/docs/notes.txt]
+        size_bytes:
+          type: integer
+        content:
+          type: string
+
+    WriteFileContentRequest:
+      type: object
+      required: [path, content]
+      properties:
+        path:
+          type: string
+          description: File path relative to the node's shared folder.
+          examples: [docs/notes.txt]
+        content:
+          type: string
+          description: UTF-8 text, up to 1 MiB. May be empty.
+        overwrite:
+          type: boolean
+          default: false
+
+    WriteFileContentResult:
+      type: object
+      required: [path, size_bytes, overwritten]
+      properties:
+        path:
+          type: string
+        size_bytes:
+          type: integer
+        overwritten:
+          type: boolean
 
     TokenPair:
       type: object

@@ -65,6 +65,8 @@ func (h *NodeFileHandler) NodeScopedRoutes() http.Handler {
 		protected.With(h.nodePerm(identity.PermFilesDelete)).Delete("/", h.DeleteFile)
 		protected.With(h.nodePerm(identity.PermFilesWrite)).Post("/upload", h.UploadFile)
 		protected.With(h.nodePerm(identity.PermFilesRead)).Get("/download", h.DownloadFile)
+		protected.With(h.nodePerm(identity.PermFilesRead)).Get("/content", h.ReadFileContent)
+		protected.With(h.nodePerm(identity.PermFilesWrite)).Put("/content", h.WriteFileContent)
 		protected.With(h.nodePerm(identity.PermFilesRead)).Get("/stream", h.StreamFile)
 		protected.With(h.nodePerm(identity.PermFilesRead)).Post("/transfer", h.TransferBetweenNodes)
 	})
