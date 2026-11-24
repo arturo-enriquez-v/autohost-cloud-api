@@ -39,7 +39,7 @@ func main() {
 			invocations = append(invocations,
 				server.StartScheduler,
 				server.StartReportScheduler,
-				server.StartDiagnosticCleanupScheduler,
+				server.StartCleanupScheduler,
 				server.StartAutoscalerScheduler,
 			)
 		}
@@ -53,7 +53,7 @@ func main() {
 		invocations = append(invocations,
 			server.StartScheduler,
 			server.StartReportScheduler,
-			server.StartDiagnosticCleanupScheduler,
+			server.StartCleanupScheduler,
 			server.StartAutoscalerScheduler,
 		)
 
@@ -64,7 +64,7 @@ func main() {
 			server.StartGRPCServer,
 			server.StartScheduler,
 			server.StartReportScheduler,
-			server.StartDiagnosticCleanupScheduler,
+			server.StartCleanupScheduler,
 			server.StartAutoscalerScheduler,
 		)
 	}

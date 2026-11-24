@@ -156,7 +156,7 @@ var InfraModule = fx.Provide(
 	handler.NewJobHandler,
 	scheduler.NewScheduler,
 	scheduler.NewReportScheduler,
-	scheduler.NewDiagnosticCleanupScheduler,
+	scheduler.NewCleanupScheduler,
 	fx.Annotate(
 		func(repo infra.ClusterRepository, jobSvc *jobs.JobService, grpc *grpcserver.NodeAgentServer) *scheduler.AutoscalerScheduler {
 			return scheduler.NewAutoscalerScheduler(repo, jobSvc, grpc)

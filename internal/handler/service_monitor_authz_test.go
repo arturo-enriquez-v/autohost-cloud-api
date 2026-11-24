@@ -4,11 +4,13 @@
 package handler_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
@@ -38,6 +40,7 @@ func (monitorRepo) ListEventsByMonitorID(string, int) ([]*apps.ServiceHealthEven
 func (monitorRepo) UptimeHistory24h(string) ([]*apps.UptimePoint, error) {
 	return []*apps.UptimePoint{}, nil
 }
+func (monitorRepo) PurgeEventsBefore(context.Context, time.Time) (int64, error) { return 0, nil }
 
 // A monitor's history and uptime are only visible to users who can read monitors on its node.
 func TestServiceMonitorHandler_HistoryRequiresAccess(t *testing.T) {

@@ -8,31 +8,30 @@ import (
 	"log"
 	"time"
 
+	"github.com/arturo/autohost-cloud-api/internal/core/apps"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 )
 
-// DiagnosticCleanupScheduler runs periodic background cleanups for expired diagnostics
-// based on the retention policy:
-// - pending / rejected: older than 48 hours
-// - approved: older than 30 days
-type DiagnosticCleanupScheduler struct {
+// CleanupScheduler periodically deletes expired data:
+// - log diagnostics: pending / rejected after 48 hours, approved after 30 days
+// - service health events: after apps.HealthEventRetention
+type CleanupScheduler struct {
 	diagnosticSvc *node.LogDiagnosticService
+	monitorSvc    *apps.ServiceMonitorService
 }
 
-func NewDiagnosticCleanupScheduler(diagnosticSvc *node.LogDiagnosticService) *DiagnosticCleanupScheduler {
-	return &DiagnosticCleanupScheduler{
-		diagnosticSvc: diagnosticSvc,
-	}
+func NewCleanupScheduler(diagnosticSvc *node.LogDiagnosticService, monitorSvc *apps.ServiceMonitorService) *CleanupScheduler {
+	return &CleanupScheduler{diagnosticSvc: diagnosticSvc, monitorSvc: monitorSvc}
 }
 
-func (s *DiagnosticCleanupScheduler) Start(ctx context.Context) {
+func (s *CleanupScheduler) Start(ctx context.Context) {
 	// Run cleanup once on startup
 	s.runCleanup(ctx)
 
 	ticker := time.NewTicker(6 * time.Hour)
 	defer ticker.Stop()
 
-	log.Println("[cleanup-scheduler] started, checking every 6 hours for expired diagnostics")
+	log.Println("[cleanup-scheduler] started, checking every 6 hours for expired data")
 
 	for {
 		select {
@@ -45,14 +44,21 @@ func (s *DiagnosticCleanupScheduler) Start(ctx context.Context) {
 	}
 }
 
-func (s *DiagnosticCleanupScheduler) runCleanup(ctx context.Context) {
-	if s.diagnosticSvc == nil {
-		return
+func (s *CleanupScheduler) runCleanup(ctx context.Context) {
+	if s.diagnosticSvc != nil {
+		deleted, err := s.diagnosticSvc.CleanupExpired(ctx)
+		if err != nil {
+			log.Printf("[cleanup-scheduler] error cleaning up expired diagnostics: %v", err)
+		} else if deleted > 0 {
+			log.Printf("[cleanup-scheduler] purged %d expired log diagnostic record(s)", deleted)
+		}
 	}
-	deleted, err := s.diagnosticSvc.CleanupExpired(ctx)
-	if err != nil {
-		log.Printf("[cleanup-scheduler] error cleaning up expired diagnostics: %v", err)
-	} else if deleted > 0 {
-		log.Printf("[cleanup-scheduler] purged %d expired log diagnostic record(s)", deleted)
+	if s.monitorSvc != nil {
+		deleted, err := s.monitorSvc.PurgeOldEvents(ctx)
+		if err != nil {
+			log.Printf("[cleanup-scheduler] error purging old health events: %v", err)
+		} else if deleted > 0 {
+			log.Printf("[cleanup-scheduler] purged %d old service health event(s)", deleted)
+		}
 	}
 }

@@ -27,7 +27,7 @@ func TestDependencyGraph(t *testing.T) {
 			server.StartGRPCServer,
 			server.StartScheduler,
 			server.StartReportScheduler,
-			server.StartDiagnosticCleanupScheduler,
+			server.StartCleanupScheduler,
 			server.StartAutoscalerScheduler,
 		),
 	)

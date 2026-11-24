@@ -4,6 +4,7 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -174,6 +175,35 @@ func (r *ServiceMonitorRepository) ListEventsByMonitorID(monitorID string, limit
 		return nil, err
 	}
 	return events, nil
+}
+
+// purgeEventsBatch bounds each DELETE so the first purge of a large table does not hold locks for long.
+const purgeEventsBatch = 10000
+
+func (r *ServiceMonitorRepository) PurgeEventsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	var total int64
+	for {
+		res, err := r.db.ExecContext(ctx, `
+			DELETE FROM service_health_events
+			WHERE id IN (
+				SELECT id FROM service_health_events
+				WHERE checked_at < $1
+				LIMIT $2
+			)`,
+			cutoff, purgeEventsBatch,
+		)
+		if err != nil {
+			return total, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return total, err
+		}
+		total += n
+		if n < purgeEventsBatch {
+			return total, nil
+		}
+	}
 }
 
 func (r *ServiceMonitorRepository) UptimeHistory24h(monitorID string) ([]*apps.UptimePoint, error) {

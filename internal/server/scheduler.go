@@ -55,7 +55,7 @@ func StartReportScheduler(lc fx.Lifecycle, sched *scheduler.ReportScheduler) {
 	})
 }
 
-func StartDiagnosticCleanupScheduler(lc fx.Lifecycle, sched *scheduler.DiagnosticCleanupScheduler) {
+func StartCleanupScheduler(lc fx.Lifecycle, sched *scheduler.CleanupScheduler) {
 	var cancel context.CancelFunc
 
 	lc.Append(fx.Hook{
@@ -63,12 +63,12 @@ func StartDiagnosticCleanupScheduler(lc fx.Lifecycle, sched *scheduler.Diagnosti
 			var schedCtx context.Context
 			schedCtx, cancel = context.WithCancel(context.Background())
 
-			log.Println("Iniciando DiagnosticCleanupScheduler en segundo plano...")
+			log.Println("Iniciando CleanupScheduler en segundo plano...")
 			go sched.Start(schedCtx)
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
-			log.Println("Deteniendo DiagnosticCleanupScheduler...")
+			log.Println("Deteniendo CleanupScheduler...")
 			if cancel != nil {
 				cancel()
 			}

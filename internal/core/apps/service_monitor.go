@@ -4,10 +4,15 @@
 package apps
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"time"
 )
+
+// HealthEventRetention is how long health check results are kept. The UI reads the last 24 hours; the rest
+// is there for GET /v1/service-monitors/{id}/history.
+const HealthEventRetention = 7 * 24 * time.Hour
 
 // ErrServiceMonitorNotFound is returned when no service monitor exists with the given ID.
 var ErrServiceMonitorNotFound = errors.New("service monitor not found")
@@ -85,6 +90,8 @@ type ServiceMonitorRepository interface {
 	ListEventsByMonitorID(monitorID string, limit int) ([]*ServiceHealthEvent, error)
 	// Returns 24h of bucketed uptime data (one point per 5-minute window).
 	UptimeHistory24h(monitorID string) ([]*UptimePoint, error)
+	// PurgeEventsBefore deletes health events checked before cutoff and returns how many it deleted.
+	PurgeEventsBefore(ctx context.Context, cutoff time.Time) (int64, error)
 }
 
 // ServiceMonitorService contains business logic for service monitors.
@@ -158,4 +165,9 @@ func (s *ServiceMonitorService) EventHistory(monitorID string, limit int) ([]*Se
 
 func (s *ServiceMonitorService) UptimeHistory24h(monitorID string) ([]*UptimePoint, error) {
 	return s.repo.UptimeHistory24h(monitorID)
+}
+
+// PurgeOldEvents deletes health events older than HealthEventRetention.
+func (s *ServiceMonitorService) PurgeOldEvents(ctx context.Context) (int64, error) {
+	return s.repo.PurgeEventsBefore(ctx, time.Now().Add(-HealthEventRetention))
 }
