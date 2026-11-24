@@ -178,3 +178,4 @@ func TestServiceMonitorHandler_ValidatesBody(t *testing.T) {
 		t.Errorf("defaults not applied: status %d, body %s", rec.Code, rec.Body.String())
 	}
 }
+

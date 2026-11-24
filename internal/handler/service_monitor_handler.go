@@ -53,6 +53,16 @@ func (h *ServiceMonitorHandler) Routes() chi.Router {
 	return r
 }
 
+// pushToAgent sends a monitor's configuration to its node. An offline node gets it when it reconnects.
+func (h *ServiceMonitorHandler) pushToAgent(m *apps.ServiceMonitor) {
+	if h.grpc == nil {
+		return
+	}
+	if err := h.grpc.SendHealthCheckConfig(m.NodeID, m); err != nil && !errors.Is(err, grpcserver.ErrNodeNotConnected) {
+		log.Printf("[ERROR] service monitor: push %s to node %s: %v", m.ID, m.NodeID, err)
+	}
+}
+
 // dockerNameRe matches Docker container and Compose service names; anything else (e.g. a leading "-") could
 // be read as a flag by "docker restart" or "docker compose up".
 var dockerNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
@@ -383,10 +393,7 @@ func (h *ServiceMonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Push config to connected agent
-	if h.grpc != nil {
-		h.grpc.SendHealthCheckConfig(req.NodeID, created)
-	}
+	h.pushToAgent(created)
 
 	response.RespondJSON(w, http.StatusCreated, created)
 }
@@ -455,10 +462,7 @@ func (h *ServiceMonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Push updated config to connected agent
-	if h.grpc != nil {
-		h.grpc.SendHealthCheckConfig(existing.NodeID, updated)
-	}
+	h.pushToAgent(updated)
 
 	response.RespondJSON(w, http.StatusOK, updated)
 }
@@ -488,9 +492,11 @@ func (h *ServiceMonitorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Tell the agent to stop this health check
+	// Tell the agent to stop this health check. An offline node does not get the monitor back on reconnect.
 	if h.grpc != nil {
-		h.grpc.StopHealthCheck(monitor.NodeID, monitor.ID)
+		if err := h.grpc.StopHealthCheck(monitor.NodeID, monitor.ID); err != nil && !errors.Is(err, grpcserver.ErrNodeNotConnected) {
+			log.Printf("[ERROR] service monitor: stop %s on node %s: %v", monitor.ID, monitor.NodeID, err)
+		}
 	}
 
 	w.WriteHeader(http.StatusNoContent)

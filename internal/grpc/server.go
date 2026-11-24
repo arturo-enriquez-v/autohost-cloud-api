@@ -356,51 +356,6 @@ func (s *NodeAgentServer) SubscribeToNodeMetrics(nodeID string) (<-chan *pb.Metr
 
 // ---- Health Check helpers ---------------------------------------------------
 
-// SendHealthCheckConfig pushes a monitor configuration to a connected agent.
-func (s *NodeAgentServer) SendHealthCheckConfig(nodeID string, m *apps.ServiceMonitor) {
-	if s == nil || s.registry == nil {
-		return
-	}
-	msg := &pb.ServerMessage{
-		Payload: &pb.ServerMessage_ConfigureHealthCheck{
-			ConfigureHealthCheck: &pb.ConfigureHealthCheckPayload{
-				MonitorId:          m.ID,
-				ServiceName:        m.ServiceName,
-				CheckType:          m.CheckType,
-				HttpUrl:            m.HTTPURL,
-				HttpExpectedStatus: int32(m.HTTPExpectedStatus),
-				TcpHost:            m.TCPHost,
-				TcpPort:            int32(m.TCPPort),
-				IntervalSeconds:    int32(m.IntervalSeconds),
-				FailureThreshold:   int32(m.FailureThreshold),
-				Enabled:            m.Enabled,
-				AutoHealConfig:     string(m.AutoHealConfig),
-				AutoHealState:      string(m.AutoHealState),
-			},
-		},
-	}
-	if err := s.registry.sendToNode(nodeID, msg); err != nil {
-		log.Printf("[gRPC] SendHealthCheckConfig node %s monitor %s: %v", nodeID, m.ID, err)
-	}
-}
-
-// StopHealthCheck tells a connected agent to remove the given monitor.
-func (s *NodeAgentServer) StopHealthCheck(nodeID, monitorID string) {
-	if s == nil || s.registry == nil {
-		return
-	}
-	msg := &pb.ServerMessage{
-		Payload: &pb.ServerMessage_StopHealthCheck{
-			StopHealthCheck: &pb.StopHealthCheckPayload{
-				MonitorId: monitorID,
-			},
-		},
-	}
-	if err := s.registry.sendToNode(nodeID, msg); err != nil {
-		log.Printf("[gRPC] StopHealthCheck node %s monitor %s: %v", nodeID, monitorID, err)
-	}
-}
-
 // handleHealthCheckResult persists an incoming health check result from the agent.
 func (s *NodeAgentServer) handleHealthCheckResult(nodeID string, r *pb.HealthCheckResultPayload) {
 	if s.serviceMonitorSvc == nil {
@@ -535,7 +490,7 @@ func (s *NodeAgentServer) sendServiceDownAlert(nodeID string, monitor *apps.Serv
 
 // listenContainerCommands listens for container/log stream commands and remote jobs published via Redis.
 func (s *NodeAgentServer) listenContainerCommands() {
-	pubsub := s.redis.PSubscribe(context.Background(), "nodes:*:containers:cmd", "nodes:*:jobs:cmd", "nodes:*:logs:cmd", "nodes:*:terminal:cmd")
+	pubsub := s.redis.PSubscribe(context.Background(), "nodes:*:containers:cmd", "nodes:*:jobs:cmd", "nodes:*:logs:cmd", "nodes:*:terminal:cmd", "nodes:*:monitors:cmd")
 	defer pubsub.Close()
 
 	ch := pubsub.Channel()
@@ -628,6 +583,8 @@ func (s *NodeAgentServer) listenContainerCommands() {
 						log.Printf("[gRPC] send job %s to node %s error: %v", req.JobID, targetNodeID, err)
 					}
 				}
+			} else if scope == "monitors" {
+				s.handleMonitorCommand(targetNodeID, msg.Payload)
 			} else if scope == "terminal" {
 				var req struct {
 					Action    string `json:"action"` // "start" | "input" | "resize" | "close"

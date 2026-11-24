@@ -124,9 +124,14 @@ A new `StreamLogsPayload` replaces the running log stream (one per node).
 | `ConfigureHealthCheckPayload` | A service monitor is created or updated (disabling it sends `enabled: false`), and for every enabled monitor on each reconnection |
 | `StopHealthCheckPayload` | A monitor is deleted |
 
-The agent runs each check every `interval_seconds` and sends a `HealthCheckResultPayload` after each run;
-it applies auto-heal itself and reports the updated `auto_heal_state`, which the API stores and sends back
-on the next configuration.
+When the REST process does not hold the node's stream, it publishes `{"action": "configure" | "stop",
+"monitor_id": ...}` on the Redis channel `nodes:<nodeId>:monitors:cmd`; the gRPC process holding the stream
+reloads the monitor from the database and sends the payload.
+
+Each `ConfigureHealthCheckPayload` (re)starts the check: the agent runs it right away, then every
+`interval_seconds`, and sends a `HealthCheckResultPayload` after each run. It keeps the consecutive failure
+count across restarts, applies auto-heal itself and reports the updated `auto_heal_state`, which the API
+stores and sends back on the next configuration.
 
 ### Web terminal
 
