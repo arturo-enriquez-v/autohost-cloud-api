@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
@@ -60,5 +61,117 @@ func TestServiceMonitorHandler_HistoryRequiresAccess(t *testing.T) {
 				t.Errorf("%s as %s: status = %d, want %d (body: %s)", path, tc.user, rec.Code, tc.want, rec.Body.String())
 			}
 		}
+	}
+}
+
+// storedMonitorRepo returns one monitor on node-123 with auto-heal enabled and echoes updates back.
+type storedMonitorRepo struct {
+	monitorRepo
+	state json.RawMessage
+}
+
+func (r storedMonitorRepo) FindByID(id string) (*apps.ServiceMonitor, error) {
+	if id != "mon-1" {
+		return nil, apps.ErrServiceMonitorNotFound
+	}
+	return &apps.ServiceMonitor{
+		ID: "mon-1", NodeID: "node-123", UserID: "user-1", ServiceName: "web", CheckType: "process",
+		AutoHealConfig: json.RawMessage(`{"enabled": true, "restart": {"enabled": true, "max_attempts": 3}}`),
+		AutoHealState:  r.state,
+	}, nil
+}
+
+func newMonitorRouter(repo apps.ServiceMonitorRepository) chi.Router {
+	owner := "user-1"
+	nodeRepo := &MockNodeRepo{nodes: map[string]*node.Node{"node-123": {ID: "node-123", OwnerID: &owner}}}
+	h := handler.NewServiceMonitorHandler(apps.NewServiceMonitorService(repo), nil)
+	h.SetRBACService(ownerRBAC(), node.NewNodeService(nodeRepo))
+	r := chi.NewRouter()
+	r.Mount("/v1/service-monitors", h.Routes())
+	return r
+}
+
+func serveMonitorRequest(r chi.Router, method, path, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+generateToken("user-1", "user-1@example.com"))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	return rec
+}
+
+// Only the agent writes the auto-heal state: a client sending an old copy must not reset the attempts
+// counted by the agent. A new auto-heal config starts from a clean state.
+func TestServiceMonitorHandler_UpdateKeepsAgentState(t *testing.T) {
+	agentState := json.RawMessage(`{"status":"CRITICAL_FAILED","recreate_attempts":1}`)
+	r := newMonitorRouter(storedMonitorRepo{state: agentState})
+
+	tests := []struct {
+		name, config, wantState string
+	}{
+		{"same config", `{"restart":{"max_attempts":3,"enabled":true},"enabled":true}`, string(agentState)},
+		{"config omitted", ``, string(agentState)},
+		{"new config", `{"enabled":true,"restart":{"enabled":true,"max_attempts":5}}`, `{}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := `{"service_name":"web","check_type":"process","enabled":true,` +
+				`"auto_heal_state":{"status":"HEALTHY","recreate_attempts":0}`
+			if tt.config != "" {
+				body += `,"auto_heal_config":` + tt.config
+			}
+			rec := serveMonitorRequest(r, http.MethodPut, "/v1/service-monitors/mon-1", body+"}")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+			}
+			var got apps.ServiceMonitor
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if string(got.AutoHealState) != tt.wantState {
+				t.Errorf("auto_heal_state = %s, want %s", got.AutoHealState, tt.wantState)
+			}
+		})
+	}
+}
+
+// Invalid settings are rejected with a JSON error the web client can show.
+func TestServiceMonitorHandler_ValidatesBody(t *testing.T) {
+	r := newMonitorRouter(storedMonitorRepo{state: json.RawMessage(`{}`)})
+
+	tests := []struct {
+		name, method, path, body, wantErr string
+	}{
+		{"unknown check type", http.MethodPost, "/v1/service-monitors",
+			`{"node_id":"node-123","service_name":"web","check_type":"ping"}`, "check_type must be process, tcp or http"},
+		{"interval too short", http.MethodPost, "/v1/service-monitors",
+			`{"node_id":"node-123","service_name":"web","check_type":"process","interval_seconds":1}`, "interval_seconds must be between 5 and 3600"},
+		{"http without url", http.MethodPost, "/v1/service-monitors",
+			`{"node_id":"node-123","service_name":"site","check_type":"http"}`, "http_url must be an http:// or https:// URL"},
+		{"tcp without port", http.MethodPost, "/v1/service-monitors",
+			`{"node_id":"node-123","service_name":"db","check_type":"tcp","tcp_host":"localhost"}`, "tcp_port must be between 1 and 65535"},
+		{"container name as flag", http.MethodPost, "/v1/service-monitors",
+			`{"node_id":"node-123","service_name":"-t","check_type":"process"}`, "service_name must be a container name for process checks"},
+		{"restart needs a container name", http.MethodPut, "/v1/service-monitors/mon-1",
+			`{"service_name":"Public API","check_type":"http","http_url":"https://example.com"}`, "service_name must be a container name to use auto-heal restart"},
+		{"empty update", http.MethodPut, "/v1/service-monitors/mon-1", `{}`, "service_name is required"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := serveMonitorRequest(r, tt.method, tt.path, tt.body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (body: %s)", rec.Code, rec.Body.String())
+			}
+			var got struct{ Error string }
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Error != tt.wantErr {
+				t.Errorf("body = %s, want error %q", rec.Body.String(), tt.wantErr)
+			}
+		})
+	}
+
+	// Omitted settings get their defaults on update too.
+	rec := serveMonitorRequest(r, http.MethodPut, "/v1/service-monitors/mon-1", `{"service_name":"web","check_type":"process"}`)
+	var got apps.ServiceMonitor
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.IntervalSeconds != 30 || got.FailureThreshold != 3 {
+		t.Errorf("defaults not applied: status %d, body %s", rec.Code, rec.Body.String())
 	}
 }

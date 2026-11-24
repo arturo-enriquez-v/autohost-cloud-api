@@ -5883,7 +5883,7 @@ paths:
       tags: [Service monitors]
       operationId: listServiceMonitors
       summary: List a node's service monitors
-      description: Requires `monitors:read` on the node.
+      description: Requires `monitors:read` on the node; an unknown node answers `403`.
       parameters:
         - name: nodeId
           in: query
@@ -5901,17 +5901,13 @@ paths:
                 items:
                   $ref: "#/components/schemas/ServiceMonitor"
         "400":
-          description: '`nodeId` missing.'
-          content:
-            text/plain:
-              schema:
-                type: string
+          $ref: "#/components/responses/BadRequestJSON"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          $ref: "#/components/responses/ForbiddenJSON"
         "500":
-          $ref: "#/components/responses/InternalError"
+          $ref: "#/components/responses/InternalErrorJSON"
     post:
       tags: [Service monitors]
       operationId: createServiceMonitor
@@ -5919,7 +5915,7 @@ paths:
       description: |
         Requires `monitors:manage` on the node. The configuration is pushed to the agent right away.
         Enabling auto-heal `recreate` also requires `terminal:exec`, because it runs Docker Compose as root
-        on the node.
+        on the node. Auto-heal `restart` runs `docker restart <service_name>`, so it needs a container name.
       requestBody:
         required: true
         content:
@@ -5938,9 +5934,9 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          $ref: "#/components/responses/ForbiddenJSON"
         "500":
-          $ref: "#/components/responses/InternalError"
+          $ref: "#/components/responses/InternalErrorJSON"
 
   /v1/service-monitors/{id}:
     parameters:
@@ -5951,7 +5947,8 @@ paths:
       summary: Update a service monitor
       description: |
         Requires `monitors:manage` on the node (and `terminal:exec` to enable auto-heal `recreate`).
-        Replaces every field; `auto_heal_config` and `auto_heal_state` are kept when omitted.
+        Replaces every field except `node_id`; `auto_heal_config` is kept when omitted. A different
+        `auto_heal_config` resets the auto-heal state, so the new strategy starts from scratch.
       requestBody:
         required: true
         content:
@@ -5970,11 +5967,11 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          $ref: "#/components/responses/ForbiddenJSON"
         "404":
           $ref: "#/components/responses/MonitorNotFound"
         "500":
-          $ref: "#/components/responses/InternalError"
+          $ref: "#/components/responses/InternalErrorJSON"
     delete:
       tags: [Service monitors]
       operationId: deleteServiceMonitor
@@ -5986,11 +5983,11 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          $ref: "#/components/responses/ForbiddenJSON"
         "404":
           $ref: "#/components/responses/MonitorNotFound"
         "500":
-          $ref: "#/components/responses/InternalError"
+          $ref: "#/components/responses/InternalErrorJSON"
 
   /v1/service-monitors/{id}/history:
     parameters:
@@ -6022,7 +6019,7 @@ paths:
         "404":
           $ref: "#/components/responses/MonitorNotFound"
         "500":
-          $ref: "#/components/responses/InternalError"
+          $ref: "#/components/responses/InternalErrorJSON"
 
   /v1/service-monitors/{id}/uptime:
     parameters:
@@ -6054,7 +6051,7 @@ paths:
         "404":
           $ref: "#/components/responses/MonitorNotFound"
         "500":
-          $ref: "#/components/responses/InternalError"
+          $ref: "#/components/responses/InternalErrorJSON"
 
   /v1/scheduled-tasks:
     get:
@@ -6431,17 +6428,19 @@ components:
     MonitorNotFound:
       description: Unknown monitor, or one the caller cannot read.
       content:
-        text/plain:
+        application/json:
           schema:
-            type: string
-            examples: [not found]
+            $ref: "#/components/schemas/Error"
+          example:
+            error: not found
     MonitorBadRequest:
-      description: Malformed JSON, missing fields or an invalid auto-heal configuration.
+      description: Malformed JSON, a missing or out-of-range setting, or an invalid auto-heal configuration.
       content:
-        text/plain:
+        application/json:
           schema:
-            type: string
-            examples: [auto_heal_config.recreate.compose_file_path must be an absolute path]
+            $ref: "#/components/schemas/Error"
+          example:
+            error: interval_seconds must be between 5 and 3600
     ScheduledTaskNotFound:
       description: Unknown task, or one the caller did not create.
       content:
@@ -9076,7 +9075,10 @@ components:
           description: Ignored on update.
         service_name:
           type: string
-          description: Container name for `process` checks; a label otherwise.
+          maxLength: 128
+          description: |
+            Container name for `process` checks and for auto-heal `restart`; a label otherwise.
+            Container names match `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`.
         check_type:
           type: string
           description: '`http`: GET `http_url`. `tcp`: connect to `tcp_host:tcp_port`. `process`: the Docker container is running.'
@@ -9084,28 +9086,38 @@ components:
         http_url:
           type: string
           format: uri
+          description: Required for `http` checks; `http` or `https` only.
         http_expected_status:
           type: integer
-          examples: [200]
+          minimum: 100
+          maximum: 599
+          default: 200
         tcp_host:
           type: string
+          description: Required for `tcp` checks.
         tcp_port:
           type: integer
+          minimum: 1
+          maximum: 65535
+          description: Required for `tcp` checks.
         interval_seconds:
           type: integer
-          examples: [30]
+          minimum: 5
+          maximum: 3600
+          default: 30
         failure_threshold:
           type: integer
+          minimum: 1
+          maximum: 20
+          default: 3
           description: Failed checks in a row before the service is reported down.
         notify_telegram:
           type: boolean
+          description: Send a Telegram message, through the node's alert bot, when the service goes down.
         enabled:
           type: boolean
         auto_heal_config:
           $ref: "#/components/schemas/AutoHealConfig"
-        auto_heal_state:
-          type: object
-          description: Internal auto-heal state reported by the agent; normally omitted.
 
     ServiceMonitor:
       allOf:
@@ -9116,6 +9128,9 @@ components:
             id:
               type: string
               format: uuid
+            auto_heal_state:
+              type: object
+              description: Auto-heal state reported by the agent (status, attempts, timestamps). Read-only.
             user_id:
               type: string
               format: uuid

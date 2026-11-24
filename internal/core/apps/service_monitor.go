@@ -96,7 +96,8 @@ func NewServiceMonitorService(repo ServiceMonitorRepository) *ServiceMonitorServ
 	return &ServiceMonitorService{repo: repo}
 }
 
-func (s *ServiceMonitorService) Create(m *ServiceMonitor) (*ServiceMonitor, error) {
+// applyDefaults fills in the settings a client may leave out, on create and on update.
+func applyDefaults(m *ServiceMonitor) {
 	if m.IntervalSeconds <= 0 {
 		m.IntervalSeconds = 30
 	}
@@ -106,25 +107,24 @@ func (s *ServiceMonitorService) Create(m *ServiceMonitor) (*ServiceMonitor, erro
 	if m.HTTPExpectedStatus == 0 {
 		m.HTTPExpectedStatus = 200
 	}
-	if m.Status == "" {
-		m.Status = StatusUnknown
-	}
 	if len(m.AutoHealConfig) == 0 || string(m.AutoHealConfig) == "null" {
 		m.AutoHealConfig = json.RawMessage("{}")
 	}
 	if len(m.AutoHealState) == 0 || string(m.AutoHealState) == "null" {
 		m.AutoHealState = json.RawMessage("{}")
+	}
+}
+
+func (s *ServiceMonitorService) Create(m *ServiceMonitor) (*ServiceMonitor, error) {
+	applyDefaults(m)
+	if m.Status == "" {
+		m.Status = StatusUnknown
 	}
 	return s.repo.Create(m)
 }
 
 func (s *ServiceMonitorService) Update(m *ServiceMonitor) (*ServiceMonitor, error) {
-	if len(m.AutoHealConfig) == 0 || string(m.AutoHealConfig) == "null" {
-		m.AutoHealConfig = json.RawMessage("{}")
-	}
-	if len(m.AutoHealState) == 0 || string(m.AutoHealState) == "null" {
-		m.AutoHealState = json.RawMessage("{}")
-	}
+	applyDefaults(m)
 	return s.repo.Update(m)
 }
 
