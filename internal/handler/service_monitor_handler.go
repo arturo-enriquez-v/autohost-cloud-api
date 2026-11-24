@@ -50,6 +50,7 @@ func (h *ServiceMonitorHandler) Routes() chi.Router {
 	r.With(middleware.Auth).Delete("/{id}", h.Delete)
 	r.With(middleware.Auth).Get("/{id}/history", h.EventHistory)
 	r.With(middleware.Auth).Get("/{id}/uptime", h.Uptime24h)
+	r.With(middleware.Auth).Post("/{id}/check", h.CheckNow)
 	return r
 }
 
@@ -500,6 +501,35 @@ func (h *ServiceMonitorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ─── Check now ────────────────────────────────────────────────────────────────
+
+// CheckNow makes the agent run the monitor's check right away instead of waiting for the next interval.
+func (h *ServiceMonitorHandler) CheckNow(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil {
+		response.RespondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	monitor, ok := h.authorizeMonitorManage(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !monitor.Enabled {
+		response.RespondError(w, http.StatusConflict, "monitor is paused")
+		return
+	}
+	if err := h.grpc.SendHealthCheckConfig(monitor.NodeID, monitor); err != nil {
+		if errors.Is(err, grpcserver.ErrNodeNotConnected) {
+			response.RespondError(w, http.StatusConflict, "node is offline")
+			return
+		}
+		log.Printf("[ERROR] service monitor: check now %s on node %s: %v", monitor.ID, monitor.NodeID, err)
+		response.RespondError(w, http.StatusInternalServerError, "could not reach the node")
+		return
+	}
+	response.RespondJSON(w, http.StatusAccepted, map[string]string{"status": "requested"})
 }
 
 // ─── Event History ────────────────────────────────────────────────────────────

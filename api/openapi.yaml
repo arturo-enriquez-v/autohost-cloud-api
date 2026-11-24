@@ -5989,6 +5989,45 @@ paths:
         "500":
           $ref: "#/components/responses/InternalErrorJSON"
 
+  /v1/service-monitors/{id}/check:
+    parameters:
+      - $ref: "#/components/parameters/MonitorIDPath"
+    post:
+      tags: [Service monitors]
+      operationId: checkServiceMonitorNow
+      summary: Run a monitor's check now
+      description: |
+        Requires `monitors:manage` on the node. The agent restarts the check and runs it right away; the result
+        shows up in the monitor's status and history a moment later.
+      responses:
+        "202":
+          description: Check requested.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: requested
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          $ref: "#/components/responses/MonitorNotFound"
+        "409":
+          description: The monitor is paused or its node is offline.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: node is offline
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
   /v1/service-monitors/{id}/history:
     parameters:
       - $ref: "#/components/parameters/MonitorIDPath"

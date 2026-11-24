@@ -179,3 +179,39 @@ func TestServiceMonitorHandler_ValidatesBody(t *testing.T) {
 	}
 }
 
+// pausedMonitorRepo holds a disabled monitor.
+type pausedMonitorRepo struct{ monitorRepo }
+
+func (pausedMonitorRepo) FindByID(string) (*apps.ServiceMonitor, error) {
+	return &apps.ServiceMonitor{ID: "mon-1", NodeID: "node-123", UserID: "user-1", Enabled: false}, nil
+}
+
+// "Check now" needs the agent: a paused monitor or an offline node answer 409 with the reason.
+func TestServiceMonitorHandler_CheckNow(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		repo    apps.ServiceMonitorRepository
+		wantErr string
+	}{
+		{"paused", pausedMonitorRepo{}, "monitor is paused"},
+		{"offline", enabledRepo{storedMonitorRepo{state: json.RawMessage(`{}`)}}, "node is offline"},
+	} {
+		rec := serveMonitorRequest(newMonitorRouter(tc.repo), http.MethodPost, "/v1/service-monitors/mon-1/check", "")
+		var got struct{ Error string }
+		_ = json.Unmarshal(rec.Body.Bytes(), &got)
+		if rec.Code != http.StatusConflict || got.Error != tc.wantErr {
+			t.Errorf("%s: status %d body %s, want 409 %q", tc.name, rec.Code, rec.Body.String(), tc.wantErr)
+		}
+	}
+}
+
+// enabledRepo is storedMonitorRepo with its monitor enabled.
+type enabledRepo struct{ storedMonitorRepo }
+
+func (r enabledRepo) FindByID(id string) (*apps.ServiceMonitor, error) {
+	m, err := r.storedMonitorRepo.FindByID(id)
+	if m != nil {
+		m.Enabled = true
+	}
+	return m, err
+}

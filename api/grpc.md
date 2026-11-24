@@ -121,7 +121,7 @@ A new `StreamLogsPayload` replaces the running log stream (one per node).
 
 | API sends | When |
 |---|---|
-| `ConfigureHealthCheckPayload` | A service monitor is created or updated (disabling it sends `enabled: false`), and for every enabled monitor on each reconnection |
+| `ConfigureHealthCheckPayload` | A service monitor is created or updated (disabling it sends `enabled: false`), on `POST /v1/service-monitors/{id}/check`, and for every enabled monitor on each reconnection |
 | `StopHealthCheckPayload` | A monitor is deleted |
 
 When the REST process does not hold the node's stream, it publishes `{"action": "configure" | "stop",
