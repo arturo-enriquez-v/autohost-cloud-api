@@ -5915,7 +5915,8 @@ paths:
       description: |
         Requires `monitors:manage` on the node. The configuration is pushed to the agent right away.
         Enabling auto-heal `recreate` also requires `terminal:exec`, because it runs Docker Compose as root
-        on the node. Auto-heal `restart` runs `docker restart <service_name>`, so it needs a container name.
+        on the node. Auto-heal acts on `auto_heal_config.container`, or on `service_name` when it is empty,
+        so one of them must be a container name.
       requestBody:
         required: true
         content:
@@ -9084,6 +9085,11 @@ components:
         grace_period_seconds:
           type: integer
           description: Wait after an action before acting again.
+        container:
+          type: string
+          description: |
+            Container that auto-heal restarts and recreates. Defaults to the monitor's `service_name`, so HTTP
+            and TCP monitors named with a label must set it.
         restart:
           type: object
           description: Restart the container, up to `max_attempts` times within `window_seconds`.
@@ -9097,17 +9103,18 @@ components:
         recreate:
           type: object
           description: |
-            When restarts are exhausted, run `docker compose -f <compose_file_path> up -d --force-recreate
-            <service_name>`. Enabling it requires `terminal:exec`.
+            When restarts are exhausted, run `docker compose up -d --force-recreate` for the container's
+            service. Without `compose_file_path`, the agent reads the project, files and service from the
+            container's Compose labels. Enabling it requires `terminal:exec`.
           properties:
             enabled:
               type: boolean
             compose_file_path:
               type: string
-              description: Absolute path of the compose file on the node.
+              description: Absolute path of the compose file on the node; empty to use the container's labels.
             service_name:
               type: string
-              description: Compose service; defaults to the monitor's `service_name`.
+              description: Compose service; empty to use the container's label (or the monitor's `service_name` with a compose file).
             max_attempts:
               type: integer
 
@@ -9123,7 +9130,8 @@ components:
           type: string
           maxLength: 128
           description: |
-            Container name for `process` checks and for auto-heal `restart`; a label otherwise.
+            Container name for `process` checks; a label otherwise (auto-heal then needs
+            `auto_heal_config.container`).
             Container names match `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`.
         check_type:
           type: string

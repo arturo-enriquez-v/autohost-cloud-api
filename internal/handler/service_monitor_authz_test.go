@@ -154,8 +154,10 @@ func TestServiceMonitorHandler_ValidatesBody(t *testing.T) {
 			`{"node_id":"node-123","service_name":"db","check_type":"tcp","tcp_host":"localhost"}`, "tcp_port must be between 1 and 65535"},
 		{"container name as flag", http.MethodPost, "/v1/service-monitors",
 			`{"node_id":"node-123","service_name":"-t","check_type":"process"}`, "service_name must be a container name for process checks"},
-		{"restart needs a container name", http.MethodPut, "/v1/service-monitors/mon-1",
-			`{"service_name":"Public API","check_type":"http","http_url":"https://example.com"}`, "service_name must be a container name to use auto-heal restart"},
+		{"auto-heal needs a container", http.MethodPut, "/v1/service-monitors/mon-1",
+			`{"service_name":"Public API","check_type":"http","http_url":"https://example.com"}`, "auto-heal needs a container: set auto_heal_config.container"},
+		{"invalid auto-heal container", http.MethodPut, "/v1/service-monitors/mon-1",
+			`{"service_name":"Public API","check_type":"http","http_url":"https://example.com","auto_heal_config":{"enabled":true,"container":"-t","restart":{"enabled":true}}}`, "auto_heal_config.container must be a container name"},
 		{"empty update", http.MethodPut, "/v1/service-monitors/mon-1", `{}`, "service_name is required"},
 	}
 	for _, tt := range tests {
@@ -171,8 +173,16 @@ func TestServiceMonitorHandler_ValidatesBody(t *testing.T) {
 		})
 	}
 
+	// An HTTP monitor named with a label can auto-heal the container set in its config.
+	rec := serveMonitorRequest(r, http.MethodPut, "/v1/service-monitors/mon-1",
+		`{"service_name":"Public API","check_type":"http","http_url":"https://example.com",`+
+			`"auto_heal_config":{"enabled":true,"container":"shop-web-1","restart":{"enabled":true}}}`)
+	if rec.Code != http.StatusOK {
+		t.Errorf("label with auto-heal container: status %d, body %s", rec.Code, rec.Body.String())
+	}
+
 	// Omitted settings get their defaults on update too.
-	rec := serveMonitorRequest(r, http.MethodPut, "/v1/service-monitors/mon-1", `{"service_name":"web","check_type":"process"}`)
+	rec = serveMonitorRequest(r, http.MethodPut, "/v1/service-monitors/mon-1", `{"service_name":"web","check_type":"process"}`)
 	var got apps.ServiceMonitor
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.IntervalSeconds != 30 || got.FailureThreshold != 3 {
 		t.Errorf("defaults not applied: status %d, body %s", rec.Code, rec.Body.String())

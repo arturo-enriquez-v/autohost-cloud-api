@@ -79,8 +79,9 @@ const (
 
 // monitorAutoHeal is the part of an auto-heal config the API checks.
 type monitorAutoHeal struct {
-	Enabled bool `json:"enabled"`
-	Restart struct {
+	Enabled   bool   `json:"enabled"`
+	Container string `json:"container"`
+	Restart   struct {
 		Enabled bool `json:"enabled"`
 	} `json:"restart"`
 	Recreate struct {
@@ -126,15 +127,22 @@ func (h *ServiceMonitorHandler) authorizeAutoHeal(ctx context.Context, userID, n
 	return http.StatusOK, ""
 }
 
-// validateAutoHealTarget checks that the monitor's service name can be used by auto-heal restart, which runs
-// "docker restart <service_name>" on the node.
+// validateAutoHealTarget checks the container auto-heal acts on: auto_heal_config.container, or the
+// monitor's service name when it is empty. The agent runs "docker restart <container>" and reads the
+// container's Compose labels to recreate it.
 func validateAutoHealTarget(raw json.RawMessage, serviceName string) string {
 	cfg, err := parseMonitorAutoHeal(raw)
 	if err != nil {
 		return "invalid auto_heal_config"
 	}
-	if cfg.Enabled && cfg.Restart.Enabled && !dockerNameRe.MatchString(serviceName) {
-		return "service_name must be a container name to use auto-heal restart"
+	if cfg.Container != "" && !dockerNameRe.MatchString(cfg.Container) {
+		return "auto_heal_config.container must be a container name"
+	}
+	if !cfg.Enabled || (!cfg.Restart.Enabled && !cfg.Recreate.Enabled) || cfg.Container != "" {
+		return ""
+	}
+	if !dockerNameRe.MatchString(serviceName) {
+		return "auto-heal needs a container: set auto_heal_config.container"
 	}
 	return ""
 }

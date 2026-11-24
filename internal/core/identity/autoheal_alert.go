@@ -13,6 +13,7 @@ type AutoHealConfig struct {
 	Enabled                      bool           `json:"enabled"`
 	ConsecutiveFailuresThreshold int            `json:"consecutive_failures_threshold"`
 	GracePeriodSeconds           int64          `json:"grace_period_seconds"`
+	Container                    string         `json:"container,omitempty"` // empty: the monitor's service name
 	Restart                      RestartConfig  `json:"restart"`
 	Recreate                     RecreateConfig `json:"recreate"`
 }
@@ -53,6 +54,14 @@ type AutoHealAlertContext struct {
 	NewState     AutoHealState
 	LastMessage  string
 	LatencyMs    int
+}
+
+// targetContainer is the container auto-heal acts on (see AutoHealConfig.Container).
+func (ac AutoHealAlertContext) targetContainer() string {
+	if ac.Config.Container != "" {
+		return ac.Config.Container
+	}
+	return ac.ServiceName
 }
 
 func formatDuration(seconds int64) string {
@@ -160,7 +169,7 @@ func (s *NotificationService) SendAutoHealTransitionAlert(ctx context.Context, a
 			ac.LastMessage,
 			ac.NewState.ConsecutiveFailures,
 			threshold,
-			ac.ServiceName, attempt, maxAttempts,
+			ac.targetContainer(), attempt, maxAttempts,
 			ac.Config.GracePeriodSeconds,
 			ac.Config.Restart.WindowSeconds, ac.Config.Restart.WindowSeconds/60,
 		)
@@ -183,7 +192,7 @@ func (s *NotificationService) SendAutoHealTransitionAlert(ctx context.Context, a
 		maxAttempts := ac.Config.Recreate.MaxAttempts
 		composeFile := ac.Config.Recreate.ComposeFilePath
 		if composeFile == "" {
-			composeFile = "docker-compose.yml"
+			composeFile = "from the Compose labels of container " + ac.targetContainer()
 		}
 
 		outageStarted := formatTimestamp(ac.NewState.FailureStartedAt, now)
