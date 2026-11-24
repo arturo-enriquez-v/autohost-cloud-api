@@ -235,7 +235,7 @@ func (r *ServiceMonitorRepository) UptimeHistory24h(monitorID string) ([]*apps.U
 			GROUP BY 1
 		)
 		SELECT
-			to_char(b.bucket, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS bucket,
+			to_char(b.bucket AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS bucket,
 			COALESCE(a.status, 'no_data') AS status
 		FROM buckets_truncated b
 		LEFT JOIN agg a ON a.bucket = b.bucket
