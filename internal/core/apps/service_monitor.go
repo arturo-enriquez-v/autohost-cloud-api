@@ -54,6 +54,33 @@ type ServiceMonitor struct {
 	UpdatedAt           time.Time       `db:"updated_at"           json:"updated_at"`
 	AutoHealConfig      json.RawMessage `db:"auto_heal_config"     json:"auto_heal_config,omitempty"`
 	AutoHealState       json.RawMessage `db:"auto_heal_state"      json:"auto_heal_state,omitempty"`
+	// Stale is set on reads: the monitor is enabled but no result arrived recently, so Status is out of
+	// date (the node is offline or the agent stopped checking).
+	Stale bool `db:"-" json:"stale"`
+}
+
+// staleAfterIntervals and staleGrace set how long an enabled monitor may go without a result before it is
+// reported stale: three missed checks plus a margin for reconnects.
+const (
+	staleAfterIntervals = 3
+	staleGrace          = time.Minute
+)
+
+// IsStale reports whether an enabled monitor has gone too long without a result. Any write (a check result,
+// an edit) moves updated_at, so a monitor just created or re-enabled is not stale.
+func (m *ServiceMonitor) IsStale(now time.Time) bool {
+	if !m.Enabled {
+		return false
+	}
+	interval := time.Duration(m.IntervalSeconds) * time.Second
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	last := m.UpdatedAt
+	if m.LastCheckedAt != nil && m.LastCheckedAt.After(last) {
+		last = *m.LastCheckedAt
+	}
+	return now.Sub(last) > staleAfterIntervals*interval+staleGrace
 }
 
 // ServiceHealthEvent records the outcome of a single health check execution.
@@ -144,7 +171,15 @@ func (s *ServiceMonitorService) FindByID(id string) (*ServiceMonitor, error) {
 }
 
 func (s *ServiceMonitorService) ListByNodeID(nodeID string) ([]*ServiceMonitor, error) {
-	return s.repo.ListByNodeID(nodeID)
+	monitors, err := s.repo.ListByNodeID(nodeID)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	for _, m := range monitors {
+		m.Stale = m.IsStale(now)
+	}
+	return monitors, nil
 }
 
 func (s *ServiceMonitorService) UpdateStatus(id, status string, consecutiveFailures int) error {

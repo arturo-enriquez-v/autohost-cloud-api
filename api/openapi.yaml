@@ -9139,6 +9139,11 @@ components:
               enum: [healthy, degraded, down, unknown]
             consecutive_failures:
               type: integer
+            stale:
+              type: boolean
+              description: |
+                Enabled, but no result for three intervals plus a minute (the node is offline or the agent stopped
+                checking), so `status` is out of date. Only computed when listing; `false` elsewhere.
             last_checked_at:
               type: [string, "null"]
               format: date-time
