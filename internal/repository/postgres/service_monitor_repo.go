@@ -192,7 +192,12 @@ func (r *ServiceMonitorRepository) ListEventsByMonitorID(monitorID string, limit
 const purgeEventsBatch = 10000
 
 func (r *ServiceMonitorRepository) PurgeEventsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
-	var total int64
+	// Auto-heal events are few (one per action); one statement is enough.
+	res, err := r.db.ExecContext(ctx, `DELETE FROM service_autoheal_events WHERE created_at < $1`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	total, _ := res.RowsAffected()
 	for {
 		res, err := r.db.ExecContext(ctx, `
 			DELETE FROM service_health_events
@@ -215,6 +220,29 @@ func (r *ServiceMonitorRepository) PurgeEventsBefore(ctx context.Context, cutoff
 			return total, nil
 		}
 	}
+}
+
+func (r *ServiceMonitorRepository) InsertAutoHealEvent(e *apps.AutoHealEvent) error {
+	_, err := r.db.NamedExec(`
+		INSERT INTO service_autoheal_events
+			(monitor_id, node_id, action, attempt, max_attempts, error, check_message, downtime_seconds, created_at)
+		VALUES
+			(:monitor_id, :node_id, :action, :attempt, :max_attempts, :error, :check_message, :downtime_seconds, :created_at)`,
+		e,
+	)
+	return err
+}
+
+func (r *ServiceMonitorRepository) ListAutoHealEvents(monitorID string, from time.Time, limit int) ([]*apps.AutoHealEvent, error) {
+	var events []*apps.AutoHealEvent
+	err := r.db.Select(&events, `
+		SELECT * FROM service_autoheal_events
+		WHERE monitor_id = $1 AND created_at >= $2
+		ORDER BY created_at DESC
+		LIMIT $3`,
+		monitorID, from, limit,
+	)
+	return events, err
 }
 
 func (r *ServiceMonitorRepository) UptimeHistory24h(monitorID string) ([]*apps.UptimePoint, error) {

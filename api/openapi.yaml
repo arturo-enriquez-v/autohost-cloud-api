@@ -6119,6 +6119,37 @@ paths:
         "500":
           $ref: "#/components/responses/InternalErrorJSON"
 
+  /v1/service-monitors/{id}/autoheal-events:
+    parameters:
+      - $ref: "#/components/parameters/MonitorIDPath"
+    get:
+      tags: [Service monitors]
+      operationId: listServiceMonitorAutoHealEvents
+      summary: List what auto-heal did for a monitor
+      description: |
+        Requires `monitors:read` on the node; other monitors answer `404`. Restarts and recreates (with the
+        command's error when it failed), when auto-heal gave up, and when the service recovered after an
+        auto-heal action. Newest first, at most 200.
+      parameters:
+        - $ref: "#/components/parameters/MonitorStatsRange"
+      responses:
+        "200":
+          description: Auto-heal events in the range.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ServiceAutoHealEvent"
+        "400":
+          $ref: "#/components/responses/BadRequestJSON"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/MonitorNotFound"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
   /v1/service-monitors/{id}/uptime:
     parameters:
       - $ref: "#/components/parameters/MonitorIDPath"
@@ -9331,6 +9362,41 @@ components:
                 description: Null when no check passed in the bucket.
               p95_latency_ms:
                 type: [number, "null"]
+
+    ServiceAutoHealEvent:
+      type: object
+      required: [id, monitor_id, node_id, action, attempt, max_attempts, error, check_message, downtime_seconds, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        monitor_id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum: [restart, recreate, gave_up, recovered]
+        attempt:
+          type: integer
+          description: For `restart` and `recreate`, which attempt it was.
+        max_attempts:
+          type: integer
+          description: For `restart` and `recreate`, the configured limit.
+        error:
+          type: string
+          description: For `restart` and `recreate`, why the command failed; empty when it succeeded.
+        check_message:
+          type: string
+          description: Detail of the check result that came with the event.
+        downtime_seconds:
+          type: [integer, "null"]
+          description: For `recovered`, time from the first failed check to recovery.
+        created_at:
+          type: string
+          format: date-time
 
     ServiceMonitorIncident:
       type: object

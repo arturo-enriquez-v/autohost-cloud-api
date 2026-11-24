@@ -54,6 +54,7 @@ func (h *ServiceMonitorHandler) Routes() chi.Router {
 	r.With(middleware.Auth).Post("/{id}/check", h.CheckNow)
 	r.With(middleware.Auth).Get("/{id}/stats", h.Stats)
 	r.With(middleware.Auth).Get("/{id}/incidents", h.Incidents)
+	r.With(middleware.Auth).Get("/{id}/autoheal-events", h.AutoHealEvents)
 	return r
 }
 
@@ -617,6 +618,25 @@ func (h *ServiceMonitorHandler) Incidents(w http.ResponseWriter, r *http.Request
 		return
 	}
 	response.RespondJSON(w, http.StatusOK, incidents)
+}
+
+// AutoHealEvents returns what auto-heal did for a monitor over a range, newest first.
+func (h *ServiceMonitorHandler) AutoHealEvents(w http.ResponseWriter, r *http.Request) {
+	monitor, ok := h.authorizeMonitorRead(w, r)
+	if !ok {
+		return
+	}
+	events, err := h.service.AutoHealEvents(monitor, statsRange(r))
+	if err != nil {
+		if errors.Is(err, apps.ErrInvalidStatsRange) {
+			response.RespondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		log.Printf("[ERROR] service monitor: auto-heal events %s: %v", monitor.ID, err)
+		response.RespondError(w, http.StatusInternalServerError, "could not fetch auto-heal events")
+		return
+	}
+	response.RespondJSON(w, http.StatusOK, events)
 }
 
 // ─── Uptime 24h ───────────────────────────────────────────────────────────────

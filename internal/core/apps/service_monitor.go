@@ -121,8 +121,13 @@ type ServiceMonitorRepository interface {
 	ListEventsByMonitorID(monitorID string, limit int) ([]*ServiceHealthEvent, error)
 	// Returns 24h of bucketed uptime data (one point per 5-minute window).
 	UptimeHistory24h(monitorID string) ([]*UptimePoint, error)
-	// PurgeEventsBefore deletes health events checked before cutoff and returns how many it deleted.
+	// PurgeEventsBefore deletes health and auto-heal events from before cutoff and returns how many it deleted.
 	PurgeEventsBefore(ctx context.Context, cutoff time.Time) (int64, error)
+
+	// Auto-heal events
+	InsertAutoHealEvent(e *AutoHealEvent) error
+	// ListAutoHealEvents returns a monitor's auto-heal events since from, newest first.
+	ListAutoHealEvents(monitorID string, from time.Time, limit int) ([]*AutoHealEvent, error)
 }
 
 // ServiceMonitorService contains business logic for service monitors.
@@ -206,7 +211,30 @@ func (s *ServiceMonitorService) UptimeHistory24h(monitorID string) ([]*UptimePoi
 	return s.repo.UptimeHistory24h(monitorID)
 }
 
-// PurgeOldEvents deletes health events older than HealthEventRetention.
+// maxAutoHealEvents bounds the auto-heal events returned for a range.
+const maxAutoHealEvents = 200
+
+func (s *ServiceMonitorService) RecordAutoHealEvent(e *AutoHealEvent) error {
+	return s.repo.InsertAutoHealEvent(e)
+}
+
+// AutoHealEvents returns what auto-heal did for a monitor over the named range (1d, 7d, 30d), newest first.
+func (s *ServiceMonitorService) AutoHealEvents(m *ServiceMonitor, rangeName string) ([]*AutoHealEvent, error) {
+	r, err := ParseStatsRange(rangeName)
+	if err != nil {
+		return nil, err
+	}
+	events, err := s.repo.ListAutoHealEvents(m.ID, time.Now().Add(-r.Window), maxAutoHealEvents)
+	if err != nil {
+		return nil, err
+	}
+	if events == nil {
+		events = []*AutoHealEvent{}
+	}
+	return events, nil
+}
+
+// PurgeOldEvents deletes health and auto-heal events older than HealthEventRetention.
 func (s *ServiceMonitorService) PurgeOldEvents(ctx context.Context) (int64, error) {
 	return s.repo.PurgeEventsBefore(ctx, time.Now().Add(-HealthEventRetention))
 }

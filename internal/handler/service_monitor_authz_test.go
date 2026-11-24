@@ -41,6 +41,10 @@ func (monitorRepo) UptimeHistory24h(string) ([]*apps.UptimePoint, error) {
 	return []*apps.UptimePoint{}, nil
 }
 func (monitorRepo) PurgeEventsBefore(context.Context, time.Time) (int64, error) { return 0, nil }
+func (monitorRepo) InsertAutoHealEvent(*apps.AutoHealEvent) error               { return nil }
+func (monitorRepo) ListAutoHealEvents(string, time.Time, int) ([]*apps.AutoHealEvent, error) {
+	return nil, nil
+}
 
 // statsRepo has no health events.
 type statsRepo struct{}
@@ -64,7 +68,7 @@ func TestServiceMonitorHandler_HistoryRequiresAccess(t *testing.T) {
 	r := chi.NewRouter()
 	r.Mount("/v1/service-monitors", h.Routes())
 
-	for _, path := range []string{"history", "uptime", "stats", "incidents"} {
+	for _, path := range []string{"history", "uptime", "stats", "incidents", "autoheal-events"} {
 		for _, tc := range []struct {
 			user string
 			want int
@@ -250,6 +254,8 @@ func TestServiceMonitorHandler_StatsRange(t *testing.T) {
 		{"/v1/service-monitors/mon-1/stats?range=1y", http.StatusBadRequest},
 		{"/v1/service-monitors/mon-1/incidents?range=7d", http.StatusOK},
 		{"/v1/service-monitors/mon-1/incidents?range=2h", http.StatusBadRequest},
+		{"/v1/service-monitors/mon-1/autoheal-events?range=30d", http.StatusOK},
+		{"/v1/service-monitors/mon-1/autoheal-events?range=1h", http.StatusBadRequest},
 	} {
 		if rec := serveMonitorRequest(r, http.MethodGet, tc.path, ""); rec.Code != tc.want {
 			t.Errorf("%s: status %d, want %d (body %s)", tc.path, rec.Code, tc.want, rec.Body.String())

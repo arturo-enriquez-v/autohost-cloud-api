@@ -434,6 +434,14 @@ func (s *NodeAgentServer) handleHealthCheckResult(nodeID string, r *pb.HealthChe
 			}
 		}
 
+		// Keep a history of what auto-heal did, compared with the state stored from the previous result.
+		if ev := apps.DetectAutoHealEvent(monitor.AutoHealState, json.RawMessage(autoHealStateStr), monitor.AutoHealConfig, time.Now()); ev != nil {
+			ev.MonitorID, ev.NodeID, ev.CheckMessage = monitor.ID, nodeID, r.GetMessage()
+			if err := s.serviceMonitorSvc.RecordAutoHealEvent(ev); err != nil {
+				log.Printf("[gRPC] record auto-heal event %s for monitor %s: %v", ev.Action, monitor.ID, err)
+			}
+		}
+
 		if err := s.serviceMonitorSvc.UpdateAutoHealState(monitor.ID, json.RawMessage(autoHealStateStr)); err != nil {
 			log.Printf("[gRPC] update auto heal state %s: %v", monitor.ID, err)
 		}
