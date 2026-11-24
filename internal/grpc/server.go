@@ -497,22 +497,39 @@ func (s *NodeAgentServer) handleHealthCheckResult(nodeID string, r *pb.HealthChe
 		log.Printf("[gRPC] record health event monitor %s: %v", monitor.ID, err)
 	}
 
-	// Send Telegram alert on state transition to down.
-	if newStatus == apps.StatusDown && monitor.NotifyTelegram {
-		go s.sendServiceDownAlert(nodeID, monitor)
+	// The agent reports every check while the service stays down; alert only when it goes down.
+	if monitor.NotifyTelegram && wentDown(monitor.Status, newStatus) {
+		go s.sendServiceDownAlert(nodeID, monitor, r.GetMessage())
 	}
 
 	log.Printf("[gRPC] health check %s (%s): %s latency=%dms",
 		monitor.ServiceName, monitor.ID, r.GetStatus(), r.GetLatencyMs())
 }
 
+// wentDown reports whether a monitor moved into the down status with this check.
+func wentDown(previous, current string) bool {
+	return current == apps.StatusDown && previous != apps.StatusDown
+}
+
 // sendServiceDownAlert sends a Telegram notification when a service goes down.
-func (s *NodeAgentServer) sendServiceDownAlert(nodeID string, monitor *apps.ServiceMonitor) {
+func (s *NodeAgentServer) sendServiceDownAlert(nodeID string, monitor *apps.ServiceMonitor, detail string) {
+	if s.alertSvc == nil {
+		return
+	}
 	alert, err := s.alertSvc.FindByNodeID(nodeID)
 	if err != nil || alert.TelegramBotToken == "" || alert.TelegramChatID == "" {
 		return
 	}
-	message := "🔴 Service DOWN: " + monitor.ServiceName + " on node " + nodeID
+	nodeLabel := nodeID
+	if s.nodeSvc != nil {
+		if n, err := s.nodeSvc.GetByID(nodeID); err == nil && n != nil && n.Hostname != "" {
+			nodeLabel = n.Hostname
+		}
+	}
+	message := "🔴 Service DOWN: " + monitor.ServiceName + " on " + nodeLabel
+	if detail != "" {
+		message += "\n" + detail
+	}
 	platform.SendTelegramMessage(alert.TelegramBotToken, alert.TelegramChatID, message) //nolint:errcheck
 }
 
