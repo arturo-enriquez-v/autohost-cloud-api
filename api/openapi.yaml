@@ -6077,14 +6077,21 @@ paths:
                 type: array
                 items:
                   type: object
-                  required: [bucket, status]
+                  required: [bucket, status, up, down]
                   properties:
                     bucket:
                       type: string
                       format: date-time
                     status:
                       type: string
+                      description: '`down` if any check in the window failed.'
                       enum: [up, down, no_data]
+                    up:
+                      type: integer
+                      description: Checks that passed in the window.
+                    down:
+                      type: integer
+                      description: Checks that failed in the window.
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -9178,6 +9185,12 @@ components:
               enum: [healthy, degraded, down, unknown]
             consecutive_failures:
               type: integer
+            last_message:
+              type: string
+              description: 'Detail of the latest check (e.g. `HTTP 200`, `container state: exited`). Only set when listing.'
+            last_latency_ms:
+              type: integer
+              description: Duration of the latest check. Only set when listing.
             stale:
               type: boolean
               description: |

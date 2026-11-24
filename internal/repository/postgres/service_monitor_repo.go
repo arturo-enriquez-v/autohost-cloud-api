@@ -120,8 +120,19 @@ func (r *ServiceMonitorRepository) FindByID(id string) (*apps.ServiceMonitor, er
 
 func (r *ServiceMonitorRepository) ListByNodeID(nodeID string) ([]*apps.ServiceMonitor, error) {
 	var monitors []*apps.ServiceMonitor
-	err := r.db.Select(&monitors,
-		`SELECT * FROM service_monitors WHERE node_id = $1 ORDER BY created_at ASC`,
+	err := r.db.Select(&monitors, `
+		SELECT m.*,
+		       COALESCE(e.message, '') AS last_message,
+		       COALESCE(e.latency_ms, 0) AS last_latency_ms
+		FROM service_monitors m
+		LEFT JOIN LATERAL (
+			SELECT message, latency_ms FROM service_health_events
+			WHERE monitor_id = m.id
+			ORDER BY checked_at DESC
+			LIMIT 1
+		) e ON TRUE
+		WHERE m.node_id = $1
+		ORDER BY m.created_at ASC`,
 		nodeID,
 	)
 	if err != nil {
@@ -228,7 +239,9 @@ func (r *ServiceMonitorRepository) UptimeHistory24h(monitorID string) ([]*apps.U
 				date_trunc('minute', checked_at) - (EXTRACT(MINUTE FROM checked_at)::int % 5) * INTERVAL '1 minute' AS bucket,
 				CASE WHEN bool_and(status = 'up') THEN 'up'
 				     ELSE 'down'
-				END AS status
+				END AS status,
+				count(*) FILTER (WHERE status = 'up') AS up,
+				count(*) FILTER (WHERE status <> 'up') AS down
 			FROM service_health_events
 			WHERE monitor_id = $1
 			  AND checked_at >= NOW() - INTERVAL '24 hours'
@@ -236,7 +249,9 @@ func (r *ServiceMonitorRepository) UptimeHistory24h(monitorID string) ([]*apps.U
 		)
 		SELECT
 			to_char(b.bucket AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS bucket,
-			COALESCE(a.status, 'no_data') AS status
+			COALESCE(a.status, 'no_data') AS status,
+			COALESCE(a.up, 0) AS up,
+			COALESCE(a.down, 0) AS down
 		FROM buckets_truncated b
 		LEFT JOIN agg a ON a.bucket = b.bucket
 		ORDER BY b.bucket ASC`,

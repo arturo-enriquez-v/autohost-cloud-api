@@ -54,6 +54,9 @@ type ServiceMonitor struct {
 	UpdatedAt           time.Time       `db:"updated_at"           json:"updated_at"`
 	AutoHealConfig      json.RawMessage `db:"auto_heal_config"     json:"auto_heal_config,omitempty"`
 	AutoHealState       json.RawMessage `db:"auto_heal_state"      json:"auto_heal_state,omitempty"`
+	// LastMessage and LastLatencyMs come from the latest check result; only set when listing.
+	LastMessage   string `db:"last_message"    json:"last_message"`
+	LastLatencyMs int    `db:"last_latency_ms" json:"last_latency_ms"`
 	// Stale is set on reads: the monitor is enabled but no result arrived recently, so Status is out of
 	// date (the node is offline or the agent stopped checking).
 	Stale bool `db:"-" json:"stale"`
@@ -98,7 +101,9 @@ type ServiceHealthEvent struct {
 // UptimePoint is a 5-minute bucketed aggregate used to render the uptime bar.
 type UptimePoint struct {
 	Bucket string `db:"bucket" json:"bucket"` // ISO timestamp
-	Status string `db:"status" json:"status"` // "up" | "down" | "no_data"
+	Status string `db:"status" json:"status"` // "up" | "down" (any check failed) | "no_data"
+	Up     int    `db:"up"     json:"up"`     // checks that passed in the bucket
+	Down   int    `db:"down"   json:"down"`   // checks that failed in the bucket
 }
 
 // ServiceMonitorRepository defines persistence operations for service monitors and their events.
