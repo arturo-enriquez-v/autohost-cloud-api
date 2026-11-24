@@ -57,7 +57,7 @@ func TestUpsertMonitorRequest_UnmarshalAutoHealConfig(t *testing.T) {
 }
 
 func TestCreateHandler_Unauthorized(t *testing.T) {
-	h := NewServiceMonitorHandler(nil, nil)
+	h := NewServiceMonitorHandler(nil, nil, nil)
 	req := httptest.NewRequest("POST", "/service-monitors", bytes.NewReader([]byte("{}")))
 	w := httptest.NewRecorder()
 
@@ -71,7 +71,7 @@ func TestCreateHandler_Unauthorized(t *testing.T) {
 // Auto-heal "recreate" runs "docker compose up" as root on the node, so it requires terminal:exec and
 // validated arguments.
 func TestAuthorizeAutoHeal(t *testing.T) {
-	h := NewServiceMonitorHandler(nil, nil)
+	h := NewServiceMonitorHandler(nil, nil, nil)
 	h.SetRBACService(newOwnerRBAC("owner", "node-1"), nil)
 
 	recreate := func(composePath, service string) json.RawMessage {

@@ -10,9 +10,8 @@ import (
 	"time"
 )
 
-// HealthEventRetention is how long health check results are kept. The UI reads the last 24 hours; the rest
-// is there for GET /v1/service-monitors/{id}/history.
-const HealthEventRetention = 7 * 24 * time.Hour
+// HealthEventRetention is how long health check results are kept: the longest stats range (30 days).
+const HealthEventRetention = 30 * 24 * time.Hour
 
 // ErrServiceMonitorNotFound is returned when no service monitor exists with the given ID.
 var ErrServiceMonitorNotFound = errors.New("service monitor not found")

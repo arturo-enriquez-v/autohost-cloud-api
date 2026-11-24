@@ -6061,6 +6061,64 @@ paths:
         "500":
           $ref: "#/components/responses/InternalErrorJSON"
 
+  /v1/service-monitors/{id}/stats:
+    parameters:
+      - $ref: "#/components/parameters/MonitorIDPath"
+    get:
+      tags: [Service monitors]
+      operationId: getServiceMonitorStats
+      summary: Get a monitor's checks aggregated over a range
+      description: |
+        Requires `monitors:read` on the node; other monitors answer `404`. Buckets are 15 minutes for `1d`,
+        1 hour for `7d` and 6 hours for `30d`, aligned to UTC. Latencies only count passed checks.
+      parameters:
+        - $ref: "#/components/parameters/MonitorStatsRange"
+      responses:
+        "200":
+          description: Summary and buckets, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceMonitorStats"
+        "400":
+          $ref: "#/components/responses/BadRequestJSON"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/MonitorNotFound"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/service-monitors/{id}/incidents:
+    parameters:
+      - $ref: "#/components/parameters/MonitorIDPath"
+    get:
+      tags: [Service monitors]
+      operationId: listServiceMonitorIncidents
+      summary: List a monitor's incidents over a range
+      description: |
+        Requires `monitors:read` on the node; other monitors answer `404`. An incident is a run of at least
+        `failure_threshold` failed checks in a row (the monitor was down). Newest first, at most 100.
+      parameters:
+        - $ref: "#/components/parameters/MonitorStatsRange"
+      responses:
+        "200":
+          description: Incidents that started in the range.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ServiceMonitorIncident"
+        "400":
+          $ref: "#/components/responses/BadRequestJSON"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/MonitorNotFound"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
   /v1/service-monitors/{id}/uptime:
     parameters:
       - $ref: "#/components/parameters/MonitorIDPath"
@@ -6346,6 +6404,14 @@ components:
       description: Same ingestion token, for clients that prefer an API key header.
 
   parameters:
+    MonitorStatsRange:
+      name: range
+      in: query
+      description: Time window. Check results are kept for 30 days.
+      schema:
+        type: string
+        enum: [1d, 7d, 30d]
+        default: 1d
     LogDiagnosticIDPath:
       name: id
       in: path
@@ -9213,6 +9279,78 @@ components:
             updated_at:
               type: string
               format: date-time
+
+    ServiceMonitorStats:
+      type: object
+      required: [range, from, bucket_seconds, summary, buckets]
+      properties:
+        range:
+          type: string
+          enum: [1d, 7d, 30d]
+        from:
+          type: string
+          format: date-time
+          description: Start of the window.
+        bucket_seconds:
+          type: integer
+        summary:
+          type: object
+          required: [checks, passed, failed, uptime_percent, avg_latency_ms, p95_latency_ms, incidents]
+          properties:
+            checks:
+              type: integer
+            passed:
+              type: integer
+            failed:
+              type: integer
+            uptime_percent:
+              type: [number, "null"]
+              description: Share of passed checks; null without checks.
+            avg_latency_ms:
+              type: [number, "null"]
+            p95_latency_ms:
+              type: [number, "null"]
+            incidents:
+              type: integer
+        buckets:
+          type: array
+          items:
+            type: object
+            required: [bucket, passed, failed, avg_latency_ms, p95_latency_ms]
+            properties:
+              bucket:
+                type: string
+                format: date-time
+                description: Start of the bucket.
+              passed:
+                type: integer
+              failed:
+                type: integer
+              avg_latency_ms:
+                type: [number, "null"]
+                description: Null when no check passed in the bucket.
+              p95_latency_ms:
+                type: [number, "null"]
+
+    ServiceMonitorIncident:
+      type: object
+      required: [started_at, last_failed_at, resolved_at, failed_checks, message]
+      properties:
+        started_at:
+          type: string
+          format: date-time
+        last_failed_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: [string, "null"]
+          format: date-time
+          description: First passed check after the incident; null while it lasts.
+        failed_checks:
+          type: integer
+        message:
+          type: string
+          description: Detail of the first failed check.
 
     ServiceHealthEvent:
       type: object

@@ -53,3 +53,56 @@ func TestServiceMonitor_IsStale(t *testing.T) {
 		}
 	}
 }
+
+// fakeStatsRepo returns fixed results and records the arguments.
+type fakeStatsRepo struct {
+	from      time.Time
+	bucket    time.Duration
+	threshold int
+}
+
+func (r *fakeStatsRepo) StatsBuckets(_ string, from time.Time, bucket time.Duration) ([]*MonitorStatsBucket, error) {
+	r.from, r.bucket = from, bucket
+	return nil, nil
+}
+func (r *fakeStatsRepo) StatsSummary(string, time.Time) (*MonitorStatsSummary, error) {
+	return &MonitorStatsSummary{Checks: 200, Passed: 199, Failed: 1}, nil
+}
+func (r *fakeStatsRepo) Incidents(_ string, _ time.Time, threshold, _ int) ([]*MonitorIncident, error) {
+	r.threshold = threshold
+	return []*MonitorIncident{{}, {}}, nil
+}
+
+func TestMonitorStats(t *testing.T) {
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	repo := &fakeStatsRepo{}
+	svc := NewMonitorStatsService(repo)
+	svc.now = func() time.Time { return now }
+
+	stats, err := svc.Stats(&ServiceMonitor{ID: "mon-1", FailureThreshold: 5}, "7d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo.from != now.Add(-7*24*time.Hour) || repo.bucket != time.Hour || stats.BucketSeconds != 3600 {
+		t.Errorf("7d range: from %s, bucket %s", repo.from, repo.bucket)
+	}
+	if repo.threshold != 5 {
+		t.Errorf("incidents use threshold %d, want the monitor's 5", repo.threshold)
+	}
+	if p := stats.Summary.UptimePercent; p == nil || *p != 99.5 {
+		t.Errorf("uptime = %v, want 99.5", p)
+	}
+	if stats.Summary.Incidents != 2 || stats.Buckets == nil {
+		t.Errorf("incidents = %d, buckets nil = %v", stats.Summary.Incidents, stats.Buckets == nil)
+	}
+
+	if _, err := svc.Stats(&ServiceMonitor{ID: "mon-1"}, "90d"); err != ErrInvalidStatsRange {
+		t.Errorf("90d: err = %v, want ErrInvalidStatsRange", err)
+	}
+	// Every range must fit in the retention, or its oldest buckets would always be empty.
+	for name, r := range statsRanges {
+		if r.Window > HealthEventRetention {
+			t.Errorf("range %s (%s) is longer than the retention (%s)", name, r.Window, HealthEventRetention)
+		}
+	}
+}

@@ -28,13 +28,14 @@ import (
 // ServiceMonitorHandler handles CRUD for service monitors and exposes health event history.
 type ServiceMonitorHandler struct {
 	service *apps.ServiceMonitorService
+	stats   *apps.MonitorStatsService
 	grpc    *grpcserver.NodeAgentServer
 	nodeSvc *node.NodeService
 	rbac    *identity.RBACService
 }
 
-func NewServiceMonitorHandler(service *apps.ServiceMonitorService, grpc *grpcserver.NodeAgentServer) *ServiceMonitorHandler {
-	return &ServiceMonitorHandler{service: service, grpc: grpc}
+func NewServiceMonitorHandler(service *apps.ServiceMonitorService, stats *apps.MonitorStatsService, grpc *grpcserver.NodeAgentServer) *ServiceMonitorHandler {
+	return &ServiceMonitorHandler{service: service, stats: stats, grpc: grpc}
 }
 
 func (h *ServiceMonitorHandler) SetRBACService(rbac *identity.RBACService, nodeSvc *node.NodeService) {
@@ -51,6 +52,8 @@ func (h *ServiceMonitorHandler) Routes() chi.Router {
 	r.With(middleware.Auth).Get("/{id}/history", h.EventHistory)
 	r.With(middleware.Auth).Get("/{id}/uptime", h.Uptime24h)
 	r.With(middleware.Auth).Post("/{id}/check", h.CheckNow)
+	r.With(middleware.Auth).Get("/{id}/stats", h.Stats)
+	r.With(middleware.Auth).Get("/{id}/incidents", h.Incidents)
 	return r
 }
 
@@ -566,6 +569,54 @@ func (h *ServiceMonitorHandler) EventHistory(w http.ResponseWriter, r *http.Requ
 		events = []*apps.ServiceHealthEvent{}
 	}
 	response.RespondJSON(w, http.StatusOK, events)
+}
+
+// ─── Stats & incidents ────────────────────────────────────────────────────────
+
+// statsRange reads the "range" query parameter (1d, 7d or 30d; default 1d).
+func statsRange(r *http.Request) string {
+	if v := r.URL.Query().Get("range"); v != "" {
+		return v
+	}
+	return "1d"
+}
+
+// Stats returns a monitor's checks aggregated over a range, for charts.
+func (h *ServiceMonitorHandler) Stats(w http.ResponseWriter, r *http.Request) {
+	monitor, ok := h.authorizeMonitorRead(w, r)
+	if !ok {
+		return
+	}
+	stats, err := h.stats.Stats(monitor, statsRange(r))
+	if err != nil {
+		if errors.Is(err, apps.ErrInvalidStatsRange) {
+			response.RespondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		log.Printf("[ERROR] service monitor: stats %s: %v", monitor.ID, err)
+		response.RespondError(w, http.StatusInternalServerError, "could not fetch monitor stats")
+		return
+	}
+	response.RespondJSON(w, http.StatusOK, stats)
+}
+
+// Incidents returns the times a monitor was down over a range, newest first.
+func (h *ServiceMonitorHandler) Incidents(w http.ResponseWriter, r *http.Request) {
+	monitor, ok := h.authorizeMonitorRead(w, r)
+	if !ok {
+		return
+	}
+	incidents, err := h.stats.Incidents(monitor, statsRange(r))
+	if err != nil {
+		if errors.Is(err, apps.ErrInvalidStatsRange) {
+			response.RespondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		log.Printf("[ERROR] service monitor: incidents %s: %v", monitor.ID, err)
+		response.RespondError(w, http.StatusInternalServerError, "could not fetch monitor incidents")
+		return
+	}
+	response.RespondJSON(w, http.StatusOK, incidents)
 }
 
 // ─── Uptime 24h ───────────────────────────────────────────────────────────────

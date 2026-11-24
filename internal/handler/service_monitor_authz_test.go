@@ -42,16 +42,29 @@ func (monitorRepo) UptimeHistory24h(string) ([]*apps.UptimePoint, error) {
 }
 func (monitorRepo) PurgeEventsBefore(context.Context, time.Time) (int64, error) { return 0, nil }
 
-// A monitor's history and uptime are only visible to users who can read monitors on its node.
+// statsRepo has no health events.
+type statsRepo struct{}
+
+func (statsRepo) StatsBuckets(string, time.Time, time.Duration) ([]*apps.MonitorStatsBucket, error) {
+	return nil, nil
+}
+func (statsRepo) StatsSummary(string, time.Time) (*apps.MonitorStatsSummary, error) {
+	return &apps.MonitorStatsSummary{}, nil
+}
+func (statsRepo) Incidents(string, time.Time, int, int) ([]*apps.MonitorIncident, error) {
+	return nil, nil
+}
+
+// A monitor's history, uptime, stats and incidents are only visible to users who can read monitors on its node.
 func TestServiceMonitorHandler_HistoryRequiresAccess(t *testing.T) {
 	owner := "user-1"
 	nodeRepo := &MockNodeRepo{nodes: map[string]*node.Node{"node-123": {ID: "node-123", OwnerID: &owner}}}
-	h := handler.NewServiceMonitorHandler(apps.NewServiceMonitorService(monitorRepo{}), nil)
+	h := handler.NewServiceMonitorHandler(apps.NewServiceMonitorService(monitorRepo{}), apps.NewMonitorStatsService(statsRepo{}), nil)
 	h.SetRBACService(ownerRBAC(), node.NewNodeService(nodeRepo))
 	r := chi.NewRouter()
 	r.Mount("/v1/service-monitors", h.Routes())
 
-	for _, path := range []string{"history", "uptime"} {
+	for _, path := range []string{"history", "uptime", "stats", "incidents"} {
 		for _, tc := range []struct {
 			user string
 			want int
@@ -87,7 +100,7 @@ func (r storedMonitorRepo) FindByID(id string) (*apps.ServiceMonitor, error) {
 func newMonitorRouter(repo apps.ServiceMonitorRepository) chi.Router {
 	owner := "user-1"
 	nodeRepo := &MockNodeRepo{nodes: map[string]*node.Node{"node-123": {ID: "node-123", OwnerID: &owner}}}
-	h := handler.NewServiceMonitorHandler(apps.NewServiceMonitorService(repo), nil)
+	h := handler.NewServiceMonitorHandler(apps.NewServiceMonitorService(repo), apps.NewMonitorStatsService(statsRepo{}), nil)
 	h.SetRBACService(ownerRBAC(), node.NewNodeService(nodeRepo))
 	r := chi.NewRouter()
 	r.Mount("/v1/service-monitors", h.Routes())
@@ -224,4 +237,22 @@ func (r enabledRepo) FindByID(id string) (*apps.ServiceMonitor, error) {
 		m.Enabled = true
 	}
 	return m, err
+}
+
+func TestServiceMonitorHandler_StatsRange(t *testing.T) {
+	r := newMonitorRouter(storedMonitorRepo{state: json.RawMessage(`{}`)})
+	for _, tc := range []struct {
+		path string
+		want int
+	}{
+		{"/v1/service-monitors/mon-1/stats", http.StatusOK},
+		{"/v1/service-monitors/mon-1/stats?range=30d", http.StatusOK},
+		{"/v1/service-monitors/mon-1/stats?range=1y", http.StatusBadRequest},
+		{"/v1/service-monitors/mon-1/incidents?range=7d", http.StatusOK},
+		{"/v1/service-monitors/mon-1/incidents?range=2h", http.StatusBadRequest},
+	} {
+		if rec := serveMonitorRequest(r, http.MethodGet, tc.path, ""); rec.Code != tc.want {
+			t.Errorf("%s: status %d, want %d (body %s)", tc.path, rec.Code, tc.want, rec.Body.String())
+		}
+	}
 }
