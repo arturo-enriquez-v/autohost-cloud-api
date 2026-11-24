@@ -6,12 +6,17 @@ PLATFORMS := linux/amd64 linux/arm64
 AIR       := $(shell go env GOPATH)/bin/air
 AGENT_DIR := ../autohost-agent
 
+# Scalar Registry entry behind the hosted MCP server (mcp.scalar.com/@<namespace>/<slug>).
+SCALAR           := npx -y @scalar/cli@2.21.0
+SCALAR_NAMESPACE ?= default-team-vpudn
+SCALAR_SLUG      ?= autohost-cloud-api
+
 # free-ports <ports>: kill whatever listens on them (a previous dev server).
 free-ports = for p in $(1); do pids=$$(lsof -t -i :$$p 2>/dev/null); [ -z "$$pids" ] || kill -9 $$pids; done
 
 .PHONY: help dev dev-rest dev-grpc dev-split services services-down \
 	migrate-up migrate-down migrate-version migrate-force \
-	proto build build-all test docker docker-multiarch clean
+	proto build build-all test docker docker-multiarch clean mcp-update
 
 help: ## Show this help
 	@awk 'BEGIN{FS=":.*## "} /^##@/{printf "\n\033[1m%s\033[0m\n", substr($$0,5)} \
@@ -82,6 +87,25 @@ docker-multiarch: ## Build the Docker image for amd64 and arm64
 
 clean: ## Remove build output
 	rm -rf bin tmp
+
+##@ API docs
+
+mcp-update: ## Check and publish api/openapi.yaml to Scalar, updating the MCP server (VERSION=x.y.z, default next patch)
+	@echo "==> Checking the spec"
+	@go test ./internal/server -run 'TestOpenAPI' -count=1 >/dev/null || { echo "OpenAPI tests failed (go test ./internal/server -run TestOpenAPI)"; exit 1; }
+	@npx --no-install @redocly/cli lint api/openapi.yaml >/dev/null 2>&1 || { echo "Spec lint failed (npx @redocly/cli lint api/openapi.yaml)"; exit 1; }
+	@current=$$($(SCALAR) registry list --namespace $(SCALAR_NAMESPACE) --json --no-input | \
+		node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const e=JSON.parse(s).find(x=>x.slug===process.argv[1]);console.log(e?e.version:"")})' $(SCALAR_SLUG)); \
+	version="$(VERSION)"; \
+	if [ -z "$$version" ]; then \
+		[[ "$$current" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$$ ]] || { echo "Cannot bump registry version '$$current'; pass VERSION=x.y.z"; exit 1; }; \
+		version="$${BASH_REMATCH[1]}.$${BASH_REMATCH[2]}.$$(( BASH_REMATCH[3] + 1 ))"; \
+	fi; \
+	[[ "$$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$$ ]] || { echo "Invalid version '$$version' (expected x.y.z)"; exit 1; }; \
+	echo "==> Publishing $(SCALAR_NAMESPACE)/$(SCALAR_SLUG) $${current:-none} -> $$version"; \
+	$(SCALAR) registry publish api/openapi.yaml --namespace $(SCALAR_NAMESPACE) --slug $(SCALAR_SLUG) \
+		--version "$$version" --private --no-input && \
+	echo "Published $$version: https://mcp.scalar.com/@$(SCALAR_NAMESPACE)/$(SCALAR_SLUG) now serves it"
 
 ##@ Lab (runs in ../autohost-agent, see `make -C ../autohost-agent help`)
 

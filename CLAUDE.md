@@ -14,6 +14,7 @@ go vet ./...
 make migrate-up          # aplicar migraciones
 make proto               # regenerar gRPC desde proto/ (y actualizar la copia del agente)
 npx --no-install @redocly/cli lint api/openapi.yaml       # lint de la spec (excepciones en .redocly.lint-ignore.yaml)
+make mcp-update          # valida la spec y la publica en Scalar: actualiza el MCP (VERSION=x.y.z, por defecto el siguiente parche)
 ```
 
 `SERVICE_MODE` = `all` | `http` | `grpc`. `API_DOCS_ENABLED=true` sirve `/docs` (Scalar) y `/openapi.yaml`.
