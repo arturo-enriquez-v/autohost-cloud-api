@@ -54,6 +54,8 @@ PORT=8080
 GRPC_PORT=9090
 DATABASE_URL=postgres://autohost:autohost@localhost:5432/autohost?sslmode=disable
 JWT_SECRET=supersecret            # cambiar en producción
+SECRETS_ENCRYPTION_KEY=           # cifra credenciales de conectores: openssl rand -hex 32 (no perderla)
+CONNECTORS_ALLOW_PRIVATE_NETWORKS=false  # true: los conectores pueden llamar a la LAN/VPN desde la API
 ACCESS_TOKEN_TTL=15m
 REFRESH_TOKEN_TTL=24h
 FRONTEND_URL=http://localhost:3000

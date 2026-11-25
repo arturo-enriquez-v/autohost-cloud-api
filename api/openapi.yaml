@@ -81,6 +81,16 @@ tags:
       Groups of nodes. Members of a project get access to its nodes through their membership (`all_nodes`
       with a default role) and/or explicit per-node grants. Only admins create projects; a project can be
       managed (members, nodes) by its owner or any admin.
+  - name: Connectors
+    description: |
+      Saved HTTP requests to external APIs, defined from the panel and shared within a project. A `query`
+      connector reads data for widgets (results can be cached); an `action` connector triggers changes
+      and every run is recorded. Permissions come from the project membership: `connectors:read` (viewer),
+      `connectors:run` (operator) and `connectors:manage` (editor); the owner and admins have all of them.
+      Requests leave from the API through a client that blocks loopback, link-local, cloud metadata and,
+      unless `CONNECTORS_ALLOW_PRIVATE_NETWORKS=true`, private addresses; redirects are only followed
+      within the same origin. Credentials are stored encrypted with `SECRETS_ENCRYPTION_KEY` and are never
+      returned. Errors are JSON.
   - name: Containers
     description: Docker containers on a node, listed once or streamed live from the agent.
   - name: Logs
@@ -5878,6 +5888,286 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /v1/connectors:
+    get:
+      tags: [Connectors]
+      operationId: listConnectors
+      summary: List connectors
+      description: |
+        Connectors of every project where the caller has `connectors:read`. `url`, `headers`, `body` and the
+        auth settings other than `type` are only filled in for callers with `connectors:manage`.
+      parameters:
+        - name: project_id
+          in: query
+          required: false
+          description: Only connectors of this project (an empty list if the caller cannot read it).
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The visible connectors.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Connector"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+    post:
+      tags: [Connectors]
+      operationId: createConnector
+      summary: Create a connector
+      description: |
+        Requires `connectors:manage` on `project_id`. A project the caller cannot see answers `404`.
+        `secret` is encrypted before it is stored and never returned; storing one needs
+        `SECRETS_ENCRYPTION_KEY` on the server (`503` otherwise).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectorRequest"
+      responses:
+        "201":
+          description: Connector created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Connector"
+        "400":
+          $ref: "#/components/responses/ConnectorBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          $ref: "#/components/responses/ProjectNotFoundJSON"
+        "409":
+          $ref: "#/components/responses/ConnectorNameExists"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+        "503":
+          $ref: "#/components/responses/SecretsNotConfigured"
+
+  /v1/connectors/test:
+    post:
+      tags: [Connectors]
+      operationId: testConnector
+      summary: Run an unsaved connector definition
+      description: |
+        Requires `connectors:manage` on `project_id`. Sends the request once, without caching or recording
+        it, so the panel can try a definition and pick fields from the real response. With `connector_id`
+        (a connector of the same project) and no `secret`, the stored credentials are used, but only if the
+        URL keeps its scheme and host. Rate limited to 60 runs and tests per user per minute.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/ConnectorRequest"
+                - type: object
+                  properties:
+                    connector_id:
+                      type: string
+                      format: uuid
+                      description: Connector being edited, to test with its stored credentials.
+                    params:
+                      $ref: "#/components/schemas/ConnectorRunParams"
+      responses:
+        "200":
+          description: The external API answered (any status code; see `ok` and `status_code`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorResult"
+        "400":
+          $ref: "#/components/responses/ConnectorBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          description: The project or `connector_id` is not visible to the caller, or belongs to another project.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+        "502":
+          $ref: "#/components/responses/ConnectorUpstreamError"
+
+  /v1/connectors/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ConnectorIDPath"
+    get:
+      tags: [Connectors]
+      operationId: getConnector
+      summary: Get a connector
+      description: |
+        Requires `connectors:read` on the connector's project. Request details are only filled in for
+        callers with `connectors:manage` (see `listConnectors`).
+      responses:
+        "200":
+          description: The connector.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Connector"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ConnectorNotFound"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+    put:
+      tags: [Connectors]
+      operationId: updateConnector
+      summary: Update a connector
+      description: |
+        Requires `connectors:manage`. Replaces the definition; `project_id` is ignored (a connector cannot
+        move between projects). `secret`: omitted keeps the stored one, `""` clears it, any other value
+        replaces it. Changing the URL's scheme, host or port while credentials are stored requires sending
+        `secret` again (`400`), so the stored credentials cannot be sent to another server. `auth.type`
+        `none` clears them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectorRequest"
+      responses:
+        "200":
+          description: The updated connector.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Connector"
+        "400":
+          $ref: "#/components/responses/ConnectorBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          $ref: "#/components/responses/ConnectorNotFound"
+        "409":
+          $ref: "#/components/responses/ConnectorNameExists"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+        "503":
+          $ref: "#/components/responses/SecretsNotConfigured"
+    delete:
+      tags: [Connectors]
+      operationId: deleteConnector
+      summary: Delete a connector
+      description: Requires `connectors:manage`. Also deletes its run history.
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          $ref: "#/components/responses/ConnectorNotFound"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/connectors/{id}/run:
+    parameters:
+      - $ref: "#/components/parameters/ConnectorIDPath"
+    post:
+      tags: [Connectors]
+      operationId: runConnector
+      summary: Run a connector
+      description: |
+        `query` connectors need `connectors:read`; `action` connectors need `connectors:run` and every run
+        is recorded (see `listConnectorRuns`). Query results are cached for `cache_ttl_seconds` per
+        parameter values (`cached: true`). Callers without `connectors:manage` do not get `body` when the
+        connector has a response mapping, only `mapped`. Rate limited to 60 runs and tests per user per
+        minute.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                params:
+                  $ref: "#/components/schemas/ConnectorRunParams"
+      responses:
+        "200":
+          description: The external API answered (any status code; see `ok` and `status_code`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorResult"
+        "400":
+          $ref: "#/components/responses/ConnectorBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          $ref: "#/components/responses/ConnectorNotFound"
+        "409":
+          description: The connector uses authentication but has no credentials stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: the connector has no credentials set
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+        "502":
+          $ref: "#/components/responses/ConnectorUpstreamError"
+
+  /v1/connectors/{id}/runs:
+    parameters:
+      - $ref: "#/components/parameters/ConnectorIDPath"
+    get:
+      tags: [Connectors]
+      operationId: listConnectorRuns
+      summary: List an action connector's runs
+      description: |
+        Requires `connectors:read`. Latest runs first; the last 200 per connector are kept. Only `action`
+        connectors record runs. Parameters marked `sensitive` are shown as `***`.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: The runs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ConnectorRun"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ConnectorNotFound"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
   /v1/service-monitors:
     get:
       tags: [Service monitors]
@@ -6451,6 +6741,14 @@ components:
       schema:
         type: string
         format: uuid
+    ConnectorIDPath:
+      name: id
+      in: path
+      required: true
+      description: Connector ID.
+      schema:
+        type: string
+        format: uuid
     MonitorIDPath:
       name: id
       in: path
@@ -6569,6 +6867,58 @@ components:
         format: uuid
 
   responses:
+    ConnectorNotFound:
+      description: Unknown connector, or one in a project where the caller lacks `connectors:read`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: connector not found
+    ProjectNotFoundJSON:
+      description: Unknown project, or one the caller cannot see.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: project not found
+    ConnectorBadRequest:
+      description: |
+        Invalid JSON, definition or parameter values (the message says which), or the URL's scheme or host
+        changed while credentials are stored and `secret` was not sent again.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "invalid connector: placeholders are not allowed in the url host"
+    ConnectorNameExists:
+      description: Another connector of the project has this name.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: a connector with this name already exists in the project
+    SecretsNotConfigured:
+      description: "`SECRETS_ENCRYPTION_KEY` is not set on the server, so credentials cannot be stored or used."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: credential storage is not configured on the server
+    ConnectorUpstreamError:
+      description: |
+        The external API could not be reached: blocked address, DNS failure, connection error, TLS error,
+        timeout or too many redirects. The message says which, without internal details.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "could not reach the external API: the destination address is not allowed"
     MonitorNotFound:
       description: Unknown monitor, or one the caller cannot read.
       content:
@@ -9269,6 +9619,265 @@ components:
           type: boolean
         auto_heal_config:
           $ref: "#/components/schemas/AutoHealConfig"
+
+    ConnectorParam:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+          description: Referenced as `{{name}}` in the URL path or query, header values and body.
+        label:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [string, number, boolean]
+        required:
+          type: boolean
+        default:
+          type: string
+          description: Used when the caller does not send a value; must match `type`.
+        sensitive:
+          type: boolean
+          description: Masked as `***` in the run history.
+
+    ConnectorAuth:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [none, bearer, api_key, basic]
+          description: |
+            How the stored secret is sent: `bearer` as `Authorization: Bearer <secret>`, `api_key` in the
+            header or query parameter `name`, `basic` with `username` and the secret as password.
+        name:
+          type: string
+          description: Header or query parameter name (`api_key`).
+        in:
+          type: string
+          enum: [header, query]
+          description: Where the API key goes (`api_key`, default `header`).
+        username:
+          type: string
+          description: Basic auth user name.
+
+    ConnectorResponseMapping:
+      type: object
+      description: |
+        Turns a JSON response into rows. `root` selects the list of items (or a single value); each field's
+        `path` is read from every item. Paths use dots and brackets: `data.items`, `results[0].id`,
+        `items[-1]`, `tags[]` (every item). Without fields there is one `value` column.
+      properties:
+        root:
+          type: string
+          maxLength: 256
+        fields:
+          type: array
+          maxItems: 30
+          items:
+            type: object
+            required: [label, path]
+            properties:
+              label:
+                type: string
+              path:
+                type: string
+        view:
+          type: string
+          enum: [json, table, value, list]
+          default: json
+          description: How the panel shows the result.
+
+    ConnectorRequest:
+      type: object
+      required: [project_id, name, kind, method, url]
+      properties:
+        project_id:
+          type: string
+          format: uuid
+          description: Ignored on update.
+        name:
+          type: string
+          maxLength: 100
+          description: Unique within the project.
+        description:
+          type: string
+          maxLength: 500
+        kind:
+          type: string
+          enum: [query, action]
+        method:
+          type: string
+          enum: [GET, POST, PUT, PATCH, DELETE, HEAD]
+        url:
+          type: string
+          maxLength: 2048
+          description: |
+            Absolute `http`/`https` URL. `{{param}}` placeholders are allowed in the path (values are
+            path-escaped) and the query (query-escaped), never in the host or port. No credentials in the
+            URL: use `auth`.
+          examples: ["https://api.example.com/v1/users/{{id}}?limit={{limit}}"]
+        headers:
+          type: array
+          maxItems: 30
+          description: |
+            Values may contain placeholders. `Host`, `Content-Length`, `Transfer-Encoding`, `Connection` and
+            other hop-by-hop headers cannot be set.
+          items:
+            type: object
+            required: [name, value]
+            properties:
+              name:
+                type: string
+              value:
+                type: string
+        body_type:
+          type: string
+          enum: [none, json, form, text]
+          default: none
+          description: Sets `Content-Type` unless a header overrides it.
+        body:
+          type: string
+          maxLength: 65536
+          description: |
+            Template. In `json`, string params are inserted JSON-escaped (write them between quotes) and
+            numbers and booleans as they are (an empty one becomes `null`); the result must be valid JSON.
+            In `form`, values are URL-encoded.
+        params:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/ConnectorParam"
+        auth:
+          $ref: "#/components/schemas/ConnectorAuth"
+        secret:
+          type: string
+          maxLength: 4096
+          writeOnly: true
+          description: Token, API key or password. Omitted keeps the stored one (update), `""` clears it.
+        response:
+          $ref: "#/components/schemas/ConnectorResponseMapping"
+        cache_ttl_seconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          default: 0
+          description: Query connectors only; how long a successful result is reused.
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 30
+          default: 15
+
+    Connector:
+      allOf:
+        - $ref: "#/components/schemas/ConnectorRequest"
+        - type: object
+          required: [id, has_secret, created_at, updated_at]
+          properties:
+            id:
+              type: string
+              format: uuid
+            has_secret:
+              type: boolean
+              description: Whether credentials are stored. The secret itself is never returned.
+            created_by:
+              type: string
+              format: uuid
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+
+    ConnectorRunParams:
+      type: object
+      description: Values for the connector's params, by name. Unknown names are rejected.
+      additionalProperties:
+        oneOf:
+          - type: string
+          - type: number
+          - type: boolean
+
+    ConnectorResult:
+      type: object
+      required: [ok, status_code, duration_ms, cached, fetched_at]
+      properties:
+        ok:
+          type: boolean
+          description: The external API answered 2xx.
+        status_code:
+          type: integer
+        duration_ms:
+          type: integer
+        content_type:
+          type: string
+        body:
+          description: |
+            Parsed JSON, or text. At most 1 MiB is read (`truncated`). The stored secret is replaced by
+            `[REDACTED]` if the API echoes it.
+        truncated:
+          type: boolean
+        mapped:
+          type: object
+          description: Rows produced by the response mapping (at most 500).
+          required: [columns, rows]
+          properties:
+            columns:
+              type: array
+              items:
+                type: string
+            rows:
+              type: array
+              items:
+                type: array
+                items: {}
+            truncated:
+              type: boolean
+        mapping_error:
+          type: string
+          description: Why the mapping could not be applied (not JSON, too large).
+        cached:
+          type: boolean
+        fetched_at:
+          type: string
+          format: date-time
+
+    ConnectorRun:
+      type: object
+      required: [id, connector_id, params, status_code, ok, duration_ms, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        connector_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+          description: Who ran it (empty if the user was deleted).
+        params:
+          type: object
+          additionalProperties:
+            type: string
+        status_code:
+          type: integer
+          description: 0 when the external API could not be reached.
+        ok:
+          type: boolean
+        error:
+          type: string
+        duration_ms:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
 
     ServiceMonitor:
       allOf:

@@ -51,6 +51,9 @@ services:
       GRPC_PORT: "9090"
       DATABASE_URL: postgres://${POSTGRES_USER:-autohost}:${POSTGRES_PASSWORD:-autohost_secret}@postgres:5432/${POSTGRES_DB:-autohost}?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:-change_me_in_production_autohost_selfhosted_secret_32b}
+      # Encrypts connector credentials (openssl rand -hex 32); empty = connectors cannot store credentials
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-}
+      CONNECTORS_ALLOW_PRIVATE_NETWORKS: ${CONNECTORS_ALLOW_PRIVATE_NETWORKS:-false}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
       AUTO_ENROLL_LOCAL_NODE: ${AUTO_ENROLL_LOCAL_NODE:-true}
       LOCAL_NODE_HOSTNAME: ${LOCAL_NODE_HOSTNAME:-}

@@ -797,3 +797,11 @@ func (s *RBACService) ProjectPermissions(ctx context.Context, userID, projectID,
 	}
 	return perms, nil
 }
+
+// ListUserProjectMemberships returns the projects the user is a member of (not the ones they own).
+func (s *RBACService) ListUserProjectMemberships(userID string) ([]*ProjectMembership, error) {
+	if s == nil || s.repo == nil || userID == "" {
+		return nil, nil
+	}
+	return s.repo.ListUserProjects(userID)
+}

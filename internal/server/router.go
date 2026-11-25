@@ -58,6 +58,7 @@ type RouterParams struct {
 	NodeTerminalHandler     *handler.NodeTerminalHandler
 	NodeFileHandler         *handler.NodeFileHandler
 	PublicShareHandler      *handler.PublicShareHandler
+	ConnectorHandler        *handler.ConnectorHandler `optional:"true"`
 	NodeTokenService        *node.NodeTokenService
 }
 
@@ -135,6 +136,9 @@ func NewRouter(p RouterParams) *chi.Mux {
 		if p.CloudflareTunnelHandler != nil {
 			p.CloudflareTunnelHandler.SetRBACService(p.RBACService)
 		}
+		if p.ConnectorHandler != nil {
+			p.ConnectorHandler.SetRBACService(p.RBACService)
+		}
 	}
 
 	// TrustedRealIP runs first so logs and rate limits see the real client IP; it only honors
@@ -190,6 +194,9 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/scheduled-tasks", p.ScheduledTaskHandler.Routes())
 		r.Mount("/alert-events", p.AlertEventHandler.Routes())
 		r.Mount("/projects", p.ProjectHandler.Routes())
+		if p.ConnectorHandler != nil {
+			r.Mount("/connectors", p.ConnectorHandler.Routes())
+		}
 		r.Mount("/plans", p.PlanHandler.Routes())
 		r.Mount("/service-monitors", p.ServiceMonitorHandler.Routes())
 		r.Mount("/caddy-routes", p.CaddyRouteHandler.Routes())
