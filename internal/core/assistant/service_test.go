@@ -509,3 +509,47 @@ func TestNodeNameResolvesToID(t *testing.T) {
 		t.Fatalf("tool results = %v", tools)
 	}
 }
+
+func TestWriteFileWaitsAndRunsOnApproval(t *testing.T) {
+	const id = "cd0a1ca1-9c77-4737-8b9f-dc41d34c72e9"
+	args := `{"node_id":"autohost-test","path":"prueba.txt","content":"hola desde el chat"}`
+	svc, _ := setup(t, toolReply("f1", "write_file", args))
+	nodes := map[string]*mcpserver.Result{
+		"listNodes": {Status: 200, Body: []any{map[string]any{"id": id, "hostname": "autohost-test"}}},
+		"getNode":   {Status: 200, Body: map[string]any{"id": id, "hostname": "autohost-test"}},
+	}
+	ex := &fakeExec{answers: nodes}
+	c := &collected{}
+	if err := svc.Chat(context.Background(), ChatRequest{Messages: user("crea prueba.txt en autohost-test")}, ex.exec, c.emit); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range ex.calls {
+		if strings.HasPrefix(call, "writeFileContent") {
+			t.Fatalf("wrote before approval: %v", ex.calls)
+		}
+	}
+	var pending callInfo
+	for _, e := range c.events {
+		if e.Type == "confirm" {
+			pending = e.Data.(map[string]any)["calls"].([]callInfo)[0]
+		}
+	}
+	if !strings.Contains(pending.Summary, `CREATE file prueba.txt (18 bytes): "hola desde el chat"`) || pending.Target != "node autohost-test ("+id+")" {
+		t.Fatalf("pending = %+v", pending)
+	}
+
+	// Approved: the file is written on the resolved node.
+	svc, _ = setup(t, textReply("Listo."))
+	ex = &fakeExec{answers: nodes}
+	history := []Message{
+		{Role: "user", Content: "crea prueba.txt"},
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "f1", Type: "function", Function: FunctionCall{Name: "write_file", Arguments: args}}}},
+	}
+	if err := svc.Chat(context.Background(), ChatRequest{Messages: history, Approvals: map[string]bool{"f1": true}}, ex.exec, (&collected{}).emit); err != nil {
+		t.Fatal(err)
+	}
+	want := `writeFileContent {"nodeId":"` + id + `"} {"content":"hola desde el chat","overwrite":false,"path":"prueba.txt"}`
+	if ex.calls[len(ex.calls)-1] != want {
+		t.Fatalf("calls = %v", ex.calls)
+	}
+}

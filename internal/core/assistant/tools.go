@@ -363,8 +363,89 @@ func tools() []*Tool {
 			},
 		},
 		{
+			Name:        "list_files",
+			Description: "List a directory of a node's shared folder (the folder AutoHost manages on each node, not the whole disk). Paths are relative to it; \"/\" is its root.",
+			Parameters:  obj(map[string]any{"node_id": nodeID, "path": strProp("directory, e.g. / or docs (default /)")}, "node_id"),
+			effect:      EffectRead,
+			run: func(ctx context.Context, env *toolEnv, args map[string]any) (any, error) {
+				id, err := env.nodeArg(ctx, args)
+				if err != nil {
+					return nil, err
+				}
+				path, _ := argString(args, "path", false)
+				if path == "" {
+					path = "/"
+				}
+				res, err := env.call(ctx, "listFiles", map[string]any{"nodeId": id, "path": path}, nil)
+				if err != nil {
+					return nil, err
+				}
+				if m, ok := res.(map[string]any); ok && m["entries"] != nil {
+					return map[string]any{"path": m["current_path"], "entries": pick(m["entries"], "name", "is_dir", "size_bytes", "modified_at")}, nil
+				}
+				return res, nil
+			},
+		},
+		{
+			Name:        "read_file",
+			Description: "Read a text file from a node's shared folder (path relative to it).",
+			Parameters:  obj(map[string]any{"node_id": nodeID, "path": strProp("file path, e.g. notes/todo.txt")}, "node_id", "path"),
+			effect:      EffectRead,
+			run: func(ctx context.Context, env *toolEnv, args map[string]any) (any, error) {
+				id, err := env.nodeArg(ctx, args)
+				if err != nil {
+					return nil, err
+				}
+				path, err := argString(args, "path", true)
+				if err != nil {
+					return nil, err
+				}
+				return env.call(ctx, "readFileContent", map[string]any{"nodeId": id, "path": path}, nil)
+			},
+		},
+		{
+			Name:        "write_file",
+			Description: "Create or replace a text file in a node's shared folder (path relative to it). The user is asked to approve it before it runs.",
+			Parameters: obj(map[string]any{
+				"node_id":   nodeID,
+				"path":      strProp("file path, e.g. prueba.txt or notes/todo.txt"),
+				"content":   strProp("full text content of the file"),
+				"overwrite": map[string]any{"type": "boolean", "description": "replace the file if it already exists (default false)"},
+			}, "node_id", "path", "content"),
+			effect: EffectWrite,
+			run: func(ctx context.Context, env *toolEnv, args map[string]any) (any, error) {
+				path, err := argString(args, "path", true)
+				if err != nil {
+					return nil, err
+				}
+				content, ok := args["content"].(string)
+				if !ok {
+					return nil, fmt.Errorf("%w: \"content\" must be a string", errToolInput)
+				}
+				id, err := env.nodeArg(ctx, args)
+				if err != nil {
+					return nil, err
+				}
+				overwrite, _ := args["overwrite"].(bool)
+				return env.call(ctx, "writeFileContent", map[string]any{"nodeId": id},
+					map[string]any{"path": path, "content": content, "overwrite": overwrite})
+			},
+			summary: func(args map[string]any) string {
+				content, _ := args["content"].(string)
+				verb := "CREATE"
+				if args["overwrite"] == true {
+					verb = "WRITE (overwrite)"
+				}
+				preview := content
+				if len(preview) > 80 {
+					preview = preview[:80] + "…"
+				}
+				return fmt.Sprintf("%s file %v (%d bytes): %q", verb, args["path"], len(content), preview)
+			},
+		},
+		{
 			Name:        "search_endpoints",
-			Description: "Search the full AutoHost API for an operation not covered by the other tools (projects, connectors, Caddy routes, files, VMs, users...). Returns operation_id, method, path, summary and effect.",
+			Description: "Search the full AutoHost API for an operation not covered by the other tools (projects, connectors, Caddy routes, VMs, users...). Returns operation_id, method, path, summary and effect.",
 			Parameters: obj(map[string]any{
 				"query": strProp("keywords, e.g. 'caddy route' or 'delete backup'"),
 				"tag":   strProp("optional tag, e.g. Nodes, Backups, Connectors"),
