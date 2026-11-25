@@ -32,8 +32,11 @@ const (
 	maxHistoryBytes = 1 << 20
 	// contextMessages is how many recent messages are sent to the model.
 	contextMessages = 40
-	// oldToolResultChars shortens tool results outside the last few messages.
-	oldToolResultChars = 600
+	// Tool results older than recentToolMessages messages and longer than oldToolResultChars are
+	// replaced by a note. They are dropped whole, not cut: a list cut in half made a model pair IDs with
+	// the wrong names.
+	recentToolMessages = 16
+	oldToolResultChars = 1500
 )
 
 // Event is a server-sent event of a chat turn.
@@ -187,6 +190,7 @@ func systemPrompt(now time.Time, readOnly bool) string {
 
 Rules:
 - Use the tools to get real data. Never invent IDs, names or numbers. To act on a node by name, call list_nodes first to get its ID.
+- Do not rely on IDs remembered from earlier in the conversation: before changing something, call list_nodes (or the matching list tool) again and take the ID from that fresh result.
 - Prefer the specific tools; use search_endpoints, get_endpoint_schema and execute_endpoint only for what they do not cover.
 - Tools that change something are shown to the user for approval before they run: just call them, do not ask for permission in text first. If the user rejects an action, do not retry it.
 - If a request is ambiguous (which node, which container, which action), ask a short question instead of guessing.
@@ -214,8 +218,8 @@ func contextWindow(history []Message) []Message {
 	}
 	out := make([]Message, 0, len(history)-start)
 	for i, m := range history[start:] {
-		if m.Role == "tool" && len(history)-start-i > 8 && len(m.Content) > oldToolResultChars {
-			m.Content = m.Content[:oldToolResultChars] + "… [shortened]"
+		if m.Role == "tool" && len(history)-start-i > recentToolMessages && len(m.Content) > oldToolResultChars {
+			m.Content = `{"note":"old result removed to save space; call the tool again for current data"}`
 		}
 		out = append(out, m)
 	}
@@ -267,6 +271,11 @@ type callInfo struct {
 	Arguments map[string]any `json:"arguments"`
 	Effect    string         `json:"effect"`
 	Summary   string         `json:"summary"`
+	// Target names the node the call acts on, looked up in the API, so the user can check what the
+	// model's IDs point to before approving.
+	Target string `json:"target,omitempty"`
+	// TargetWarning is set when the node does not exist or the name is ambiguous.
+	TargetWarning string `json:"target_warning,omitempty"`
 }
 
 func (s *Service) describe(c ToolCall) (callInfo, *Tool, error) {
@@ -407,6 +416,9 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest, exec Exec, emit fun
 			}
 		}
 		if len(pending) > 0 {
+			for i := range pending {
+				env.annotateTarget(ctx, &pending[i])
+			}
 			emit(Event{Type: "confirm", Data: map[string]any{"calls": pending}})
 			emit(Event{Type: "done", Data: map[string]any{"messages": added, "pending": true}})
 			return nil
@@ -420,4 +432,42 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest, exec Exec, emit fun
 	appendMsg(stop)
 	emit(Event{Type: "done", Data: map[string]any{"messages": added}})
 	return nil
+}
+
+// nodeRef finds the node a call refers to: node_id for direct tools, the nodeId/nodeID/node_id
+// parameter or body field for execute_endpoint.
+func nodeRef(args map[string]any) string {
+	if v, ok := args["node_id"].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	for _, key := range []string{"params", "body"} {
+		m, _ := args[key].(map[string]any)
+		for _, name := range []string{"nodeId", "nodeID", "node_id"} {
+			if v, ok := m[name].(string); ok {
+				return strings.TrimSpace(v)
+			}
+		}
+	}
+	return ""
+}
+
+// annotateTarget looks up the node a pending call acts on and describes it for the approval card.
+func (env *toolEnv) annotateTarget(ctx context.Context, info *callInfo) {
+	ref := nodeRef(info.Arguments)
+	if ref == "" {
+		return
+	}
+	id, err := env.resolveNode(ctx, ref)
+	if err != nil {
+		info.TargetWarning = fmt.Sprintf("no single node matches %q", ref)
+		return
+	}
+	res, err := env.exec(ctx, "getNode", map[string]any{"id": id}, nil)
+	if err != nil || res.Status >= 400 {
+		info.TargetWarning = fmt.Sprintf("node %s was not found or you cannot see it", id)
+		return
+	}
+	node, _ := res.Body.(map[string]any)
+	host, _ := node["hostname"].(string)
+	info.Target = fmt.Sprintf("node %s (%s)", host, id)
 }

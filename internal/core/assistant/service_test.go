@@ -196,16 +196,18 @@ func TestChatRunsReadToolsWithoutAsking(t *testing.T) {
 
 func TestChatWaitsForApproval(t *testing.T) {
 	svc, _ := setup(t, toolReply("w1", "container_action", `{"node_id":"11111111-1111-4111-8111-111111111111","container":"jellyfin","action":"restart"}`))
-	ex := &fakeExec{}
+	ex := &fakeExec{answers: map[string]*mcpserver.Result{
+		"getNode": {Status: 200, Body: map[string]any{"id": "11111111-1111-4111-8111-111111111111", "hostname": "pi-casa"}},
+	}}
 	c := &collected{}
 	if err := svc.Chat(context.Background(), ChatRequest{Messages: user("reinicia jellyfin")}, ex.exec, c.emit); err != nil {
 		t.Fatal(err)
 	}
-	if c.types() != "tool_call,confirm,done" || len(ex.calls) != 0 {
+	// Only the read that names the target ran; the restart waits.
+	if c.types() != "tool_call,confirm,done" || len(ex.calls) != 1 || !strings.HasPrefix(ex.calls[0], "getNode") {
 		t.Fatalf("events = %s, exec calls = %v", c.types(), ex.calls)
 	}
-	var done map[string]any
-	var confirm map[string]any
+	var done, confirm map[string]any
 	for _, e := range c.events {
 		switch e.Type {
 		case "done":
@@ -218,6 +220,29 @@ func TestChatWaitsForApproval(t *testing.T) {
 	if done["pending"] != true || calls[0].Effect != EffectWrite || !strings.Contains(calls[0].Summary, "RESTART container jellyfin") {
 		t.Fatalf("confirm = %+v, done = %+v", confirm, done)
 	}
+	if calls[0].Target != "node pi-casa (11111111-1111-4111-8111-111111111111)" || calls[0].TargetWarning != "" {
+		t.Fatalf("target = %q, warning = %q", calls[0].Target, calls[0].TargetWarning)
+	}
+}
+
+// The approval card warns when the model's node ID points nowhere (e.g. an ID it misremembered).
+func TestApprovalWarnsAboutUnknownNode(t *testing.T) {
+	svc, _ := setup(t, toolReply("w2", "execute_endpoint", `{"operation_id":"writeFileContent","params":{"nodeId":"99999999-9999-4999-8999-999999999999","path":"/a.txt"},"body":{"content":"x"}}`))
+	ex := &fakeExec{answers: map[string]*mcpserver.Result{"getNode": {Status: 403, Body: map[string]any{"error": "forbidden"}}}}
+	c := &collected{}
+	if err := svc.Chat(context.Background(), ChatRequest{Messages: user("x")}, ex.exec, c.emit); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range c.events {
+		if e.Type == "confirm" {
+			call := e.Data.(map[string]any)["calls"].([]callInfo)[0]
+			if call.Target != "" || !strings.Contains(call.TargetWarning, "not found") {
+				t.Fatalf("target = %q, warning = %q", call.Target, call.TargetWarning)
+			}
+			return
+		}
+	}
+	t.Fatal("no confirm event")
 }
 
 func pausedHistory() []Message {

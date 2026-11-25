@@ -6016,7 +6016,8 @@ paths:
 
         Events (`event:` name, `data:` JSON): `reasoning` `{text}` and `delta` `{text}` as the model writes;
         `tool_call` (id, name, arguments, effect, summary); `tool_result` (id, name, ok, result, rejected);
-        `confirm` `{calls}` with the calls waiting for approval; `done` `{messages, pending}` with the
+        `confirm` `{calls}` with the calls waiting for approval, each with `target` (the node it acts on,
+        looked up in the API) or `target_warning` (no single node matches the model's reference); `done` `{messages, pending}` with the
         messages to append to the conversation; `error` `{error}`. A turn refused before it starts (invalid
         JSON, disabled assistant, rate limit) answers with a JSON error instead of a stream; an invalid
         conversation or model is reported as an `error` event.
