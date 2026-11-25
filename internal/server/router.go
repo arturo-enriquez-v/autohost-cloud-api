@@ -4,17 +4,21 @@
 package server
 
 import (
+	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/go-chi/chi/middleware"
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/fx"
 
+	"github.com/arturo/autohost-cloud-api/api"
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/node"
 	"github.com/arturo/autohost-cloud-api/internal/handler"
 	handlerMiddleware "github.com/arturo/autohost-cloud-api/internal/handler/middleware"
+	"github.com/arturo/autohost-cloud-api/internal/mcpserver"
 )
 
 type RouterParams struct {
@@ -161,6 +165,19 @@ func NewRouter(p RouterParams) *chi.Mux {
 		mountDocs(r)
 	}
 
+	// MCP: the REST API for MCP clients, built from the embedded spec. Each call runs through this same
+	// router (set below, once every route is registered) with the client's credentials.
+	var mcpHandler *mcpserver.Handler
+	if mcpEnabled() {
+		h, err := mcpserver.NewHandler(api.OpenAPISpec)
+		if err != nil {
+			log.Printf("[ERROR] mcp: disabled, could not load the OpenAPI spec: %v", err)
+		} else {
+			mcpHandler = h
+			r.With(handlerMiddleware.AuthIdentity).Post("/mcp", h.ServeHTTP)
+		}
+	}
+
 	nodeAuthMiddleware := handlerMiddleware.NodeAuth(p.NodeTokenService)
 
 	// Personal API tokens (Authorization: Bearer ahp_...) are accepted by Auth on every user route.
@@ -226,7 +243,16 @@ func NewRouter(p RouterParams) *chi.Mux {
 	// Custom API tokens may only write through routes guarded by requireNodePerm.
 	handlerMiddleware.SetNodePermRoutes(r, nodePermRoutes(r))
 
+	if mcpHandler != nil {
+		mcpHandler.SetAPI(r)
+	}
+
 	return r
+}
+
+// mcpEnabled reports whether /mcp is served (MCP_ENABLED, default true).
+func mcpEnabled() bool {
+	return !strings.EqualFold(strings.TrimSpace(os.Getenv("MCP_ENABLED")), "false")
 }
 
 // corsMiddleware only grants cross-origin access (with credentials) to origins listed in FRONTEND_URL or

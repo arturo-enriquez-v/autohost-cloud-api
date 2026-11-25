@@ -54,6 +54,8 @@ services:
       # Encrypts connector credentials (openssl rand -hex 32); empty = connectors cannot store credentials
       SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-}
       CONNECTORS_ALLOW_PRIVATE_NETWORKS: ${CONNECTORS_ALLOW_PRIVATE_NETWORKS:-false}
+      # MCP endpoint (/mcp) for AI assistants; authenticated with personal API tokens
+      MCP_ENABLED: ${MCP_ENABLED:-true}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
       AUTO_ENROLL_LOCAL_NODE: ${AUTO_ENROLL_LOCAL_NODE:-true}
       LOCAL_NODE_HOSTNAME: ${LOCAL_NODE_HOSTNAME:-}

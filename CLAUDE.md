@@ -18,6 +18,9 @@ make mcp-update          # valida la spec y la publica en Scalar: actualiza el M
 ```
 
 `SERVICE_MODE` = `all` | `http` | `grpc`. `API_DOCS_ENABLED=true` sirve `/docs` (Scalar) y `/openapi.yaml`.
+`/mcp` (MCP para asistentes, `MCP_ENABLED`, activo por defecto) sale de la spec: un endpoint documentado ya es
+una operación disponible por MCP, salvo los que `internal/mcpserver/index.go` bloquea (streaming, binarios,
+sesión, rutas de agente o públicas).
 
 ## Estructura
 
@@ -31,6 +34,7 @@ internal/core/<dominio>     lógica de negocio: identity, node, jobs, apps, infr
 internal/repository/postgres acceso a datos (sqlx)
 internal/grpc               servidor gRPC de agentes (stream Connect, resultados de jobs)
 internal/dispatcher         envío de jobs a nodos conectados
+internal/mcpserver          servidor MCP en /mcp, generado desde la spec (search/schema/execute por el router)
 internal/app                wiring de módulos y BD
 migrations/                 NNNN_nombre.up.sql / .down.sql, numeración secuencial
 api/openapi.yaml            spec OpenAPI 3.1, embebida en el binario (api/api.go)

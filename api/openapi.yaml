@@ -47,6 +47,18 @@ servers:
 tags:
   - name: Health
     description: Liveness probe.
+  - name: MCP
+    description: |
+      The API for MCP clients (Claude Code, Claude Desktop, IDEs), served by the API itself from this spec.
+      Three tools: `search_endpoints` (find operations by keyword or tag), `get_endpoint_schema` (parameters,
+      body and response of one operation) and `execute_endpoint` (call it). Calls run in process through
+      the same router as REST, with the client's `Authorization` header, so permissions, API token scopes
+      and rate limits apply as over HTTP. Streaming, WebSocket, binary, upload, session (login, refresh) and
+      non-user (agent, share, public) operations cannot be executed. Disable with `MCP_ENABLED=false`.
+
+      Client setup (Claude Code):
+      `claude mcp add --transport http autohost https://<api>/mcp --header "Authorization: Bearer ahp_..."`.
+      A `read` token gives a read-only assistant; `custom` limits it to chosen node permissions.
   - name: Auth
     description: Registration, login, token refresh and the current user's profile.
   - name: API tokens
@@ -224,6 +236,72 @@ paths:
                   service:
                     type: string
                     examples: [autohost-cloud-api]
+
+  /mcp:
+    post:
+      tags: [MCP]
+      operationId: mcp
+      summary: MCP endpoint (streamable HTTP, stateless)
+      description: |
+        JSON-RPC 2.0 messages of the Model Context Protocol (`initialize`, `tools/list`, `tools/call`...).
+        Stateless: no `Mcp-Session-Id`, every request stands alone, so it works behind load balancers. Only
+        `POST` is served (no server-initiated SSE stream). The credential must be in the `Authorization`
+        header (session JWT or personal API token); cookies and query tokens are refused so a web page
+        cannot drive it with the user's browser session. A `read` token is accepted here even though this is
+        a POST: its scope is enforced on each operation `execute_endpoint` runs.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: A JSON-RPC 2.0 request or notification.
+              required: [jsonrpc, method]
+              properties:
+                jsonrpc:
+                  type: string
+                  const: "2.0"
+                id:
+                  oneOf:
+                    - type: string
+                    - type: integer
+                method:
+                  type: string
+                  examples: [tools/call]
+                params:
+                  type: object
+            example:
+              jsonrpc: "2.0"
+              id: 1
+              method: tools/call
+              params:
+                name: search_endpoints
+                arguments:
+                  query: restart container
+      responses:
+        "200":
+          description: JSON-RPC response. Tool failures (unknown operation, blocked operation, API answers 4xx/5xx) are results with `isError` true, not HTTP errors.
+          content:
+            application/json:
+              schema:
+                type: object
+        "202":
+          description: Notification accepted (no response body).
+        "400":
+          description: Malformed JSON-RPC message or unsupported protocol version.
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: Missing or invalid credentials, or credentials not in the `Authorization` header.
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples: ["unauthorized: send the token in the Authorization header"]
 
   /v1/auth/setup-status:
     get:
