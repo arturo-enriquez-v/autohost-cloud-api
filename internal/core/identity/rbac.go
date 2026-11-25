@@ -767,3 +767,33 @@ func (s *RBACService) CanAccessProject(ctx context.Context, userID, projectID st
 	}
 	return false, false, nil
 }
+
+// ProjectPermissions returns the user's project-level permissions (connectors) in a project owned by
+// ownerID: everything for global admins and the owner, the membership's role otherwise, nothing for
+// non-members. An API token limit in ctx narrows the result.
+func (s *RBACService) ProjectPermissions(ctx context.Context, userID, projectID, ownerID string) ([]string, error) {
+	if userID == "" || projectID == "" || s == nil || s.repo == nil {
+		return nil, nil
+	}
+	u, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil || u == nil || !u.IsActive {
+		return nil, err
+	}
+	var perms []string
+	if u.Role == RoleAdmin || (ownerID != "" && ownerID == userID) {
+		perms = []string{PermWildcard}
+	} else {
+		pm, err := s.repo.GetProjectMembership(ctx, projectID, userID)
+		if err != nil {
+			return nil, err
+		}
+		if pm == nil {
+			return nil, nil
+		}
+		perms = ProjectRolePermissions(pm.DefaultRole, pm.DefaultPermissions)
+	}
+	if limit, ok := tokenPermissions(ctx); ok && !slices.Contains(limit, PermWildcard) {
+		perms = intersectPermissions(perms, limit)
+	}
+	return perms, nil
+}

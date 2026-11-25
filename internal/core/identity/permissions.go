@@ -79,6 +79,12 @@ const (
 	// Alerts
 	PermAlertsRead   = "alerts:read"
 	PermAlertsManage = "alerts:manage"
+
+	// Connectors (saved HTTP requests to external APIs). They belong to a project, so these permissions
+	// are taken from the user's project membership, not from per-node grants.
+	PermConnectorsRead   = "connectors:read"
+	PermConnectorsRun    = "connectors:run"
+	PermConnectorsManage = "connectors:manage"
 )
 
 // AllNodePermissions lists every valid granular node permission in canonical order.
@@ -114,6 +120,9 @@ var AllNodePermissions = []string{
 	PermVMsManage,
 	PermAlertsRead,
 	PermAlertsManage,
+	PermConnectorsRead,
+	PermConnectorsRun,
+	PermConnectorsManage,
 }
 
 // PresetViewerPermissions defines read-only permissions across a node.
@@ -368,6 +377,16 @@ func GetPermissionsCatalog() *PermissionsCatalog {
 					{Key: PermAlertsManage, Label: "Configure alerts", Description: "Modify alert thresholds and node notification channels."},
 				},
 			},
+			{
+				Module:      "connectors",
+				Label:       "Connectors",
+				Description: "Saved requests to external APIs. Project-level: taken from the project membership, not from per-node grants.",
+				Permissions: []PermissionItem{
+					{Key: PermConnectorsRead, Label: "View connectors", Description: "View the project's connectors and the data their queries return."},
+					{Key: PermConnectorsRun, Label: "Run connector actions", Description: "Trigger action connectors, using the credentials stored in them."},
+					{Key: PermConnectorsManage, Label: "Manage connectors", Description: "Create, edit, and delete connectors and set their credentials.", Danger: true},
+				},
+			},
 		},
 	}
 }
@@ -452,6 +471,12 @@ func NormalizePermissions(perms []string) []string {
 	if granted[PermAlertsManage] {
 		granted[PermAlertsRead] = true
 	}
+	if granted[PermConnectorsManage] {
+		granted[PermConnectorsRun] = true
+	}
+	if granted[PermConnectorsRun] {
+		granted[PermConnectorsRead] = true
+	}
 
 	// Return in canonical order
 	result := make([]string, 0, len(granted))
@@ -502,4 +527,28 @@ func HasPermission(granted []string, required string) bool {
 	// Check implied read permissions even if raw slice wasn't normalized
 	expanded := NormalizePermissions(granted)
 	return slices.Contains(expanded, required)
+}
+
+// ProjectRolePermissions returns the project-level permissions (connectors) granted by a membership. The
+// named presets map to fixed sets, so memberships saved before these permissions existed get them too;
+// "custom" uses the stored permissions.
+func ProjectRolePermissions(role string, perms []string) []string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case NodePresetAdmin:
+		return []string{PermWildcard}
+	case NodePresetViewer:
+		return []string{PermConnectorsRead}
+	case NodePresetOperator:
+		return []string{PermConnectorsRead, PermConnectorsRun}
+	case NodePresetEditor:
+		return []string{PermConnectorsRead, PermConnectorsRun, PermConnectorsManage}
+	default:
+		var out []string
+		for _, p := range NormalizePermissions(perms) {
+			if p == PermWildcard || strings.HasPrefix(p, "connectors:") {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
 }
