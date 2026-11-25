@@ -351,7 +351,7 @@ func tools() []*Tool {
 		},
 		{
 			Name:        "list_installed_apps",
-			Description: "List the marketplace apps installed on a node.",
+			Description: "List the apps installed on ONE node (to see what the marketplace offers, use list_app_catalog).",
 			Parameters:  obj(map[string]any{"node_id": nodeID}, "node_id"),
 			effect:      EffectRead,
 			run: func(ctx context.Context, env *toolEnv, args map[string]any) (any, error) {
@@ -360,6 +360,99 @@ func tools() []*Tool {
 					return nil, err
 				}
 				return env.call(ctx, "listNodeMarketplaceApps", map[string]any{"nodeID": id}, nil)
+			},
+		},
+		{
+			Name:        "list_app_catalog",
+			Description: "List the marketplace catalog: the apps that can be installed on a node, with their settings (env_vars).",
+			Parameters:  obj(map[string]any{}),
+			effect:      EffectRead,
+			run: func(ctx context.Context, env *toolEnv, _ map[string]any) (any, error) {
+				res, err := env.call(ctx, "listMarketplaceApps", nil, nil)
+				if err != nil {
+					return nil, err
+				}
+				apps, ok := res.([]any)
+				if !ok {
+					return res, nil
+				}
+				out := make([]any, 0, len(apps))
+				for _, a := range apps {
+					m, _ := a.(map[string]any)
+					item := pick(m, "name", "display_name", "category", "description").(map[string]any)
+					if vars, ok := m["env_vars"].([]any); ok && len(vars) > 0 {
+						item["settings"] = pick(vars, "key", "label", "required", "default")
+					}
+					out = append(out, item)
+				}
+				return out, nil
+			},
+		},
+		{
+			Name:        "install_app",
+			Description: "Install a marketplace catalog app on a node. Get app_name and the possible settings from list_app_catalog; leave settings out to use the defaults. The user is asked to approve it before it runs.",
+			Parameters: obj(map[string]any{
+				"node_id":  nodeID,
+				"app_name": strProp("catalog app name from list_app_catalog, e.g. uptime-kuma"),
+				"settings": map[string]any{"type": "object", "description": "optional values by setting key, e.g. {\"port\": \"3001\"}", "additionalProperties": map[string]any{"type": "string"}},
+			}, "node_id", "app_name"),
+			effect: EffectWrite,
+			run: func(ctx context.Context, env *toolEnv, args map[string]any) (any, error) {
+				app, err := argString(args, "app_name", true)
+				if err != nil {
+					return nil, err
+				}
+				id, err := env.nodeArg(ctx, args)
+				if err != nil {
+					return nil, err
+				}
+				body := map[string]any{"node_id": id, "app_name": app}
+				if raw, ok := args["settings"].(map[string]any); ok && len(raw) > 0 {
+					vars := map[string]string{}
+					for k, v := range raw {
+						vars[k] = fmt.Sprint(v)
+					}
+					body["env_vars"] = vars
+				}
+				return env.call(ctx, "deployMarketplaceApp", nil, body)
+			},
+			summary: func(args map[string]any) string {
+				s := fmt.Sprintf("INSTALL app %v", args["app_name"])
+				if raw, ok := args["settings"].(map[string]any); ok && len(raw) > 0 {
+					settings, _ := json.Marshal(raw)
+					s += " with " + string(settings)
+				}
+				return s
+			},
+		},
+		{
+			Name:        "list_proxy_routes",
+			Description: "List a node's reverse proxy (Caddy) routes: which domain points to which container or port.",
+			Parameters:  obj(map[string]any{"node_id": nodeID}, "node_id"),
+			effect:      EffectRead,
+			run: func(ctx context.Context, env *toolEnv, args map[string]any) (any, error) {
+				id, err := env.nodeArg(ctx, args)
+				if err != nil {
+					return nil, err
+				}
+				res, err := env.call(ctx, "listCaddyRoutes", map[string]any{"nodeId": id}, nil)
+				if err != nil {
+					return nil, err
+				}
+				return pick(res, "domain", "upstream", "tls_mode", "created_at"), nil
+			},
+		},
+		{
+			Name:        "list_projects",
+			Description: "List the user's projects (groups of nodes shared with other users).",
+			Parameters:  obj(map[string]any{}),
+			effect:      EffectRead,
+			run: func(ctx context.Context, env *toolEnv, _ map[string]any) (any, error) {
+				res, err := env.call(ctx, "listProjects", nil, nil)
+				if err != nil {
+					return nil, err
+				}
+				return pick(res, "id", "name", "created_at"), nil
 			},
 		},
 		{
@@ -447,14 +540,20 @@ func tools() []*Tool {
 			Name:        "search_endpoints",
 			Description: "Search the full AutoHost API for an operation not covered by the other tools (projects, connectors, Caddy routes, VMs, users...). Returns operation_id, method, path, summary and effect.",
 			Parameters: obj(map[string]any{
-				"query": strProp("keywords, e.g. 'caddy route' or 'delete backup'"),
-				"tag":   strProp("optional tag, e.g. Nodes, Backups, Connectors"),
+				"query": strProp("English keywords (the API is documented in English), e.g. 'caddy route' or 'delete backup'"),
+				"tag":   strProp("optional; usually leave it empty"),
 			}),
 			effect: EffectRead,
 			run: func(_ context.Context, env *toolEnv, args map[string]any) (any, error) {
 				q, _ := argString(args, "query", false)
 				tag, _ := argString(args, "tag", false)
 				results, total := env.index.Search(q, tag, 10)
+				note := ""
+				if total == 0 && tag != "" {
+					// Models often guess a tag that does not match: search again without it.
+					results, total = env.index.Search(q, "", 10)
+					note = fmt.Sprintf("nothing under tag %q; these results ignore the tag", tag)
+				}
 				out := make([]any, 0, len(results))
 				for _, op := range results {
 					item := map[string]any{"operation_id": op.ID, "method": op.Method, "path": op.Path, "summary": op.Summary, "effect": op.Effect}
@@ -463,7 +562,20 @@ func tools() []*Tool {
 					}
 					out = append(out, item)
 				}
-				return map[string]any{"total": total, "results": out}, nil
+				result := map[string]any{
+					"total":   total,
+					"results": out,
+					"next_step": "These are API operations, not the user's data. Pick the one that matches and call " +
+						"execute_endpoint with its operation_id (use get_endpoint_schema if you need its parameters), " +
+						"then answer from what it returns.",
+				}
+				if note != "" {
+					result["note"] = note
+				}
+				if total == 0 {
+					result["note"] = "no API operation matches these words; try other English keywords. This says nothing about the user's data: do not tell the user they have none."
+				}
+				return result, nil
 			},
 		},
 		{

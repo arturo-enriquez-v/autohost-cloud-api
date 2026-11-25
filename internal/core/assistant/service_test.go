@@ -553,3 +553,38 @@ func TestWriteFileWaitsAndRunsOnApproval(t *testing.T) {
 		t.Fatalf("calls = %v", ex.calls)
 	}
 }
+
+func TestInstallAppWaitsForApproval(t *testing.T) {
+	const id = "cd0a1ca1-9c77-4737-8b9f-dc41d34c72e9"
+	args := `{"node_id":"` + id + `","app_name":"uptime-kuma","settings":{"port":3001}}`
+	svc, _ := setup(t, textReply("Instalando."))
+	ex := &fakeExec{answers: map[string]*mcpserver.Result{"deployMarketplaceApp": {Status: 201, Body: map[string]any{"status": "installing"}}}}
+	history := []Message{
+		{Role: "user", Content: "instala uptime kuma"},
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "i1", Type: "function", Function: FunctionCall{Name: "install_app", Arguments: args}}}},
+	}
+	// Without approval nothing is installed.
+	if err := svc.Chat(context.Background(), ChatRequest{Messages: history}, ex.exec, (&collected{}).emit); err != nil || len(ex.calls) != 0 {
+		t.Fatalf("installed without approval: %v %v", err, ex.calls)
+	}
+	svc, _ = setup(t, textReply("Instalando."))
+	if err := svc.Chat(context.Background(), ChatRequest{Messages: history, Approvals: map[string]bool{"i1": true}}, ex.exec, (&collected{}).emit); err != nil {
+		t.Fatal(err)
+	}
+	want := `deployMarketplaceApp null {"app_name":"uptime-kuma","env_vars":{"port":"3001"},"node_id":"` + id + `"}`
+	if len(ex.calls) != 1 || ex.calls[0] != want {
+		t.Fatalf("calls = %v", ex.calls)
+	}
+}
+
+func TestSearchFallsBackWithoutTag(t *testing.T) {
+	svc, fp := setup(t, toolReply("s1", "search_endpoints", `{"query":"caddy route","tag":"Nodes"}`), textReply("ok"))
+	if err := svc.Chat(context.Background(), ChatRequest{Messages: user("rutas caddy")}, (&fakeExec{}).exec, (&collected{}).emit); err != nil {
+		t.Fatal(err)
+	}
+	msgs := fp.requests[1].Messages
+	result := msgs[len(msgs)-1].Content
+	if !strings.Contains(result, "listCaddyRoutes") || !strings.Contains(result, "ignore the tag") {
+		t.Fatalf("search result = %s", result)
+	}
+}

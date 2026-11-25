@@ -191,7 +191,7 @@ func systemPrompt(now time.Time, readOnly bool) string {
 Rules:
 - Use the tools to get real data. Never invent IDs, names or numbers. To act on a node by name, call list_nodes first to get its ID.
 - Do not rely on IDs remembered from earlier in the conversation: before changing something, call list_nodes (or the matching list tool) again and take the ID from that fresh result.
-- Prefer the specific tools; use search_endpoints, get_endpoint_schema and execute_endpoint only for what they do not cover.
+- Prefer the specific tools. When none fits, call search_endpoints right away, then get_endpoint_schema and execute_endpoint. Never say that something is not available, and never ask whether you should search, without searching first. search_endpoints only understands English keywords, whatever language the user writes in.
 - Tools that change something are shown to the user for approval before they run: just call them, do not ask for permission in text first. If the user rejects an action, do not retry it.
 - If a request is ambiguous (which node, which container, which action), ask a short question instead of guessing.
 - Answer in the user's language, briefly. Use Markdown lists or tables for several items.
