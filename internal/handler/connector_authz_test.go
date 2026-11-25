@@ -238,7 +238,7 @@ func TestConnectorAuthzMatrix(t *testing.T) {
 		{"create", http.MethodPost, "/v1/connectors/", definitionBody(projA), map[string]int{"viewer": 403, "operator": 403, "outsider": 404}},
 		{"create in other project", http.MethodPost, "/v1/connectors/", definitionBody(projB), map[string]int{"owner": 404, "editor": 404, "outsider": 201}},
 		{"create with bad project id", http.MethodPost, "/v1/connectors/", definitionBody("not-a-uuid"), map[string]int{"owner": 404}},
-		{"test", http.MethodPost, "/v1/connectors/test", definitionBody(projA), map[string]int{"viewer": 403, "operator": 403, "outsider": 404}},
+		{"test", http.MethodPost, "/v1/connectors/test", map[string]any{"connector": definitionBody(projA)}, map[string]int{"viewer": 403, "operator": 403, "outsider": 404}},
 		{"other project's connector", http.MethodGet, "/v1/connectors/" + f.otherProjectID, nil, map[string]int{"owner": 404, "editor": 404, "outsider": 200}},
 		{"unknown id", http.MethodGet, "/v1/connectors/not-a-uuid", nil, map[string]int{"owner": 404}},
 		{"delete", http.MethodDelete, a, nil, map[string]int{"viewer": 403, "operator": 403, "outsider": 404}},
@@ -313,9 +313,10 @@ func TestConnectorHidesRequestDetailsAndSecrets(t *testing.T) {
 
 func TestConnectorTestCannotBorrowAnotherProjectsSecret(t *testing.T) {
 	f := newConnFixture(t)
-	body := definitionBody(projB)
-	body["auth"] = map[string]any{"type": "bearer"}
-	body["connector_id"] = f.query.ID // connector of project A, with a stored token
+	def := definitionBody(projB)
+	def["auth"] = map[string]any{"type": "bearer"}
+	// connector_id of project A, which has a stored token.
+	body := map[string]any{"connector": def, "connector_id": f.query.ID}
 	hits := *f.upstreamHits
 	if rec := f.do(t, "outsider", http.MethodPost, "/v1/connectors/test", body); rec.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404 (%s)", rec.Code, rec.Body.String())
@@ -336,5 +337,20 @@ func TestConnectorUpdateKeepsProject(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &c)
 	if c.ProjectID != projA {
 		t.Fatalf("project changed to %s", c.ProjectID)
+	}
+}
+
+// The definition's declared params and the values to test with are separate fields.
+func TestConnectorTestWithParams(t *testing.T) {
+	var gotPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gotPath = r.URL.Path }))
+	defer upstream.Close()
+	f := newConnFixture(t)
+	def := definitionBody(projA)
+	def["url"] = upstream.URL + "/users/{{id}}"
+	def["params"] = []map[string]any{{"name": "id", "type": "number", "required": true}}
+	rec := f.do(t, "owner", http.MethodPost, "/v1/connectors/test", map[string]any{"connector": def, "params": map[string]any{"id": 42}})
+	if rec.Code != http.StatusOK || gotPath != "/users/42" {
+		t.Fatalf("status %d, upstream path %q: %s", rec.Code, gotPath, rec.Body.String())
 	}
 }

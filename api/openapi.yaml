@@ -5959,8 +5959,8 @@ paths:
       operationId: testConnector
       summary: Run an unsaved connector definition
       description: |
-        Requires `connectors:manage` on `project_id`. Sends the request once, without caching or recording
-        it, so the panel can try a definition and pick fields from the real response. With `connector_id`
+        Requires `connectors:manage` on `connector.project_id`. Sends the request once, without caching or
+        recording it, so the panel can try a definition and pick fields from the real response. With `connector_id`
         (a connector of the same project) and no `secret`, the stored credentials are used, but only if the
         URL keeps its scheme and host. Rate limited to 60 runs and tests per user per minute.
       requestBody:
@@ -5968,16 +5968,17 @@ paths:
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: "#/components/schemas/ConnectorRequest"
-                - type: object
-                  properties:
-                    connector_id:
-                      type: string
-                      format: uuid
-                      description: Connector being edited, to test with its stored credentials.
-                    params:
-                      $ref: "#/components/schemas/ConnectorRunParams"
+              type: object
+              required: [connector]
+              properties:
+                connector:
+                  $ref: "#/components/schemas/ConnectorRequest"
+                connector_id:
+                  type: string
+                  format: uuid
+                  description: Connector being edited, to test with its stored credentials.
+                params:
+                  $ref: "#/components/schemas/ConnectorRunParams"
       responses:
         "200":
           description: The external API answered (any status code; see `ok` and `status_code`).

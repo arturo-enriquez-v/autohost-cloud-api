@@ -343,8 +343,10 @@ func (h *ConnectorHandler) Run(w http.ResponseWriter, r *http.Request) {
 	response.RespondJSON(w, http.StatusOK, res)
 }
 
+// testRequest nests the definition: its "params" (declared parameters) would otherwise clash with the
+// parameter values.
 type testRequest struct {
-	connectors.Input
+	Connector connectors.Input `json:"connector"`
 	// ConnectorID lets an edit form test with the stored credentials without sending them again.
 	ConnectorID string         `json:"connector_id"`
 	Params      map[string]any `json:"params"`
@@ -358,13 +360,13 @@ func (h *ConnectorHandler) Test(w http.ResponseWriter, r *http.Request) {
 		response.RespondError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if !h.requireProjectManage(w, r, req.ProjectID) {
+	if !h.requireProjectManage(w, r, req.Connector.ProjectID) {
 		return
 	}
 	var existing *connectors.Connector
 	if req.ConnectorID != "" {
 		c, err := h.svc.Get(r.Context(), req.ConnectorID)
-		if errors.Is(err, connectors.ErrNotFound) || (err == nil && c.ProjectID != req.ProjectID) {
+		if errors.Is(err, connectors.ErrNotFound) || (err == nil && c.ProjectID != req.Connector.ProjectID) {
 			response.RespondError(w, http.StatusNotFound, "connector not found")
 			return
 		}
@@ -377,7 +379,7 @@ func (h *ConnectorHandler) Test(w http.ResponseWriter, r *http.Request) {
 	if !allowRun(w, claims.UserID) {
 		return
 	}
-	res, err := h.svc.Test(r.Context(), req.Input, existing, req.Params)
+	res, err := h.svc.Test(r.Context(), req.Connector, existing, req.Params)
 	if err != nil {
 		writeConnectorError(w, err, "test connector")
 		return
