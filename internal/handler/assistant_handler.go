@@ -210,6 +210,33 @@ func (h *AssistantHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, ": connected\n\n")
 	flusher.Flush()
 
+	// Keepalive comments while the model thinks or a tool waits, so proxies (the panel's BFF closes
+	// streams idle for 90 s) do not cut the turn.
+	stop := make(chan struct{})
+	stopped := make(chan struct{})
+	defer func() {
+		close(stop)
+		<-stopped // never write to w after the handler returns
+	}()
+	go func() {
+		defer close(stopped)
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-r.Context().Done():
+				return
+			case <-t.C:
+				mu.Lock()
+				fmt.Fprint(w, ": keepalive\n\n")
+				flusher.Flush()
+				mu.Unlock()
+			}
+		}
+	}()
+
 	if err := h.svc.Chat(r.Context(), req, exec, emit); err != nil {
 		msg := "the assistant failed"
 		switch {
