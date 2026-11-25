@@ -93,6 +93,13 @@ tags:
       Groups of nodes. Members of a project get access to its nodes through their membership (`all_nodes`
       with a default role) and/or explicit per-node grants. Only admins create projects; a project can be
       managed (members, nodes) by its owner or any admin.
+  - name: Assistant
+    description: |
+      The panel's built-in chat. A tool-calling loop between an OpenAI-compatible model (Ollama, llama.cpp,
+      vLLM, OpenAI...) and this API: tools run through the API router with the caller's own credentials, so
+      the assistant can do exactly what the user can. Calls that change something are never run on the
+      model's word: the turn stops with a `confirm` event and continues when the user approves them in the
+      next request. The conversation is kept by the client and sent with every turn.
   - name: Connectors
     description: |
       Saved HTTP requests to external APIs, defined from the panel and shared within a project. A `query`
@@ -5966,6 +5973,212 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /v1/assistant/status:
+    get:
+      tags: [Assistant]
+      operationId: getAssistantStatus
+      summary: Get whether the assistant is available
+      description: Any signed-in user. The models listed are the ones `chat` accepts.
+      responses:
+        "200":
+          description: Availability and models.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled, models]
+                properties:
+                  enabled:
+                    type: boolean
+                  default_model:
+                    type: string
+                  models:
+                    type: array
+                    items:
+                      type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/assistant/chat:
+    post:
+      tags: [Assistant]
+      operationId: assistantChat
+      summary: Run one chat turn (server-sent events)
+      description: |
+        Any signed-in user; tools run with the caller's permissions. Send the whole conversation
+        (`messages`, as returned in previous `done` events, with the new user message last). When the
+        previous turn ended with `confirm`, send the same messages (last one is the assistant message with
+        the tool calls) plus `approvals` by tool call ID: approved calls run, the others are reported to
+        the model as rejected. With `read_only`, tools that change something are not offered and are
+        refused even if approved. Rate limited to 30 turns per user per minute.
+
+        Events (`event:` name, `data:` JSON): `reasoning` `{text}` and `delta` `{text}` as the model writes;
+        `tool_call` (id, name, arguments, effect, summary); `tool_result` (id, name, ok, result, rejected);
+        `confirm` `{calls}` with the calls waiting for approval; `done` `{messages, pending}` with the
+        messages to append to the conversation; `error` `{error}`. A turn refused before it starts (invalid
+        JSON, disabled assistant, rate limit) answers with a JSON error instead of a stream; an invalid
+        conversation or model is reported as an `error` event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  maxItems: 200
+                  items:
+                    $ref: "#/components/schemas/AssistantMessage"
+                approvals:
+                  type: object
+                  additionalProperties:
+                    type: boolean
+                  description: Decision per pending tool call ID.
+                model:
+                  type: string
+                  description: One of the models in `getAssistantStatus`; defaults to the default model.
+                read_only:
+                  type: boolean
+      responses:
+        "200":
+          description: The turn, as server-sent events.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          description: The body is not valid JSON.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+        "503":
+          description: The assistant is disabled or not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/assistant/settings:
+    get:
+      tags: [Assistant]
+      operationId: getAssistantSettings
+      summary: Get the assistant settings (admin)
+      description: |
+        Admins. Until settings are saved, they come from `ASSISTANT_BASE_URL`, `ASSISTANT_MODEL` and
+        `ASSISTANT_API_KEY` (`from_env: true`). The API key is never returned.
+      responses:
+        "200":
+          description: The settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistantSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+    put:
+      tags: [Assistant]
+      operationId: saveAssistantSettings
+      summary: Save the assistant settings (admin)
+      description: |
+        Admins. `api_key`: omitted keeps the stored one, `""` clears it; it is encrypted with
+        `SECRETS_ENCRYPTION_KEY`. `base_url` is any OpenAI-compatible API, including private addresses (for
+        example Ollama on a node through the VPN), since only admins set it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                base_url:
+                  type: string
+                  examples: ["http://localhost:11434/v1"]
+                api_key:
+                  type: string
+                  writeOnly: true
+                default_model:
+                  type: string
+                  examples: [qwen3:8b]
+                models:
+                  type: array
+                  items:
+                    type: string
+                  description: Extra models users may pick.
+                reasoning_effort:
+                  type: string
+                  enum: ["", none, low, medium, high]
+                  description: "`none` turns off thinking on models that support it (faster); empty uses the model's default."
+      responses:
+        "200":
+          description: The saved settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistantSettings"
+        "400":
+          $ref: "#/components/responses/BadRequestJSON"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/assistant/models:
+    get:
+      tags: [Assistant]
+      operationId: listAssistantProviderModels
+      summary: List the provider's models (admin)
+      description: Admins. Asks the configured provider (`GET {base_url}/models`), to choose models in the settings.
+      responses:
+        "200":
+          description: Model IDs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [models]
+                properties:
+                  models:
+                    type: array
+                    items:
+                      type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+        "502":
+          description: The provider failed (message included, for the admin to fix the settings).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: No provider URL configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1/connectors:
     get:
       tags: [Connectors]
@@ -9698,6 +9911,61 @@ components:
           type: boolean
         auto_heal_config:
           $ref: "#/components/schemas/AutoHealConfig"
+
+    AssistantMessage:
+      type: object
+      required: [role]
+      description: A message in the OpenAI chat format. Clients send back the messages from `done` events unchanged.
+      properties:
+        role:
+          type: string
+          enum: [user, assistant, tool]
+        content:
+          type: string
+        tool_calls:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              type:
+                type: string
+              function:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  arguments:
+                    type: string
+        tool_call_id:
+          type: string
+        name:
+          type: string
+
+    AssistantSettings:
+      type: object
+      required: [enabled, base_url, has_api_key, default_model, models, reasoning_effort]
+      properties:
+        enabled:
+          type: boolean
+        base_url:
+          type: string
+        has_api_key:
+          type: boolean
+        default_model:
+          type: string
+        models:
+          type: array
+          items:
+            type: string
+        reasoning_effort:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        from_env:
+          type: boolean
 
     ConnectorParam:
       type: object

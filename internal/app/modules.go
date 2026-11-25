@@ -7,6 +7,7 @@ import (
 	"log"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/apps"
+	"github.com/arturo/autohost-cloud-api/internal/core/assistant"
 	"github.com/arturo/autohost-cloud-api/internal/core/connectors"
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 	"github.com/arturo/autohost-cloud-api/internal/core/infra"
@@ -57,6 +58,7 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewNotificationMarkerRepository, fx.As(new(identity.NotificationMarkerRepository))),
 	fx.Annotate(postgres.NewVMRepository, fx.As(new(infra.VMRepository))),
 	fx.Annotate(postgres.NewConnectorRepository, fx.As(new(connectors.Repository))),
+	fx.Annotate(postgres.NewAssistantSettingsRepository, fx.As(new(assistant.SettingsRepository))),
 )
 
 var ServiceModule = fx.Provide(
@@ -89,6 +91,7 @@ var ServiceModule = fx.Provide(
 	apps.NewBackupService,
 	node.NewLogDiagnosticService,
 	connectors.NewService,
+	assistant.NewService,
 	fx.Annotate(
 		func(repo infra.ClusterRepository, nodeRepo node.NodeRepository, jobService *jobs.JobService, grpc *grpcserver.NodeAgentServer) *infra.ClusterManager {
 			return infra.NewClusterManager(repo, nodeRepo, jobService, grpc)
@@ -137,6 +140,7 @@ var HandlerModule = fx.Provide(
 	handler.NewNodeFileHandler,
 	handler.NewPublicShareHandler,
 	handler.NewConnectorHandler,
+	handler.NewAssistantHandler,
 )
 
 var InfraModule = fx.Provide(

@@ -35,6 +35,8 @@ internal/repository/postgres acceso a datos (sqlx)
 internal/grpc               servidor gRPC de agentes (stream Connect, resultados de jobs)
 internal/dispatcher         envío de jobs a nodos conectados
 internal/mcpserver          servidor MCP en /mcp, generado desde la spec (search/schema/execute por el router)
+internal/core/assistant     chat del panel: bucle con un modelo compatible con OpenAI y herramientas que
+                            ejecutan la API con la sesión del usuario; las escrituras esperan aprobación
 internal/app                wiring de módulos y BD
 migrations/                 NNNN_nombre.up.sql / .down.sql, numeración secuencial
 api/openapi.yaml            spec OpenAPI 3.1, embebida en el binario (api/api.go)

@@ -63,6 +63,7 @@ type RouterParams struct {
 	NodeFileHandler         *handler.NodeFileHandler
 	PublicShareHandler      *handler.PublicShareHandler
 	ConnectorHandler        *handler.ConnectorHandler `optional:"true"`
+	AssistantHandler        *handler.AssistantHandler `optional:"true"`
 	NodeTokenService        *node.NodeTokenService
 }
 
@@ -143,6 +144,9 @@ func NewRouter(p RouterParams) *chi.Mux {
 		if p.ConnectorHandler != nil {
 			p.ConnectorHandler.SetRBACService(p.RBACService)
 		}
+		if p.AssistantHandler != nil {
+			p.AssistantHandler.SetRBACService(p.RBACService)
+		}
 	}
 
 	// TrustedRealIP runs first so logs and rate limits see the real client IP; it only honors
@@ -214,6 +218,9 @@ func NewRouter(p RouterParams) *chi.Mux {
 		if p.ConnectorHandler != nil {
 			r.Mount("/connectors", p.ConnectorHandler.Routes())
 		}
+		if p.AssistantHandler != nil {
+			r.Mount("/assistant", p.AssistantHandler.Routes())
+		}
 		r.Mount("/plans", p.PlanHandler.Routes())
 		r.Mount("/service-monitors", p.ServiceMonitorHandler.Routes())
 		r.Mount("/caddy-routes", p.CaddyRouteHandler.Routes())
@@ -245,6 +252,9 @@ func NewRouter(p RouterParams) *chi.Mux {
 
 	if mcpHandler != nil {
 		mcpHandler.SetAPI(r)
+	}
+	if p.AssistantHandler != nil {
+		p.AssistantHandler.SetAPI(r)
 	}
 
 	return r

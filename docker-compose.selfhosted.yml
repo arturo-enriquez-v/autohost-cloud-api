@@ -56,6 +56,10 @@ services:
       CONNECTORS_ALLOW_PRIVATE_NETWORKS: ${CONNECTORS_ALLOW_PRIVATE_NETWORKS:-false}
       # MCP endpoint (/mcp) for AI assistants; authenticated with personal API tokens
       MCP_ENABLED: ${MCP_ENABLED:-true}
+      # Built-in assistant: OpenAI-compatible API (e.g. Ollama http://<node>:11434/v1), until set in the panel
+      ASSISTANT_BASE_URL: ${ASSISTANT_BASE_URL:-}
+      ASSISTANT_MODEL: ${ASSISTANT_MODEL:-}
+      ASSISTANT_API_KEY: ${ASSISTANT_API_KEY:-}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
       AUTO_ENROLL_LOCAL_NODE: ${AUTO_ENROLL_LOCAL_NODE:-true}
       LOCAL_NODE_HOSTNAME: ${LOCAL_NODE_HOSTNAME:-}
