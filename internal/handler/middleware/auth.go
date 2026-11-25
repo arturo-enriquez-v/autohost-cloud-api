@@ -72,6 +72,19 @@ var ErrAPITokenRejected = errors.New("invalid api token")
 const apiTokenPrefix = "ahp_"
 
 func Auth(next http.Handler) http.Handler {
+	return authenticate(next, false)
+}
+
+// AuthIdentity authenticates like Auth but only from the Authorization header (no cookie or query
+// token, so a browser cannot be made to call it with the user's session) and without applying the API
+// token scope to this request's method. It is for /mcp: the MCP transport is always POST, and each API
+// call it makes on the caller's behalf goes through Auth again with its real method, where the token
+// scope is enforced.
+func AuthIdentity(next http.Handler) http.Handler {
+	return authenticate(next, true)
+}
+
+func authenticate(next http.Handler, identityOnly bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Lazy-load JWT secret on first use (after .env is loaded)
 		if jwtSecret == nil {
@@ -91,6 +104,9 @@ func Auth(next http.Handler) http.Handler {
 			}
 			raw = parts[1]
 			fromHeader = true
+		} else if identityOnly {
+			http.Error(w, "unauthorized: send the token in the Authorization header", http.StatusUnauthorized)
+			return
 		} else if c, err := r.Cookie("access_token"); err == nil && c.Value != "" {
 			raw = c.Value
 		} else if q := r.URL.Query().Get("token"); q != "" {
@@ -108,7 +124,7 @@ func Auth(next http.Handler) http.Handler {
 				http.Error(w, "api tokens must be sent in the Authorization header", http.StatusUnauthorized)
 				return
 			}
-			authAPIToken(w, r, next, raw)
+			authAPIToken(w, r, next, raw, !identityOnly)
 			return
 		}
 
@@ -152,7 +168,7 @@ func Auth(next http.Handler) http.Handler {
 	})
 }
 
-func authAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler, raw string) {
+func authAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler, raw string, enforceScope bool) {
 	fn := apiTokenAuth.Load()
 	if fn == nil {
 		http.Error(w, "invalid token", http.StatusUnauthorized)
@@ -169,6 +185,7 @@ func authAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler, raw
 		return
 	}
 	switch {
+	case !enforceScope:
 	case claims.ReadOnly() && !isReadOnlyRequest(r):
 		http.Error(w, "read-only api token", http.StatusForbidden)
 		return

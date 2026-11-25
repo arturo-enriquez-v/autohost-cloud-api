@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/arturo/autohost-cloud-api/internal/core/identity"
 )
@@ -240,4 +242,63 @@ func TestAPITokenWithoutPermissionsGetsNone(t *testing.T) {
 	if canRead {
 		t.Fatal("a token without permissions must not get node:read")
 	}
+}
+
+func serveAuthIdentity(req *http.Request) (*httptest.ResponseRecorder, *Claims) {
+	var got *Claims
+	rec := httptest.NewRecorder()
+	AuthIdentity(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got = GetClaims(r.Context()) })).ServeHTTP(rec, req)
+	return rec, got
+}
+
+// AuthIdentity (used by /mcp) identifies the caller without applying the token scope to the MCP POST,
+// and only from the Authorization header.
+func TestAuthIdentity(t *testing.T) {
+	withTestAPITokens(t)
+
+	// The MCP transport is always POST: a read-only token must still get through.
+	rec, claims := serveAuthIdentity(bearer(http.MethodPost, testReadToken))
+	if rec.Code != http.StatusOK || claims == nil || !claims.ReadOnly() {
+		t.Fatalf("read token POST: got %d, claims %+v", rec.Code, claims)
+	}
+	// Plain Auth still refuses the same request.
+	if rec := serveAuth(bearer(http.MethodPost, testReadToken), nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("Auth with read token POST: got %d, want 403", rec.Code)
+	}
+
+	if rec, _ := serveAuthIdentity(bearer(http.MethodPost, "ahp_unknown")); rec.Code != http.StatusUnauthorized {
+		t.Errorf("unknown token: got %d, want 401", rec.Code)
+	}
+	if rec, _ := serveAuthIdentity(httptest.NewRequest(http.MethodPost, "/mcp", nil)); rec.Code != http.StatusUnauthorized {
+		t.Errorf("no credentials: got %d, want 401", rec.Code)
+	}
+
+	// A browser session cookie is not enough: a page must not be able to drive /mcp with the user's
+	// session. Query tokens are refused too.
+	session := signTestJWT(t, "u1")
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.AddCookie(&http.Cookie{Name: "access_token", Value: session})
+	if rec, _ := serveAuthIdentity(req); rec.Code != http.StatusUnauthorized {
+		t.Errorf("session cookie: got %d, want 401", rec.Code)
+	}
+	if rec, _ := serveAuthIdentity(httptest.NewRequest(http.MethodPost, "/mcp?access_token="+session, nil)); rec.Code != http.StatusUnauthorized {
+		t.Errorf("query token: got %d, want 401", rec.Code)
+	}
+	// The same session JWT in the Authorization header is accepted.
+	if rec, claims := serveAuthIdentity(bearer(http.MethodPost, session)); rec.Code != http.StatusOK || claims.UserID != "u1" {
+		t.Errorf("session JWT in header: got %d, claims %+v", rec.Code, claims)
+	}
+}
+
+func signTestJWT(t *testing.T, userID string) string {
+	t.Helper()
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, &Claims{
+		UserID:           userID,
+		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))},
+	})
+	s, err := tok.SignedString(jwtSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
 }
