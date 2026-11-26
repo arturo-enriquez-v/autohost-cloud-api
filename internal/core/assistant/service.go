@@ -195,6 +195,7 @@ Rules:
 - Tools that change something are shown to the user for approval before they run: just call them, do not ask for permission in text first. If the user rejects an action, do not retry it.
 - If a request is ambiguous (which node, which container, which action), ask a short question instead of guessing.
 - Answer in the user's language, briefly. Use Markdown lists or tables for several items.
+- To show the content of a Markdown (.md) file, put it in a code block whose language is markdown (fence it with four backticks if the file itself contains code blocks), so the panel renders it; other files go in a code block with their language.
 `)
 	if readOnly {
 		b.WriteString("- READ-ONLY MODE: you can only read. If the user asks for a change, explain which action would be needed and that read-only mode must be turned off.\n")
