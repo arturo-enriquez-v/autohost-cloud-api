@@ -26,19 +26,24 @@ func (r *NodeMetricRepo) StoreNodeMetric(req *node.CreateNodeMetricRequest) (*no
 		t := req.CPUTempCelsius
 		tempPtr = &t
 	}
+	var uptimePtr *int64
+	if req.UptimeSeconds > 0 {
+		u := req.UptimeSeconds
+		uptimePtr = &u
+	}
 	err := r.DB.QueryRowx(`
 		INSERT INTO node_metrics (
 			node_id, cpu_usage_percent, memory_total_bytes, memory_used_bytes,
 			memory_available_bytes, memory_usage_percent, disk_total_bytes, 
-			disk_used_bytes, disk_available_bytes, disk_usage_percent, cpu_temp_celsius, collected_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			disk_used_bytes, disk_available_bytes, disk_usage_percent, cpu_temp_celsius, uptime_seconds, collected_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id, node_id, cpu_usage_percent, memory_total_bytes, memory_used_bytes,
 		          memory_available_bytes, memory_usage_percent, disk_total_bytes, disk_used_bytes,
-		          disk_available_bytes, disk_usage_percent, cpu_temp_celsius, collected_at, created_at
+		          disk_available_bytes, disk_usage_percent, cpu_temp_celsius, uptime_seconds, collected_at, created_at
 	`, req.NodeID, req.CPUUsagePercent, req.MemoryTotalBytes,
 		req.MemoryUsedBytes, req.MemoryAvailableBytes, req.MemoryUsagePercent,
 		req.DiskTotalBytes, req.DiskUsedBytes, req.DiskAvailableBytes,
-		req.DiskUsagePercent, tempPtr, req.CollectedAt).StructScan(&metric)
+		req.DiskUsagePercent, tempPtr, uptimePtr, req.CollectedAt).StructScan(&metric)
 	if err != nil {
 		return nil, err
 	}

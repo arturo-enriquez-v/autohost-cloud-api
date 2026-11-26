@@ -227,11 +227,11 @@ func (r *NodeRepository) queryNodesWithMetrics(whereClause string, args ...any) 
 
 	query := `
 		SELECT ` + nodeSelectColumns + `,
-			m.cpu_usage_percent, m.memory_usage_percent, m.disk_usage_percent, m.cpu_temp_celsius, m.collected_at
+			m.cpu_usage_percent, m.memory_usage_percent, m.disk_usage_percent, m.cpu_temp_celsius, m.uptime_seconds, m.collected_at
 		FROM nodes n
 		` + nodeVMJoinClause + `
 		LEFT JOIN LATERAL (
-			SELECT cpu_usage_percent, memory_usage_percent, disk_usage_percent, cpu_temp_celsius, collected_at
+			SELECT cpu_usage_percent, memory_usage_percent, disk_usage_percent, cpu_temp_celsius, uptime_seconds, collected_at
 			FROM node_metrics
 			WHERE node_id = n.id
 			ORDER BY collected_at DESC
@@ -250,6 +250,7 @@ func (r *NodeRepository) queryNodesWithMetrics(whereClause string, args ...any) 
 	for rows.Next() {
 		var nwm node.NodeWithMetrics
 		var cpuUsage, memUsage, diskUsage, cpuTemp sql.NullFloat64
+		var uptime sql.NullInt64
 		var collectedAt sql.NullTime
 
 		err := rows.Scan(
@@ -257,7 +258,7 @@ func (r *NodeRepository) queryNodesWithMetrics(whereClause string, args ...any) 
 			&nwm.VersionAgent, &nwm.OwnerID, &nwm.ProjectID, &nwm.IsLocal, &nwm.LastSeenAt,
 			&nwm.CreatedAt, &nwm.UpdatedAt,
 			&nwm.IsVM, &nwm.VMID, &nwm.HostNodeID, &nwm.HostHostname,
-			&cpuUsage, &memUsage, &diskUsage, &cpuTemp, &collectedAt,
+			&cpuUsage, &memUsage, &diskUsage, &cpuTemp, &uptime, &collectedAt,
 		)
 		if err != nil {
 			return nil, err
@@ -270,6 +271,7 @@ func (r *NodeRepository) queryNodesWithMetrics(whereClause string, args ...any) 
 				MemoryUsagePercent: memUsage.Float64,
 				DiskUsagePercent:   diskUsage.Float64,
 				CPUTempCelsius:     cpuTemp.Float64,
+				UptimeSeconds:      nullInt64Ptr(uptime),
 				CollectedAt:        collectedAt.Time,
 			}
 		}
@@ -316,13 +318,14 @@ func (r *NodeRepository) FindAll() ([]*node.Node, error) {
 // FindLatestMetric returns the node's most recent metric sample, or nil when it has none.
 func (r *NodeRepository) FindLatestMetric(nodeID string) (*node.LastMetric, error) {
 	var cpu, mem, disk, cpuTemp sql.NullFloat64
+	var uptime sql.NullInt64
 	var collectedAt time.Time
 	err := r.db.QueryRowContext(context.Background(), `
-		SELECT cpu_usage_percent, memory_usage_percent, disk_usage_percent, cpu_temp_celsius, collected_at
+		SELECT cpu_usage_percent, memory_usage_percent, disk_usage_percent, cpu_temp_celsius, uptime_seconds, collected_at
 		FROM node_metrics
 		WHERE node_id = $1
 		ORDER BY collected_at DESC
-		LIMIT 1`, nodeID).Scan(&cpu, &mem, &disk, &cpuTemp, &collectedAt)
+		LIMIT 1`, nodeID).Scan(&cpu, &mem, &disk, &cpuTemp, &uptime, &collectedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -334,6 +337,7 @@ func (r *NodeRepository) FindLatestMetric(nodeID string) (*node.LastMetric, erro
 		MemoryUsagePercent: mem.Float64,
 		DiskUsagePercent:   disk.Float64,
 		CPUTempCelsius:     cpuTemp.Float64,
+		UptimeSeconds:      nullInt64Ptr(uptime),
 		CollectedAt:        collectedAt,
 	}, nil
 }
@@ -341,4 +345,12 @@ func (r *NodeRepository) FindLatestMetric(nodeID string) (*node.LastMetric, erro
 // FindAllWithMetrics returns all nodes in the platform with their latest metric snapshot.
 func (r *NodeRepository) FindAllWithMetrics() ([]*node.NodeWithMetrics, error) {
 	return r.queryNodesWithMetrics("")
+}
+
+func nullInt64Ptr(v sql.NullInt64) *int64 {
+	if !v.Valid {
+		return nil
+	}
+	n := v.Int64
+	return &n
 }

@@ -26,6 +26,7 @@ type NodeMetric struct {
 	DiskAvailableBytes   int64     `db:"disk_available_bytes" json:"disk_available_bytes"`
 	DiskUsagePercent     float64   `db:"disk_usage_percent" json:"disk_usage_percent"`
 	CPUTempCelsius       *float64  `db:"cpu_temp_celsius" json:"cpu_temp_celsius,omitempty"`
+	UptimeSeconds        *int64    `db:"uptime_seconds" json:"uptime_seconds,omitempty"`
 	CollectedAt          time.Time `db:"collected_at" json:"collected_at"`
 	CreatedAt            time.Time `db:"created_at" json:"created_at"`
 }
@@ -43,6 +44,7 @@ type CreateNodeMetricRequest struct {
 	DiskAvailableBytes   int64     `json:"disk_available_bytes"`
 	DiskUsagePercent     float64   `json:"disk_usage_percent"`
 	CPUTempCelsius       float64   `json:"cpu_temp_celsius,omitempty"`
+	UptimeSeconds        int64     `json:"uptime_seconds,omitempty"`
 	CollectedAt          time.Time `json:"collected_at"`
 }
 

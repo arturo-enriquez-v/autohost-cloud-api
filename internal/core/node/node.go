@@ -63,11 +63,14 @@ type NodeWithMetrics struct {
 
 // LastMetric representa la última métrica de un nodo
 type LastMetric struct {
-	CPUUsagePercent    float64   `json:"cpu_usage_percent"`
-	MemoryUsagePercent float64   `json:"memory_usage_percent"`
-	DiskUsagePercent   float64   `json:"disk_usage_percent"`
-	CPUTempCelsius     float64   `json:"cpu_temp_celsius,omitempty"`
-	CollectedAt        time.Time `json:"collected_at"`
+	CPUUsagePercent    float64 `json:"cpu_usage_percent"`
+	MemoryUsagePercent float64 `json:"memory_usage_percent"`
+	DiskUsagePercent   float64 `json:"disk_usage_percent"`
+	CPUTempCelsius     float64 `json:"cpu_temp_celsius,omitempty"`
+	// UptimeSeconds is the node's uptime when the sample was taken (add the time since collected_at for
+	// the current value). Absent for samples from agents or API versions that did not store it.
+	UptimeSeconds *int64    `json:"uptime_seconds,omitempty"`
+	CollectedAt   time.Time `json:"collected_at"`
 }
 
 // NodeRepository define las operaciones de persistencia para nodos

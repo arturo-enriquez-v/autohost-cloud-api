@@ -114,6 +114,7 @@ func (s *NodeAgentServer) handleMetric(nodeID string, m *pb.MetricPayload) {
 		DiskAvailableBytes:   int64(m.GetDiskAvailableBytes()),
 		DiskUsagePercent:     float64(m.GetDiskUsagePercent()),
 		CPUTempCelsius:       float64(m.GetCpuTempCelsius()),
+		UptimeSeconds:        m.GetUptimeSeconds(),
 		CollectedAt:          time.Now(),
 	}
 	if _, err := s.metricSvc.StoreNodeMetric(req); err != nil {

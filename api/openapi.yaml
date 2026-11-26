@@ -7793,6 +7793,12 @@ components:
         cpu_temp_celsius:
           type: number
           description: Omitted when the machine does not report a CPU temperature.
+        uptime_seconds:
+          type: integer
+          format: int64
+          description: |
+            Node uptime when the sample was taken; add the time since `collected_at` for the current value.
+            Omitted for samples stored before it was recorded.
         collected_at:
           type: string
           format: date-time
@@ -7998,6 +8004,9 @@ components:
           type: number
         cpu_temp_celsius:
           type: number
+        uptime_seconds:
+          type: integer
+          format: int64
 
     NodeMetricHistoryPoint:
       type: object
