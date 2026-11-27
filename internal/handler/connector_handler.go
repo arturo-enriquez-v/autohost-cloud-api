@@ -133,7 +133,9 @@ func writeConnectorError(w http.ResponseWriter, err error, op string) {
 	case errors.Is(err, connectors.ErrSecretsNotConfigured):
 		response.RespondError(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, connectors.ErrUpstream):
-		response.RespondError(w, http.StatusBadGateway, err.Error())
+		// 424, not 502: Cloudflare replaces 502 responses with its own page, and the message (blocked
+		// address, timeout...) is what tells the user what to fix.
+		response.RespondError(w, http.StatusFailedDependency, err.Error())
 	case errors.Is(err, secretbox.ErrDecrypt):
 		log.Printf("[ERROR] connectors: %s: stored credentials do not decrypt (was %s changed?)", op, secretbox.EnvKey)
 		response.RespondError(w, http.StatusInternalServerError, "could not decrypt the connector's credentials")

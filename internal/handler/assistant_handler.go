@@ -75,7 +75,8 @@ func writeAssistantError(w http.ResponseWriter, err error, op string) {
 	case errors.Is(err, assistant.ErrNotConfigured):
 		response.RespondError(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, assistant.ErrProvider):
-		response.RespondError(w, http.StatusBadGateway, err.Error())
+		// 424, not 502: Cloudflare replaces 502 responses with its own page and the admin needs the message.
+		response.RespondError(w, http.StatusFailedDependency, err.Error())
 	case errors.Is(err, secretbox.ErrDecrypt):
 		log.Printf("[ERROR] assistant: %s: the stored API key does not decrypt (was %s changed?)", op, secretbox.EnvKey)
 		response.RespondError(w, http.StatusInternalServerError, "could not decrypt the provider API key")

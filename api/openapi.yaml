@@ -6170,8 +6170,8 @@ paths:
           $ref: "#/components/responses/ForbiddenJSON"
         "500":
           $ref: "#/components/responses/InternalErrorJSON"
-        "502":
-          description: The provider failed (message included, for the admin to fix the settings).
+        "424":
+          description: The provider failed (message included, for the admin to fix the settings). Not `502`, which Cloudflare would replace with its own page.
           content:
             application/json:
               schema:
@@ -6297,7 +6297,7 @@ paths:
           $ref: "#/components/responses/TooManyRequests"
         "500":
           $ref: "#/components/responses/InternalErrorJSON"
-        "502":
+        "424":
           $ref: "#/components/responses/ConnectorUpstreamError"
 
   /v1/connectors/{id}:
@@ -6426,7 +6426,7 @@ paths:
           $ref: "#/components/responses/TooManyRequests"
         "500":
           $ref: "#/components/responses/InternalErrorJSON"
-        "502":
+        "424":
           $ref: "#/components/responses/ConnectorUpstreamError"
 
   /v1/connectors/{id}/runs:
@@ -7208,7 +7208,8 @@ components:
     ConnectorUpstreamError:
       description: |
         The external API could not be reached: blocked address, DNS failure, connection error, TLS error,
-        timeout or too many redirects. The message says which, without internal details.
+        timeout or too many redirects. The message says which, without internal details. `424` rather than
+        `502` so proxies such as Cloudflare do not replace the message with their own error page.
       content:
         application/json:
           schema:

@@ -354,3 +354,15 @@ func TestConnectorTestWithParams(t *testing.T) {
 		t.Fatalf("status %d, upstream path %q: %s", rec.Code, gotPath, rec.Body.String())
 	}
 }
+
+// An unreachable external API is 424, not 502: Cloudflare replaces 502 responses with its own page and
+// the user would not see why it failed.
+func TestConnectorUpstreamFailureIs424(t *testing.T) {
+	f := newConnFixture(t)
+	def := definitionBody(projA)
+	def["url"] = "http://127.0.0.1:1/unreachable"
+	rec := f.do(t, "owner", http.MethodPost, "/v1/connectors/test", map[string]any{"connector": def})
+	if rec.Code != http.StatusFailedDependency || !strings.Contains(rec.Body.String(), "could not reach the external API") {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+}
