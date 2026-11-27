@@ -366,3 +366,20 @@ func TestConnectorUpstreamFailureIs424(t *testing.T) {
 		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+// Values outside "params" are refused instead of being ignored (the connector would run with its
+// defaults, as happened when the assistant sent {"texto": "..."}).
+func TestConnectorRunRejectsValuesOutsideParams(t *testing.T) {
+	f := newConnFixture(t)
+	hits := *f.upstreamHits
+	rec := f.do(t, "owner", http.MethodPost, "/v1/connectors/"+f.query.ID+"/run", map[string]any{"texto": "hola"})
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `\"texto\"`) || !strings.Contains(rec.Body.String(), "params") {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+	if *f.upstreamHits != hits {
+		t.Fatal("the connector ran")
+	}
+	if rec := f.do(t, "owner", http.MethodPost, "/v1/connectors/"+f.query.ID+"/run", map[string]any{"params": map[string]any{}}); rec.Code != http.StatusOK {
+		t.Fatalf("valid body: %d %s", rec.Code, rec.Body.String())
+	}
+}

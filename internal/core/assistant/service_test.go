@@ -588,3 +588,78 @@ func TestSearchFallsBackWithoutTag(t *testing.T) {
 		t.Fatalf("search result = %s", result)
 	}
 }
+
+func connectorAnswers(kind string) map[string]*mcpserver.Result {
+	return map[string]*mcpserver.Result{
+		"getConnector": {Status: 200, Body: map[string]any{"id": "c1", "name": "EnviarMensaje", "kind": kind, "method": "POST", "url": "http://100.76.185.34:8787/mensajes"}},
+		"runConnector": {Status: 200, Body: map[string]any{"ok": true, "status_code": 201, "body": map[string]any{"texto": "hola"}}},
+	}
+}
+
+// The values go inside "params": sending them at the top level made the API run the connector with its
+// defaults.
+func TestRunActionConnectorSendsParamsAndWaitsForApproval(t *testing.T) {
+	args := `{"connector_id":"c1","params":{"texto":"hola desde autohost"}}`
+	svc, _ := setup(t, toolReply("a1", "run_action_connector", args))
+	ex := &fakeExec{answers: connectorAnswers("action")}
+	c := &collected{}
+	if err := svc.Chat(context.Background(), ChatRequest{Messages: user("envia hola")}, ex.exec, c.emit); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range ex.calls {
+		if strings.HasPrefix(call, "runConnector") {
+			t.Fatalf("ran before approval: %v", ex.calls)
+		}
+	}
+	var pending callInfo
+	for _, e := range c.events {
+		if e.Type == "confirm" {
+			pending = e.Data.(map[string]any)["calls"].([]callInfo)[0]
+		}
+	}
+	if pending.Target != "connector EnviarMensaje (POST http://100.76.185.34:8787/mensajes)" {
+		t.Fatalf("target = %q", pending.Target)
+	}
+
+	svc, _ = setup(t, textReply("Enviado."))
+	ex = &fakeExec{answers: connectorAnswers("action")}
+	history := []Message{
+		{Role: "user", Content: "envia hola"},
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "a1", Type: "function", Function: FunctionCall{Name: "run_action_connector", Arguments: args}}}},
+	}
+	if err := svc.Chat(context.Background(), ChatRequest{Messages: history, Approvals: map[string]bool{"a1": true}}, ex.exec, (&collected{}).emit); err != nil {
+		t.Fatal(err)
+	}
+	want := `runConnector {"id":"c1"} {"params":{"texto":"hola desde autohost"}}`
+	if ex.calls[len(ex.calls)-1] != want {
+		t.Fatalf("calls = %v", ex.calls)
+	}
+}
+
+func TestQueryConnectorRunsWithoutApprovalAndRefusesActions(t *testing.T) {
+	svc, _ := setup(t, toolReply("q1", "query_connector", `{"connector_id":"c1"}`), textReply("ok"))
+	ex := &fakeExec{answers: connectorAnswers("query")}
+	c := &collected{}
+	if err := svc.Chat(context.Background(), ChatRequest{Messages: user("lee los mensajes")}, ex.exec, c.emit); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(c.types(), "confirm") || ex.calls[len(ex.calls)-1] != `runConnector {"id":"c1"} {"params":{}}` {
+		t.Fatalf("events %s, calls %v", c.types(), ex.calls)
+	}
+
+	// A read-only tool must not run an action connector.
+	svc, fp := setup(t, toolReply("q2", "query_connector", `{"connector_id":"c1"}`), textReply("ok"))
+	ex = &fakeExec{answers: connectorAnswers("action")}
+	if err := svc.Chat(context.Background(), ChatRequest{Messages: user("x")}, ex.exec, (&collected{}).emit); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range ex.calls {
+		if strings.HasPrefix(call, "runConnector") {
+			t.Fatalf("query_connector ran an action connector: %v", ex.calls)
+		}
+	}
+	msgs := fp.requests[1].Messages
+	if res := msgs[len(msgs)-1].Content; !strings.Contains(res, "use run_action_connector") {
+		t.Fatalf("model not told: %s", res)
+	}
+}

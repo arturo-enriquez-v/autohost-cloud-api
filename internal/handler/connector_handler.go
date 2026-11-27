@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -325,8 +326,18 @@ func (h *ConnectorHandler) Run(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req runRequest
-	if err := decodeJSON(r, &req); err != nil {
-		response.RespondError(w, http.StatusBadRequest, "invalid JSON body")
+	dec := json.NewDecoder(r.Body)
+	dec.UseNumber()
+	// Unknown fields are refused: a client (or a model) sending {"texto": "..."} instead of
+	// {"params": {"texto": "..."}} would otherwise run the connector with its defaults without noticing.
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		msg := "invalid JSON body"
+		if strings.HasPrefix(err.Error(), "json: unknown field") {
+			msg = "unknown field " + strings.TrimPrefix(err.Error(), "json: unknown field ") +
+				`: send the values inside "params", e.g. {"params": {"name": "value"}}`
+		}
+		response.RespondError(w, http.StatusBadRequest, msg)
 		return
 	}
 	if !allowRun(w, claims.UserID) {

@@ -452,8 +452,22 @@ func nodeRef(args map[string]any) string {
 	return ""
 }
 
-// annotateTarget looks up the node a pending call acts on and describes it for the approval card.
+// annotateTarget looks up what a pending call acts on (a node, a connector) and describes it for the
+// approval card.
 func (env *toolEnv) annotateTarget(ctx context.Context, info *callInfo) {
+	if id, ok := info.Arguments["connector_id"].(string); ok && id != "" {
+		res, err := env.exec(ctx, "getConnector", map[string]any{"id": id}, nil)
+		if err != nil || res.Status >= 400 {
+			info.TargetWarning = fmt.Sprintf("connector %s was not found or you cannot see it", id)
+			return
+		}
+		c, _ := res.Body.(map[string]any)
+		info.Target = fmt.Sprintf("connector %v", c["name"])
+		if url, _ := c["url"].(string); url != "" { // only returned to users who manage it
+			info.Target += fmt.Sprintf(" (%v %s)", c["method"], url)
+		}
+		return
+	}
 	ref := nodeRef(info.Arguments)
 	if ref == "" {
 		return

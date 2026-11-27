@@ -6388,8 +6388,9 @@ paths:
         `query` connectors need `connectors:read`; `action` connectors need `connectors:run` and every run
         is recorded (see `listConnectorRuns`). Query results are cached for `cache_ttl_seconds` per
         parameter values (`cached: true`). Callers without `connectors:manage` do not get `body` when the
-        connector has a response mapping, only `mapped`. Rate limited to 60 runs and tests per user per
-        minute.
+        connector has a response mapping, only `mapped`. The values go inside `params`; any other field is
+        refused with `400`, so values sent at the top level are not silently ignored (the connector would
+        run with its defaults). Rate limited to 60 runs and tests per user per minute.
       requestBody:
         required: false
         content:

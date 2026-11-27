@@ -456,6 +456,58 @@ func tools() []*Tool {
 			},
 		},
 		{
+			Name:        "list_connectors",
+			Description: "List the connectors (saved requests to external APIs) with their id, kind (query reads data, action changes something) and the params they take.",
+			Parameters:  obj(map[string]any{}),
+			effect:      EffectRead,
+			run: func(ctx context.Context, env *toolEnv, _ map[string]any) (any, error) {
+				res, err := env.call(ctx, "listConnectors", nil, nil)
+				if err != nil {
+					return nil, err
+				}
+				list, ok := res.([]any)
+				if !ok {
+					return res, nil
+				}
+				out := make([]any, 0, len(list))
+				for _, c := range list {
+					m, _ := c.(map[string]any)
+					item := pick(m, "id", "name", "kind", "description", "project_id").(map[string]any)
+					if params, ok := m["params"].([]any); ok && len(params) > 0 {
+						item["params"] = pick(params, "name", "type", "required", "default", "description")
+					}
+					out = append(out, item)
+				}
+				return out, nil
+			},
+		},
+		{
+			Name:        "query_connector",
+			Description: "Run a query connector (kind query: reads data) and return its result. For action connectors use run_action_connector.",
+			Parameters:  connectorParams(),
+			effect:      EffectRead,
+			run: func(ctx context.Context, env *toolEnv, args map[string]any) (any, error) {
+				return env.runConnector(ctx, args, "query")
+			},
+		},
+		{
+			Name:        "run_action_connector",
+			Description: "Run an action connector (kind action: changes something in an external service). The user is asked to approve it before it runs.",
+			Parameters:  connectorParams(),
+			effect:      EffectWrite,
+			run: func(ctx context.Context, env *toolEnv, args map[string]any) (any, error) {
+				return env.runConnector(ctx, args, "action")
+			},
+			summary: func(args map[string]any) string {
+				s := fmt.Sprintf("RUN action connector %v", args["connector_id"])
+				if p, ok := args["params"].(map[string]any); ok && len(p) > 0 {
+					raw, _ := json.Marshal(p)
+					s += " with " + string(raw)
+				}
+				return s
+			},
+		},
+		{
 			Name:        "list_files",
 			Description: "List a directory of a node's shared folder (the folder AutoHost manages on each node, not the whole disk). Paths are relative to it; \"/\" is its root.",
 			Parameters:  obj(map[string]any{"node_id": nodeID, "path": strProp("directory, e.g. / or docs (default /)")}, "node_id"),
@@ -728,4 +780,52 @@ func encodeResult(v any) string {
 		return string(raw)
 	}
 	return string(raw[:maxToolResultChars]) + `… [truncated: refine the request to see more]`
+}
+
+func connectorParams() map[string]any {
+	return obj(map[string]any{
+		"connector_id": strProp("connector id from list_connectors"),
+		"params": map[string]any{
+			"type":        "object",
+			"description": `values for the connector's params by name, e.g. {"texto": "hola"}; omit to use the defaults`,
+		},
+	}, "connector_id")
+}
+
+// runConnector runs a connector after checking it is of the expected kind, so a read-only tool never runs
+// an action and the approval shown matches what runs.
+func (env *toolEnv) runConnector(ctx context.Context, args map[string]any, kind string) (any, error) {
+	id, err := argString(args, "connector_id", true)
+	if err != nil {
+		return nil, err
+	}
+	res, err := env.exec(ctx, "getConnector", map[string]any{"id": id}, nil)
+	if err != nil {
+		return nil, err
+	}
+	if res.Status >= 400 {
+		return apiResult(res)
+	}
+	c, _ := res.Body.(map[string]any)
+	if got, _ := c["kind"].(string); got != kind {
+		other := "query_connector"
+		if got == "action" {
+			other = "run_action_connector"
+		}
+		return nil, fmt.Errorf("%w: connector %v is a %s connector: use %s", errToolInput, c["name"], got, other)
+	}
+	params, _ := args["params"].(map[string]any)
+	if params == nil {
+		params = map[string]any{}
+	}
+	out, err := env.call(ctx, "runConnector", map[string]any{"id": id}, map[string]any{"params": params})
+	if err != nil {
+		return nil, err
+	}
+	if m, ok := out.(map[string]any); ok && m["error"] == nil {
+		result := pick(m, "ok", "status_code", "mapped", "body", "cached", "mapping_error").(map[string]any)
+		result["connector"] = c["name"]
+		return result, nil
+	}
+	return out, nil
 }
