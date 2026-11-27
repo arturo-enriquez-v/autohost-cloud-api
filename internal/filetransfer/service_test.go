@@ -182,6 +182,12 @@ func TestLocalOperations(t *testing.T) {
 			t.Errorf("rename %s -> %s: expected invalid, got %v", tc[0], tc[1], err)
 		}
 	}
+	if _, err := svc.Rename(ctx, master, "/docs/missing.txt", "/docs/sub/missing.txt"); KindOf(err) != KindNotFound {
+		t.Errorf("moving a missing item: expected not found, got %v", err)
+	}
+	if _, err := svc.Rename(ctx, master, "/docs/a.txt", "/nope/a.txt"); KindOf(err) != KindNotFound {
+		t.Errorf("moving into a missing folder: expected not found, got %v", err)
+	}
 	if _, err := svc.Rename(ctx, master, "/", "/x"); KindOf(err) != KindInvalid {
 		t.Errorf("renaming the root must be rejected, got %v", err)
 	}

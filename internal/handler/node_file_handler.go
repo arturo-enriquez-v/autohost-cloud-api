@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -113,10 +114,15 @@ func writeFileError(w http.ResponseWriter, msg string, code int) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
-// writeFileOpError maps a filetransfer error to an HTTP status, keeping its message.
+// writeFileOpError maps a filetransfer error to an HTTP status, keeping its message. Internal errors are
+// logged and answered with a fixed message: they carry OS details such as absolute host paths.
 func writeFileOpError(w http.ResponseWriter, err error) {
 	code := http.StatusInternalServerError
 	switch filetransfer.KindOf(err) {
+	case filetransfer.KindInternal:
+		log.Printf("[ERROR] files: %v", err)
+		writeFileError(w, "internal error", code)
+		return
 	case filetransfer.KindInvalid:
 		code = http.StatusBadRequest
 	case filetransfer.KindNotFound:

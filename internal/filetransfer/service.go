@@ -287,6 +287,9 @@ func (s *Service) Rename(ctx context.Context, n *node.Node, fromPath, toPath str
 			return "", opMsg(KindConflict, "destination already exists")
 		}
 		if err := os.Rename(src, dst); err != nil {
+			if os.IsNotExist(err) {
+				return "", opMsg(KindNotFound, "the item or the destination folder does not exist")
+			}
 			return "", opErr(KindInternal, err)
 		}
 		return cleanedDst, nil
