@@ -167,6 +167,21 @@ func TestLocalOperations(t *testing.T) {
 	if _, err := svc.Rename(ctx, master, "/docs/a.txt", "/docs/sub"); KindOf(err) != KindConflict {
 		t.Errorf("rename onto existing path: expected conflict, got %v", err)
 	}
+	// Moving to another folder.
+	if p, err := svc.Rename(ctx, master, "/docs/a.txt", "/docs/sub/a.txt"); err != nil || p != "/docs/sub/a.txt" {
+		t.Fatalf("move into a subfolder: %q, %v", p, err)
+	}
+	if _, err := os.Stat(filepath.Join(shared, "docs", "sub", "a.txt")); err != nil {
+		t.Fatalf("moved file not found: %v", err)
+	}
+	if _, err := svc.Rename(ctx, master, "/docs/sub/a.txt", "/docs/a.txt"); err != nil {
+		t.Fatalf("move back: %v", err)
+	}
+	for _, tc := range [][2]string{{"/docs", "/docs/sub/docs"}, {"/docs", "/docs/"}, {"/docs/", "/docs"}} {
+		if _, err := svc.Rename(ctx, master, tc[0], tc[1]); KindOf(err) != KindInvalid {
+			t.Errorf("rename %s -> %s: expected invalid, got %v", tc[0], tc[1], err)
+		}
+	}
 	if _, err := svc.Rename(ctx, master, "/", "/x"); KindOf(err) != KindInvalid {
 		t.Errorf("renaming the root must be rejected, got %v", err)
 	}

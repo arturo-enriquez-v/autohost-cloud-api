@@ -2340,7 +2340,10 @@ paths:
       tags: [Files]
       operationId: renameFile
       summary: Rename or move a file or directory
-      description: Requires `files:write`. Fails with `409` if `new_path` already exists.
+      description: |
+        Requires `files:write`. `new_path` may be in another folder of the shared folder (the folder must
+        exist). Fails with `409` if `new_path` already exists, and with `400` when it is the same path or a
+        folder would be moved inside itself.
       requestBody:
         required: true
         content:

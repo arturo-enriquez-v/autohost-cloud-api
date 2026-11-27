@@ -259,8 +259,17 @@ func (s *Service) Mkdir(ctx context.Context, n *node.Node, relPath string) (stri
 	return filepath.Clean("/" + relPath), nil
 }
 
-// Rename moves fromPath to toPath and returns the cleaned destination.
+// Rename moves fromPath to toPath (another name, another folder or both) and returns the cleaned
+// destination.
 func (s *Service) Rename(ctx context.Context, n *node.Node, fromPath, toPath string) (string, error) {
+	src, dst := filepath.Clean("/"+fromPath), filepath.Clean("/"+toPath)
+	if src == dst {
+		return "", opMsg(KindInvalid, "the source and the destination are the same")
+	}
+	// The OS refuses it with a bare "invalid argument"; say what is wrong instead.
+	if strings.HasPrefix(dst, src+"/") {
+		return "", opMsg(KindInvalid, "cannot move a folder inside itself")
+	}
 	if n.IsLocal {
 		src, _, err := s.localPath(fromPath)
 		if err != nil {
