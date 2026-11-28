@@ -158,7 +158,14 @@ func (idx *Index) Search(query, tag string, limit int) (results []Operation, tot
 		}
 		matches = append(matches, SearchResult{Operation: *op, Score: score})
 	}
-	sort.SliceStable(matches, func(i, j int) bool { return matches[i].Score > matches[j].Score })
+	// On a tie the shorter operation ID wins: it is the closer match ("delete connector" →
+	// deleteConnector, not deleteConnectorVariable).
+	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].Score != matches[j].Score {
+			return matches[i].Score > matches[j].Score
+		}
+		return len(matches[i].ID) < len(matches[j].ID)
+	})
 	total = len(matches)
 	if limit > 0 && len(matches) > limit {
 		matches = matches[:limit]
