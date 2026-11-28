@@ -58,6 +58,7 @@ var RepositoryModule = fx.Provide(
 	fx.Annotate(postgres.NewNotificationMarkerRepository, fx.As(new(identity.NotificationMarkerRepository))),
 	fx.Annotate(postgres.NewVMRepository, fx.As(new(infra.VMRepository))),
 	fx.Annotate(postgres.NewConnectorRepository, fx.As(new(connectors.Repository))),
+	fx.Annotate(postgres.NewConnectorVariableRepository, fx.As(new(connectors.VariableRepository))),
 	fx.Annotate(postgres.NewAssistantSettingsRepository, fx.As(new(assistant.SettingsRepository))),
 )
 

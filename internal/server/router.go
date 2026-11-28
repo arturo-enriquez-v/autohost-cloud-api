@@ -217,6 +217,7 @@ func NewRouter(p RouterParams) *chi.Mux {
 		r.Mount("/projects", p.ProjectHandler.Routes())
 		if p.ConnectorHandler != nil {
 			r.Mount("/connectors", p.ConnectorHandler.Routes())
+			r.Mount("/connector-variables", p.ConnectorHandler.VariableRoutes())
 		}
 		if p.AssistantHandler != nil {
 			r.Mount("/assistant", p.AssistantHandler.Routes())

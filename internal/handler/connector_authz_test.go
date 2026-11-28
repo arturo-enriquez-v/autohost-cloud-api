@@ -140,6 +140,9 @@ type connFixture struct {
 	query, action  *connectors.Connector
 	otherProjectID string // connector in project B
 	upstreamHits   *int
+	upstreamURL    string
+	// Secret variables of project A and B.
+	varA, varB *connectors.Variable
 }
 
 // Users: owner (owns A), viewer/operator/editor (members of A), outsider (owns B only).
@@ -167,7 +170,7 @@ func newConnFixture(t *testing.T) *connFixture {
 	}})
 	box, _ := secretbox.New(bytes.Repeat([]byte{9}, 32))
 	repo := &connMemRepo{items: map[string]*connectors.Connector{}}
-	svc := connectors.NewServiceWith(repo, box, http.DefaultClient)
+	svc := connectors.NewServiceWith(repo, box, http.DefaultClient).WithVariables(newConnVarRepo())
 
 	secret := "tok-secret-123"
 	mk := func(project, name, kind string) *connectors.Connector {
@@ -187,13 +190,25 @@ func newConnFixture(t *testing.T) *connFixture {
 		query:        mk(projA, "q", connectors.KindQuery),
 		action:       mk(projA, "a", connectors.KindAction),
 		upstreamHits: &hits,
+		upstreamURL:  upstream.URL,
 	}
 	f.otherProjectID = mk(projB, "b", connectors.KindQuery).ID
+	mkVar := func(project, value string) *connectors.Variable {
+		v, err := svc.CreateVariable(context.Background(), connectors.VariableInput{
+			ProjectID: project, Name: "TOKEN", Secret: true, Value: &value, AllowedOrigins: []string{upstream.URL},
+		}, "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	f.varA, f.varB = mkVar(projA, "var-secret-A"), mkVar(projB, "var-secret-B")
 
 	h := handler.NewConnectorHandler(svc, apps.NewProjectService(projects))
 	h.SetRBACService(rbac)
 	r := chi.NewRouter()
 	r.Mount("/v1/connectors", h.Routes())
+	r.Mount("/v1/connector-variables", h.VariableRoutes())
 	f.router = r
 	return f
 }

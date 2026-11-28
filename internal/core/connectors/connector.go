@@ -70,9 +70,20 @@ var (
 	ErrSecretsNotConfigured = errors.New("credential storage is not configured on the server")
 	// ErrUpstream wraps failures to reach the external API (DNS, connection, timeout, blocked address).
 	ErrUpstream = errors.New("could not reach the external API")
+
+	ErrVariableNotFound = errors.New("variable not found")
+	ErrVariableExists   = errors.New("a variable with this name already exists in the project")
+	// ErrVariableInUse: deleting or renaming a variable that connectors reference would break them.
+	ErrVariableInUse = errors.New("the variable is used by connectors")
+	// ErrVariableValueRequired: the value must be entered again (adding allowed origins to a secret
+	// variable, or switching between secret and plain), so whoever edits it cannot send or reveal a
+	// secret they do not know.
+	ErrVariableValueRequired = errors.New("the value must be entered again")
+	// ErrVariableOrigin: a secret variable would be sent to an origin it is not allowed for.
+	ErrVariableOrigin = errors.New("a secret variable cannot be sent to this origin")
 )
 
-// KeyValue is a header. Values may contain {{param}} placeholders.
+// KeyValue is a header. Values may contain {{param}} and {{vars.NAME}} placeholders.
 type KeyValue struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
@@ -117,9 +128,11 @@ type ResponseMapping struct {
 
 // Definition is the part of a connector a user edits.
 type Definition struct {
-	ProjectID       string          `json:"project_id"`
-	Name            string          `json:"name"`
-	Description     string          `json:"description"`
+	ProjectID   string `json:"project_id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// Folder groups connectors in the panel; "/" separates levels ("Cloudflare/DNS"), "" is the top.
+	Folder          string          `json:"folder"`
 	Kind            string          `json:"kind"`
 	Method          string          `json:"method"`
 	URL             string          `json:"url"`

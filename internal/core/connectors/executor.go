@@ -48,9 +48,28 @@ type Doer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// buildRequest renders the definition with the param values and attaches the secret.
-func buildRequest(ctx context.Context, d *Definition, values map[string]string, secret string) (*http.Request, error) {
-	rawURL, err := renderURL(d.URL, values)
+// buildRequest renders the definition with the param values and the project variables, and attaches
+// the secret.
+func buildRequest(ctx context.Context, d *Definition, values map[string]string, secret string, vars map[string]resolvedVar) (*http.Request, error) {
+	tmplURL, err := effectiveURL(d.URL, vars)
+	if err != nil {
+		if errors.Is(err, ErrInvalid) {
+			// The variable changed after the connector was saved: a problem with this run, not the form.
+			return nil, fmt.Errorf("%w: %s", ErrInvalidParams, strings.TrimPrefix(err.Error(), ErrInvalid.Error()+": "))
+		}
+		return nil, err
+	}
+	if len(vars) > 0 {
+		merged := make(map[string]string, len(values)+len(vars))
+		for k, v := range values {
+			merged[k] = v
+		}
+		for name, v := range vars {
+			merged[varPrefix+name] = v.value
+		}
+		values = merged
+	}
+	rawURL, err := renderURL(tmplURL, values)
 	if err != nil {
 		return nil, err
 	}
@@ -105,13 +124,13 @@ func buildRequest(ctx context.Context, d *Definition, values map[string]string, 
 }
 
 // execute sends the request and reads at most maxResponseBytes of the answer. Occurrences of the secret
-// in the response (APIs that echo the request) are replaced, so members who can run a connector do not
-// learn its credentials.
-func execute(ctx context.Context, client Doer, d *Definition, values map[string]string, secret string, now time.Time) (*Result, error) {
+// and of secret variables in the response (APIs that echo the request) are replaced, so members who can
+// run a connector do not learn its credentials.
+func execute(ctx context.Context, client Doer, d *Definition, values map[string]string, secret string, vars map[string]resolvedVar, now time.Time) (*Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(d.TimeoutSeconds)*time.Second)
 	defer cancel()
 
-	req, err := buildRequest(ctx, d, values, secret)
+	req, err := buildRequest(ctx, d, values, secret, vars)
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +156,11 @@ func execute(ctx context.Context, client Doer, d *Definition, values map[string]
 		raw, res.Truncated = raw[:maxResponseBytes], true
 	}
 	raw = redactSecret(raw, secret, d.Auth)
+	for _, v := range vars {
+		if v.secret {
+			raw = redactSecret(raw, v.value, Auth{Type: AuthNone})
+		}
+	}
 
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return res, nil

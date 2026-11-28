@@ -125,11 +125,15 @@ func view(c *connectors.Connector, perms []string) *connectors.Connector {
 func writeConnectorError(w http.ResponseWriter, err error, op string) {
 	switch {
 	case errors.Is(err, connectors.ErrInvalid), errors.Is(err, connectors.ErrInvalidParams),
-		errors.Is(err, connectors.ErrSecretOriginChanged):
+		errors.Is(err, connectors.ErrSecretOriginChanged), errors.Is(err, connectors.ErrVariableValueRequired),
+		errors.Is(err, connectors.ErrVariableOrigin):
 		response.RespondError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, connectors.ErrNotFound):
 		response.RespondError(w, http.StatusNotFound, "connector not found")
-	case errors.Is(err, connectors.ErrNameExists), errors.Is(err, connectors.ErrSecretRequired):
+	case errors.Is(err, connectors.ErrVariableNotFound):
+		response.RespondError(w, http.StatusNotFound, "variable not found")
+	case errors.Is(err, connectors.ErrNameExists), errors.Is(err, connectors.ErrSecretRequired),
+		errors.Is(err, connectors.ErrVariableExists), errors.Is(err, connectors.ErrVariableInUse):
 		response.RespondError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, connectors.ErrSecretsNotConfigured):
 		response.RespondError(w, http.StatusServiceUnavailable, err.Error())

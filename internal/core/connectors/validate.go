@@ -30,12 +30,20 @@ const (
 	maxTimeout        = 30
 	defaultTimeout    = 15
 	maxSecretLen      = 4096
+	maxFolderLen      = 200
+	maxFolderDepth    = 5
+	maxFolderSegment  = 50
 )
+
+// varPrefix marks a project variable in a placeholder: {{vars.NAME}}.
+const varPrefix = "vars."
 
 var (
 	paramNameRe  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
 	headerNameRe = regexp.MustCompile("^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}$")
-	placeholder  = regexp.MustCompile(`\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
+	placeholder  = regexp.MustCompile(`\{\{\s*((?:vars\.)?[A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
+	// baseVar is a variable at the very start of the URL, used as its base ("{{vars.API}}/users").
+	baseVar = regexp.MustCompile(`^\{\{\s*vars\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
 	// anyBraces finds "{{" so malformed placeholders are reported instead of sent literally.
 	anyBraces = regexp.MustCompile(`\{\{[^}]*\}\}`)
 )
@@ -59,6 +67,7 @@ func invalid(format string, args ...any) error {
 func (d *Definition) Normalize() {
 	d.Name = strings.TrimSpace(d.Name)
 	d.Description = strings.TrimSpace(d.Description)
+	d.Folder = normalizeFolder(d.Folder)
 	d.Kind = strings.ToLower(strings.TrimSpace(d.Kind))
 	d.Method = strings.ToUpper(strings.TrimSpace(d.Method))
 	d.URL = strings.TrimSpace(d.URL)
@@ -134,13 +143,25 @@ func (d *Definition) Validate() error {
 	if len(d.Description) > maxDescriptionLen {
 		return invalid("description is too long (max %d characters)", maxDescriptionLen)
 	}
+	if err := validateFolder(d.Folder); err != nil {
+		return err
+	}
 	if d.Kind != KindQuery && d.Kind != KindAction {
 		return invalid("kind must be 'query' or 'action'")
 	}
 	if !allowedMethods[d.Method] {
 		return invalid("method must be GET, POST, PUT, PATCH, DELETE or HEAD")
 	}
-	if err := validateURL(d.URL); err != nil {
+	if _, ok := BaseVariable(d.URL); ok {
+		// The host then comes from a variable that can change without editing the connector, so the
+		// connector's own credentials (bound to its URL's origin) could end up elsewhere.
+		if d.Auth.Type != AuthNone {
+			return invalid("a connector whose URL starts with a variable cannot have its own credentials: keep the token in a secret variable")
+		}
+		if err := validateBaseVarURL(d.URL); err != nil {
+			return err
+		}
+	} else if err := validateURL(d.URL); err != nil {
 		return err
 	}
 	if len(d.Headers) > maxHeaders {
@@ -181,6 +202,101 @@ func (d *Definition) Validate() error {
 		return invalid("timeout_seconds must be between 1 and %d", maxTimeout)
 	}
 	return nil
+}
+
+// BaseVariable returns the name of the variable a URL starts with ("{{vars.API}}/users" → "API").
+func BaseVariable(rawURL string) (string, bool) {
+	m := baseVar.FindStringSubmatch(rawURL)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
+// validateBaseVarURL checks a URL that starts with a variable: what follows must be a path or a query
+// (the variable gives scheme and host). The full URL is checked again when the variable is known.
+func validateBaseVarURL(raw string) error {
+	if len(raw) > maxURLLen {
+		return invalid("url is too long (max %d characters)", maxURLLen)
+	}
+	rest := raw[len(baseVar.FindString(raw)):]
+	if rest != "" && rest[0] != '/' && rest[0] != '?' {
+		return invalid("after the base variable the url must continue with / or ?")
+	}
+	if strings.ContainsAny(rest, " \r\n\t\x00") {
+		return invalid("url must not contain spaces or control characters")
+	}
+	if _, err := url.Parse("https://base.invalid" + placeholder.ReplaceAllString(rest, "x")); err != nil {
+		return invalid("url is not valid")
+	}
+	return nil
+}
+
+// withBase replaces the base variable of a URL by its value and checks the result like a fixed URL.
+func withBase(rawURL, value string) (string, error) {
+	if strings.ContainsAny(value, "{}") {
+		return "", invalid("the base url variable cannot contain { or }")
+	}
+	full := strings.TrimRight(value, "/") + rawURL[len(baseVar.FindString(rawURL)):]
+	if err := validateURL(full); err != nil {
+		return "", fmt.Errorf("base url variable: %w", err)
+	}
+	return full, nil
+}
+
+// normalizeFolder trims every level and drops empty ones: " a / /b/ " → "a/b".
+func normalizeFolder(f string) string {
+	parts := strings.Split(f, "/")
+	out := parts[:0]
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, "/")
+}
+
+func validateFolder(f string) error {
+	if f == "" {
+		return nil
+	}
+	if len(f) > maxFolderLen {
+		return invalid("folder is too long (max %d characters)", maxFolderLen)
+	}
+	parts := strings.Split(f, "/")
+	if len(parts) > maxFolderDepth {
+		return invalid("folder has too many levels (max %d)", maxFolderDepth)
+	}
+	for _, p := range parts {
+		if len(p) > maxFolderSegment {
+			return invalid("folder names are limited to %d characters", maxFolderSegment)
+		}
+		for _, r := range p {
+			if r < 0x20 || r == 0x7f {
+				return invalid("folder must not contain control characters")
+			}
+		}
+	}
+	return nil
+}
+
+// VariableRefs returns the project variables a definition uses, without duplicates.
+func (d *Definition) VariableRefs() []string {
+	texts := []string{d.URL, d.Body}
+	for _, h := range d.Headers {
+		texts = append(texts, h.Value)
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range texts {
+		for _, m := range placeholder.FindAllStringSubmatch(t, -1) {
+			if name, ok := strings.CutPrefix(m[1], varPrefix); ok && !seen[name] {
+				seen[name] = true
+				out = append(out, name)
+			}
+		}
+	}
+	return out
 }
 
 // validateURL requires an absolute http(s) URL whose scheme, host and port are fixed: placeholders may
@@ -254,6 +370,9 @@ func (d *Definition) validateParams() error {
 			sub := placeholder.FindStringSubmatch(m)
 			if sub == nil || sub[0] != m {
 				return invalid("malformed placeholder %q", m)
+			}
+			if strings.HasPrefix(sub[1], varPrefix) {
+				continue // checked against the project's variables by the service
 			}
 			if !declared[sub[1]] {
 				return invalid("placeholder {{%s}} is not a declared param", sub[1])

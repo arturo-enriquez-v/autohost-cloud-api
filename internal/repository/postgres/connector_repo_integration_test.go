@@ -43,7 +43,7 @@ func TestConnectorRepository(t *testing.T) {
 	c := &connectors.Connector{
 		ID: uuid.NewString(),
 		Definition: connectors.Definition{
-			ProjectID: projectID, Name: "Status", Kind: connectors.KindQuery, Method: "GET",
+			ProjectID: projectID, Name: "Status", Folder: "Infra/DNS", Kind: connectors.KindQuery, Method: "GET",
 			URL:      "https://api.example.com/{{id}}",
 			Headers:  []connectors.KeyValue{{Name: "X-A", Value: "b"}},
 			Params:   []connectors.Param{{Name: "id", Type: "string", Required: true}},
@@ -58,7 +58,8 @@ func TestConnectorRepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !created.HasSecret || created.Params[0].Name != "id" || created.Response.Fields[0].Path != "n" || created.CreatedBy != userID {
+	if !created.HasSecret || created.Params[0].Name != "id" || created.Response.Fields[0].Path != "n" || created.CreatedBy != userID ||
+		created.Folder != "Infra/DNS" {
 		t.Fatalf("created = %+v", created)
 	}
 	dup := *c
@@ -67,9 +68,9 @@ func TestConnectorRepository(t *testing.T) {
 		t.Fatalf("duplicate name: err = %v", err)
 	}
 
-	created.Name, created.SecretCiphertext = "Status 2", ""
+	created.Name, created.SecretCiphertext, created.Folder = "Status 2", "", "Infra"
 	updated, err := repo.Update(ctx, created)
-	if err != nil || updated.Name != "Status 2" || updated.HasSecret || !updated.UpdatedAt.After(created.CreatedAt.Add(-1)) {
+	if err != nil || updated.Name != "Status 2" || updated.HasSecret || updated.Folder != "Infra" || !updated.UpdatedAt.After(created.CreatedAt.Add(-1)) {
 		t.Fatalf("update: %+v, %v", updated, err)
 	}
 
@@ -96,5 +97,34 @@ func TestConnectorRepository(t *testing.T) {
 	}
 	if err := repo.Delete(ctx, c.ID); !errors.Is(err, connectors.ErrNotFound) {
 		t.Fatalf("second delete: %v", err)
+	}
+
+	vars := NewConnectorVariableRepository(db)
+	v := &connectors.Variable{
+		ID: uuid.NewString(), ProjectID: projectID, Name: "TOKEN", Secret: true, ValueCipher: "v1:xyz",
+		AllowedOrigins: []string{"https://api.example.com"}, CreatedBy: userID,
+	}
+	cv, err := vars.CreateVariable(ctx, v)
+	if err != nil || !cv.HasValue || cv.Value != "" || len(cv.AllowedOrigins) != 1 || cv.CreatedBy != userID {
+		t.Fatalf("create variable: %+v, %v", cv, err)
+	}
+	dupVar := *v
+	dupVar.ID = uuid.NewString()
+	if _, err := vars.CreateVariable(ctx, &dupVar); !errors.Is(err, connectors.ErrVariableExists) {
+		t.Fatalf("duplicate variable: err = %v", err)
+	}
+	cv.Secret, cv.Value, cv.ValueCipher, cv.AllowedOrigins = false, "plain", "", []string{}
+	uv, err := vars.UpdateVariable(ctx, cv)
+	if err != nil || uv.Secret || uv.Value != "plain" || !uv.HasValue || len(uv.AllowedOrigins) != 0 {
+		t.Fatalf("update variable: %+v, %v", uv, err)
+	}
+	if list, err := vars.ListVariables(ctx, projectID); err != nil || len(list) != 1 {
+		t.Fatalf("list variables: %d, %v", len(list), err)
+	}
+	if err := vars.DeleteVariable(ctx, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vars.GetVariable(ctx, v.ID); !errors.Is(err, connectors.ErrVariableNotFound) {
+		t.Fatalf("get variable after delete: %v", err)
 	}
 }

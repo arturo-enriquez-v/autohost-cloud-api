@@ -38,6 +38,7 @@ type Input struct {
 // Service holds the rules for connectors. Authorization is done by the handler.
 type Service struct {
 	repo   Repository
+	vars   VariableRepository
 	box    *secretbox.Box
 	client Doer
 	cache  *resultCache
@@ -47,7 +48,7 @@ type Service struct {
 // NewService builds the service from the environment: SECRETS_ENCRYPTION_KEY (an invalid key stops the
 // API from starting; a missing one only disables storing credentials) and
 // CONNECTORS_ALLOW_PRIVATE_NETWORKS.
-func NewService(repo Repository) (*Service, error) {
+func NewService(repo Repository, vars VariableRepository) (*Service, error) {
 	box, err := secretbox.FromEnv()
 	if err != nil {
 		return nil, err
@@ -57,12 +58,18 @@ func NewService(repo Repository) (*Service, error) {
 	}
 	allowPrivate := strings.EqualFold(strings.TrimSpace(os.Getenv(EnvAllowPrivate)), "true")
 	client := safehttp.NewClient(safehttp.Options{AllowPrivate: allowPrivate, Timeout: maxTimeout * time.Second})
-	return NewServiceWith(repo, box, client), nil
+	return NewServiceWith(repo, box, client).WithVariables(vars), nil
 }
 
 // NewServiceWith builds the service with explicit dependencies (tests).
 func NewServiceWith(repo Repository, box *secretbox.Box, client Doer) *Service {
 	return &Service{repo: repo, box: box, client: client, cache: newResultCache(), now: time.Now}
+}
+
+// WithVariables enables project variables ({{vars.NAME}}); without them a connector using one fails.
+func (s *Service) WithVariables(vars VariableRepository) *Service {
+	s.vars = vars
+	return s
 }
 
 // SecretsConfigured reports whether credentials can be stored.
@@ -95,6 +102,9 @@ func (s *Service) Create(ctx context.Context, in Input, createdBy string) (*Conn
 	if err := in.Validate(); err != nil {
 		return nil, err
 	}
+	if err := s.checkVariableUse(ctx, &in.Definition); err != nil {
+		return nil, err
+	}
 	c := &Connector{ID: uuid.NewString(), Definition: in.Definition, CreatedBy: createdBy}
 	if in.Secret != nil && *in.Secret != "" && in.Auth.Type != AuthNone {
 		if err := s.setSecret(c, *in.Secret); err != nil {
@@ -111,6 +121,9 @@ func (s *Service) Update(ctx context.Context, existing *Connector, in Input) (*C
 	in.ProjectID = existing.ProjectID
 	in.Normalize()
 	if err := in.Validate(); err != nil {
+		return nil, err
+	}
+	if err := s.checkVariableUse(ctx, &in.Definition); err != nil {
 		return nil, err
 	}
 	c := *existing
@@ -168,7 +181,11 @@ func (s *Service) Run(ctx context.Context, c *Connector, params map[string]any, 
 	if err != nil {
 		return nil, err
 	}
-	key := cacheKey(c, values)
+	vars, err := s.resolveVariables(ctx, &c.Definition)
+	if err != nil {
+		return nil, err
+	}
+	key := cacheKey(c, values, vars)
 	if c.Kind == KindQuery && c.CacheTTLSeconds > 0 {
 		if res, ok := s.cache.get(key, s.now()); ok {
 			return res, nil
@@ -178,8 +195,9 @@ func (s *Service) Run(ctx context.Context, c *Connector, params map[string]any, 
 	if err != nil {
 		return nil, err
 	}
-	res, err := execute(ctx, s.client, &c.Definition, values, secret, s.now())
-	if c.Kind == KindAction && !errors.Is(err, ErrInvalidParams) && !errors.Is(err, ErrSecretRequired) {
+	res, err := execute(ctx, s.client, &c.Definition, values, secret, vars, s.now())
+	if c.Kind == KindAction && !errors.Is(err, ErrInvalidParams) && !errors.Is(err, ErrSecretRequired) &&
+		!errors.Is(err, ErrVariableOrigin) {
 		s.recordRun(c, userID, values, res, err)
 	}
 	if err != nil {
@@ -202,6 +220,10 @@ func (s *Service) Test(ctx context.Context, in Input, existing *Connector, param
 	if err != nil {
 		return nil, err
 	}
+	vars, err := s.resolveVariables(ctx, &in.Definition)
+	if err != nil {
+		return nil, err
+	}
 	secret := ""
 	switch {
 	case in.Auth.Type == AuthNone:
@@ -215,7 +237,7 @@ func (s *Service) Test(ctx context.Context, in Input, existing *Connector, param
 			return nil, err
 		}
 	}
-	return execute(ctx, s.client, &in.Definition, values, secret, s.now())
+	return execute(ctx, s.client, &in.Definition, values, secret, vars, s.now())
 }
 
 // ListRuns returns the latest runs of a connector.

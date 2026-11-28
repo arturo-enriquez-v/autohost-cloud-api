@@ -4,6 +4,8 @@
 package connectors
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -113,7 +115,8 @@ func renderBody(d *Definition, values map[string]string) (string, error) {
 		return "", nil
 	case BodyJSON:
 		out := fill(d.Body, values, func(name, v string) string {
-			if types[name] == ParamString {
+			// Variables are text, like string params.
+			if types[name] == ParamString || strings.HasPrefix(name, varPrefix) {
 				b, _ := json.Marshal(v)
 				return string(b[1 : len(b)-1])
 			}
@@ -149,8 +152,9 @@ func loggableParams(params []Param, values map[string]string) map[string]string 
 	return out
 }
 
-// cacheKey identifies a query result: same connector version and same parameter values.
-func cacheKey(c *Connector, values map[string]string) string {
+// cacheKey identifies a query result: same connector version, same parameter values and same variable
+// values (hashed, so secret ones are not kept in clear in the key).
+func cacheKey(c *Connector, values map[string]string, vars map[string]resolvedVar) string {
 	names := make([]string, 0, len(values))
 	for k := range values {
 		names = append(names, k)
@@ -165,6 +169,19 @@ func cacheKey(c *Connector, values map[string]string) string {
 		b.WriteString(url.QueryEscape(k))
 		b.WriteByte('=')
 		b.WriteString(url.QueryEscape(values[k]))
+	}
+	if len(vars) > 0 {
+		vnames := make([]string, 0, len(vars))
+		for k := range vars {
+			vnames = append(vnames, k)
+		}
+		sort.Strings(vnames)
+		h := sha256.New()
+		for _, k := range vnames {
+			h.Write([]byte(url.QueryEscape(k) + "=" + url.QueryEscape(vars[k].value) + "\n"))
+		}
+		b.WriteString("|vars=")
+		b.WriteString(hex.EncodeToString(h.Sum(nil)))
 	}
 	return b.String()
 }

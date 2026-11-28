@@ -106,6 +106,8 @@ tags:
       connector reads data for widgets (results can be cached); an `action` connector triggers changes
       and every run is recorded. Permissions come from the project membership: `connectors:read` (viewer),
       `connectors:run` (operator) and `connectors:manage` (editor); the owner and admins have all of them.
+      A connector can sit in a `folder` and use the project's variables (`/v1/connector-variables`) as
+      `{{vars.NAME}}`, so tokens and base URLs are kept once per project.
       Requests leave from the API through a client that blocks loopback, link-local, cloud metadata and,
       unless `CONNECTORS_ALLOW_PRIVATE_NETWORKS=true`, private addresses; redirects are only followed
       within the same origin. Credentials are stored encrypted with `SECRETS_ENCRYPTION_KEY` and are never
@@ -6299,6 +6301,8 @@ paths:
           $ref: "#/components/responses/InternalErrorJSON"
         "424":
           $ref: "#/components/responses/ConnectorUpstreamError"
+        "503":
+          $ref: "#/components/responses/SecretsNotConfigured"
 
   /v1/connectors/{id}:
     parameters:
@@ -6429,6 +6433,8 @@ paths:
           $ref: "#/components/responses/InternalErrorJSON"
         "424":
           $ref: "#/components/responses/ConnectorUpstreamError"
+        "503":
+          $ref: "#/components/responses/SecretsNotConfigured"
 
   /v1/connectors/{id}/runs:
     parameters:
@@ -6462,6 +6468,154 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/ConnectorNotFound"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+
+  /v1/connector-variables:
+    get:
+      tags: [Connectors]
+      operationId: listConnectorVariables
+      summary: List a project's connector variables
+      description: |
+        Requires `connectors:manage` on `project_id`. Values shared by the project's connectors, used as
+        `{{vars.NAME}}`. The value of secret variables is never returned (`value` is `""`).
+      parameters:
+        - name: project_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The project's variables, by name.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ConnectorVariable"
+        "400":
+          $ref: "#/components/responses/BadRequestJSON"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          $ref: "#/components/responses/ProjectNotFoundJSON"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+    post:
+      tags: [Connectors]
+      operationId: createConnectorVariable
+      summary: Create a connector variable
+      description: |
+        Requires `connectors:manage` on `project_id`. A secret variable is encrypted before it is stored
+        (needs `SECRETS_ENCRYPTION_KEY`, `503` otherwise), is never returned, is hidden in connector
+        responses and is only sent to its `allowed_origins`. At most 100 variables per project.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectorVariableRequest"
+      responses:
+        "201":
+          description: Variable created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorVariable"
+        "400":
+          $ref: "#/components/responses/ConnectorVariableBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          $ref: "#/components/responses/ProjectNotFoundJSON"
+        "409":
+          $ref: "#/components/responses/ConnectorVariableConflict"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+        "503":
+          $ref: "#/components/responses/SecretsNotConfigured"
+
+  /v1/connector-variables/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ConnectorVariableIDPath"
+    get:
+      tags: [Connectors]
+      operationId: getConnectorVariable
+      summary: Get a connector variable
+      description: Requires `connectors:manage` on the variable's project. A secret value is never returned.
+      responses:
+        "200":
+          description: The variable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorVariable"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          $ref: "#/components/responses/ConnectorVariableNotFound"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+    put:
+      tags: [Connectors]
+      operationId: updateConnectorVariable
+      summary: Update a connector variable
+      description: |
+        Requires `connectors:manage`. `project_id` is ignored. `value` omitted keeps the stored one, except
+        when switching between secret and plain or adding an allowed origin to a secret variable: then
+        `value` must be sent again (`400`), so whoever edits it cannot send or reveal a secret they do not
+        know. Renaming a variable that connectors use answers `409`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectorVariableRequest"
+      responses:
+        "200":
+          description: The updated variable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorVariable"
+        "400":
+          $ref: "#/components/responses/ConnectorVariableBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          $ref: "#/components/responses/ConnectorVariableNotFound"
+        "409":
+          $ref: "#/components/responses/ConnectorVariableConflict"
+        "500":
+          $ref: "#/components/responses/InternalErrorJSON"
+        "503":
+          $ref: "#/components/responses/SecretsNotConfigured"
+    delete:
+      tags: [Connectors]
+      operationId: deleteConnectorVariable
+      summary: Delete a connector variable
+      description: Requires `connectors:manage`. A variable that connectors use cannot be deleted (`409`).
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenJSON"
+        "404":
+          $ref: "#/components/responses/ConnectorVariableNotFound"
+        "409":
+          $ref: "#/components/responses/ConnectorVariableConflict"
         "500":
           $ref: "#/components/responses/InternalErrorJSON"
 
@@ -7046,6 +7200,14 @@ components:
       schema:
         type: string
         format: uuid
+    ConnectorVariableIDPath:
+      name: id
+      in: path
+      required: true
+      description: Connector variable ID.
+      schema:
+        type: string
+        format: uuid
     MonitorIDPath:
       name: id
       in: path
@@ -7182,14 +7344,43 @@ components:
             error: project not found
     ConnectorBadRequest:
       description: |
-        Invalid JSON, definition or parameter values (the message says which), or the URL's scheme or host
-        changed while credentials are stored and `secret` was not sent again.
+        Invalid JSON, definition or parameter values (the message says which); the URL's scheme or host
+        changed while credentials are stored and `secret` was not sent again; a `{{vars.NAME}}` that the
+        project does not define; or a secret variable that is not allowed for the URL's origin.
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
           example:
             error: "invalid connector: placeholders are not allowed in the url host"
+    ConnectorVariableNotFound:
+      description: Unknown variable, or one in a project where the caller lacks `connectors:read`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: variable not found
+    ConnectorVariableBadRequest:
+      description: |
+        Invalid JSON, name, value or allowed origin (the message says which), or the value was not sent
+        again when it must be.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "the value must be entered again: adding allowed origin https://api.example.com"
+    ConnectorVariableConflict:
+      description: |
+        Another variable of the project has this name, or connectors use the variable (deleting or
+        renaming it would break them; the message lists them).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "the variable is used by connectors: DNS records, Purge cache"
     ConnectorNameExists:
       description: Another connector of the project has this name.
       content:
@@ -10069,6 +10260,13 @@ components:
         description:
           type: string
           maxLength: 500
+        folder:
+          type: string
+          maxLength: 200
+          default: ""
+          description: |
+            Folder that groups the connector in the panel; `/` separates levels (at most 5, 50 characters
+            each), e.g. `Cloudflare/DNS`. Spaces around levels and empty levels are dropped; `""` is the top.
         kind:
           type: string
           enum: [query, action]
@@ -10079,15 +10277,17 @@ components:
           type: string
           maxLength: 2048
           description: |
-            Absolute `http`/`https` URL. `{{param}}` placeholders are allowed in the path (values are
-            path-escaped) and the query (query-escaped), never in the host or port. No credentials in the
-            URL: use `auth`.
-          examples: ["https://api.example.com/v1/users/{{id}}?limit={{limit}}"]
+            Absolute `http`/`https` URL. `{{param}}` and `{{vars.NAME}}` placeholders are allowed in the
+            path (values are path-escaped) and the query (query-escaped), never in the host or port. No
+            credentials in the URL: use `auth` or a secret variable. The URL may also start with a plain
+            variable holding the base URL (`{{vars.API}}/users`); the result is checked like a fixed URL on
+            every run, and such a connector cannot have its own credentials (`auth.type` must be `none`).
+          examples: ["https://api.example.com/v1/users/{{id}}?limit={{limit}}", "{{vars.API}}/v1/users/{{id}}"]
         headers:
           type: array
           maxItems: 30
           description: |
-            Values may contain placeholders. `Host`, `Content-Length`, `Transfer-Encoding`, `Connection` and
+            Values may contain placeholders, also `{{vars.NAME}}` (e.g. `Bearer {{vars.TOKEN}}`). `Host`, `Content-Length`, `Transfer-Encoding`, `Connection` and
             other hop-by-hop headers cannot be set.
           items:
             type: object
@@ -10106,8 +10306,9 @@ components:
           type: string
           maxLength: 65536
           description: |
-            Template. In `json`, string params are inserted JSON-escaped (write them between quotes) and
-            numbers and booleans as they are (an empty one becomes `null`); the result must be valid JSON.
+            Template. In `json`, string params and variables are inserted JSON-escaped (write them between
+            quotes) and numbers and booleans as they are (an empty one becomes `null`); the result must be
+            valid JSON.
             In `form`, values are URL-encoded.
         params:
           type: array
@@ -10156,6 +10357,78 @@ components:
             updated_at:
               type: string
               format: date-time
+
+    ConnectorVariableRequest:
+      type: object
+      required: [project_id, name]
+      properties:
+        project_id:
+          type: string
+          format: uuid
+          description: Ignored on update.
+        name:
+          type: string
+          pattern: "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+          description: Unique within the project; used as `{{vars.NAME}}`.
+        description:
+          type: string
+          maxLength: 500
+        secret:
+          type: boolean
+          default: false
+          description: Stored encrypted, never returned, hidden in responses, only sent to `allowed_origins`.
+        value:
+          type: string
+          maxLength: 4096
+          writeOnly: true
+          description: |
+            No line breaks. Required for a new secret variable; omitted on update keeps the stored one
+            (see `updateConnectorVariable` for when it must be sent again).
+        allowed_origins:
+          type: array
+          maxItems: 10
+          items:
+            type: string
+          description: |
+            Secret variables only (required, at least one): where the value may be sent, as scheme and host
+            (`https://api.cloudflare.com`, optional port). A connector whose URL has another origin is
+            refused when saved and when run. Ignored for plain variables.
+
+    ConnectorVariable:
+      type: object
+      required: [id, project_id, name, description, secret, value, has_value, allowed_origins, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        secret:
+          type: boolean
+        value:
+          type: string
+          description: The value of a plain variable; always `""` for a secret one.
+        has_value:
+          type: boolean
+          description: Whether a value is stored (always true for plain variables).
+        allowed_origins:
+          type: array
+          items:
+            type: string
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     ConnectorRunParams:
       type: object

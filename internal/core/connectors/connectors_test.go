@@ -575,7 +575,7 @@ func TestUpstreamErrorsAreGeneric(t *testing.T) {
 	// Real safe client: a loopback URL is blocked at dial time.
 	svc, err := func() (*Service, error) {
 		t.Setenv("SECRETS_ENCRYPTION_KEY", "")
-		return NewService(repo)
+		return NewService(repo, nil)
 	}()
 	if err != nil {
 		t.Fatal(err)

@@ -25,7 +25,7 @@ func NewConnectorRepository(db *sqlx.DB) *ConnectorRepository {
 	return &ConnectorRepository{db: db}
 }
 
-const connectorColumns = `id, project_id, name, description, kind, method, url, headers, body_type, body,
+const connectorColumns = `id, project_id, name, description, folder, kind, method, url, headers, body_type, body,
 	params, auth, secret_ciphertext, response_mapping, cache_ttl_seconds, timeout_seconds,
 	COALESCE(created_by::text, '') AS created_by, created_at, updated_at`
 
@@ -34,6 +34,7 @@ type connectorRow struct {
 	ProjectID        string    `db:"project_id"`
 	Name             string    `db:"name"`
 	Description      string    `db:"description"`
+	Folder           string    `db:"folder"`
 	Kind             string    `db:"kind"`
 	Method           string    `db:"method"`
 	URL              string    `db:"url"`
@@ -55,7 +56,7 @@ func (r connectorRow) toDomain() (*connectors.Connector, error) {
 	c := &connectors.Connector{
 		ID: r.ID,
 		Definition: connectors.Definition{
-			ProjectID: r.ProjectID, Name: r.Name, Description: r.Description, Kind: r.Kind,
+			ProjectID: r.ProjectID, Name: r.Name, Description: r.Description, Folder: r.Folder, Kind: r.Kind,
 			Method: r.Method, URL: r.URL, BodyType: r.BodyType, Body: r.Body,
 			CacheTTLSeconds: r.CacheTTLSeconds, TimeoutSeconds: r.TimeoutSeconds,
 		},
@@ -126,11 +127,11 @@ func (r *ConnectorRepository) Create(ctx context.Context, c *connectors.Connecto
 	var row connectorRow
 	err = r.db.GetContext(ctx, &row, `
 		INSERT INTO connectors (id, project_id, name, description, kind, method, url, headers, body_type, body,
-			params, auth, secret_ciphertext, response_mapping, cache_ttl_seconds, timeout_seconds, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+			params, auth, secret_ciphertext, response_mapping, cache_ttl_seconds, timeout_seconds, created_by, folder)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		RETURNING `+connectorColumns,
 		c.ID, c.ProjectID, c.Name, c.Description, c.Kind, c.Method, c.URL, j.headers, c.BodyType, c.Body,
-		j.params, j.auth, c.SecretCiphertext, j.response, c.CacheTTLSeconds, c.TimeoutSeconds, nullableUUID(c.CreatedBy))
+		j.params, j.auth, c.SecretCiphertext, j.response, c.CacheTTLSeconds, c.TimeoutSeconds, nullableUUID(c.CreatedBy), c.Folder)
 	if err != nil {
 		return nil, mapConnectorErr(err)
 	}
@@ -162,11 +163,11 @@ func (r *ConnectorRepository) list(ctx context.Context, query string, args ...an
 }
 
 func (r *ConnectorRepository) ListByProjects(ctx context.Context, projectIDs []string) ([]*connectors.Connector, error) {
-	return r.list(ctx, `SELECT `+connectorColumns+` FROM connectors WHERE project_id = ANY($1::uuid[]) ORDER BY name`, pq.Array(projectIDs))
+	return r.list(ctx, `SELECT `+connectorColumns+` FROM connectors WHERE project_id = ANY($1::uuid[]) ORDER BY folder, name`, pq.Array(projectIDs))
 }
 
 func (r *ConnectorRepository) ListAll(ctx context.Context) ([]*connectors.Connector, error) {
-	return r.list(ctx, `SELECT `+connectorColumns+` FROM connectors ORDER BY name`)
+	return r.list(ctx, `SELECT `+connectorColumns+` FROM connectors ORDER BY folder, name`)
 }
 
 func (r *ConnectorRepository) Update(ctx context.Context, c *connectors.Connector) (*connectors.Connector, error) {
@@ -178,11 +179,11 @@ func (r *ConnectorRepository) Update(ctx context.Context, c *connectors.Connecto
 	err = r.db.GetContext(ctx, &row, `
 		UPDATE connectors SET name = $2, description = $3, kind = $4, method = $5, url = $6, headers = $7,
 			body_type = $8, body = $9, params = $10, auth = $11, secret_ciphertext = $12, response_mapping = $13,
-			cache_ttl_seconds = $14, timeout_seconds = $15, updated_at = NOW()
+			cache_ttl_seconds = $14, timeout_seconds = $15, folder = $16, updated_at = NOW()
 		WHERE id = $1
 		RETURNING `+connectorColumns,
 		c.ID, c.Name, c.Description, c.Kind, c.Method, c.URL, j.headers, c.BodyType, c.Body, j.params, j.auth,
-		c.SecretCiphertext, j.response, c.CacheTTLSeconds, c.TimeoutSeconds)
+		c.SecretCiphertext, j.response, c.CacheTTLSeconds, c.TimeoutSeconds, c.Folder)
 	if err != nil {
 		return nil, mapConnectorErr(err)
 	}
