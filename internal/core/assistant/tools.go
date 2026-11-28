@@ -472,7 +472,7 @@ func tools() []*Tool {
 				out := make([]any, 0, len(list))
 				for _, c := range list {
 					m, _ := c.(map[string]any)
-					item := pick(m, "id", "name", "kind", "description", "project_id").(map[string]any)
+					item := pick(m, "id", "name", "folder", "kind", "description", "project_id").(map[string]any)
 					if params, ok := m["params"].([]any); ok && len(params) > 0 {
 						item["params"] = pick(params, "name", "type", "required", "default", "description")
 					}
